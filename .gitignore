@@ -1,0 +1,13 @@
+node_modules/
+.vite/
+out/
+coverage/
+.npm-cache/
+.electron-cache/
+.build-appdata/
+.build-nuget/
+*.db
+*.db-shm
+*.db-wal
+*.log
+.DS_Store

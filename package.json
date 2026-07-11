@@ -1,0 +1,50 @@
+{
+  "name": "local-film-library-desktop",
+  "productName": "Local Film Library",
+  "version": "0.1.0",
+  "description": "A private, local-first Windows film library desktop application.",
+  "main": ".vite/build/main.js",
+  "author": "Local Film Library",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron-forge start",
+    "lint": "eslint .",
+    "typecheck": "vue-tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "smoke:package": "node scripts/smoke-packaged-app.mjs",
+    "package": "electron-forge package",
+    "make": "electron-forge make"
+  },
+  "dependencies": {
+    "better-sqlite3": "12.11.1",
+    "element-plus": "2.14.3",
+    "fast-xml-parser": "5.10.0",
+    "pinia": "3.0.4",
+    "vue": "3.5.39",
+    "vue-router": "5.1.0"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "7.11.2",
+    "@electron-forge/maker-squirrel": "7.11.2",
+    "@electron-forge/maker-zip": "7.11.2",
+    "@electron-forge/plugin-auto-unpack-natives": "7.11.2",
+    "@electron-forge/plugin-vite": "7.11.2",
+    "@eslint/js": "10.0.1",
+    "@types/better-sqlite3": "7.6.13",
+    "@types/node": "26.1.1",
+    "@typescript-eslint/eslint-plugin": "8.63.0",
+    "@typescript-eslint/parser": "8.63.0",
+    "@vitejs/plugin-vue": "6.0.7",
+    "electron": "42.6.1",
+    "eslint": "10.7.0",
+    "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-vue": "10.9.2",
+    "globals": "17.7.0",
+    "prettier": "3.9.5",
+    "typescript": "6.0.3",
+    "vite": "8.1.4",
+    "vitest": "4.1.10",
+    "vue-tsc": "3.3.7"
+  }
+}
