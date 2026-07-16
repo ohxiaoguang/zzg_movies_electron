@@ -21,6 +21,10 @@ describe('GitHub release workflow', () => {
     expect(workflow).toContain('npm run smoke:package');
   });
 
+  it('does not run the Vitest suite during a tag release', () => {
+    expect(workflow).not.toContain('npm test');
+  });
+
   it('creates or updates a GitHub Release with installer and ZIP assets', () => {
     expect(workflow).toContain('npm run make');
     expect(workflow).toContain('LocalFilmLibrarySetup.exe');
