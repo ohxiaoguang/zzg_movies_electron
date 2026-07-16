@@ -31,6 +31,37 @@ describe('sidecar matcher', () => {
     expect(result.ambiguousAssets).toBeGreaterThan(0);
   });
 
+  it('uses each bare same-name JPG as its film poster in a multi-film directory', () => {
+    const movieA = entry('MovieA.mkv');
+    const movieB = entry('MovieB.mp4');
+    const files = [movieA, movieB, entry('MovieA.jpg'), entry('MovieB.JPEG'), entry('poster.jpg')];
+
+    const resultA = matchSidecars(movieA, files, [], 2);
+    const resultB = matchSidecars(movieB, files, [], 2);
+
+    expect(resultA.assets.filter((asset) => asset.assetType === 'poster').map((asset) => asset.entry.name)).toEqual(['MovieA.jpg']);
+    expect(resultB.assets.filter((asset) => asset.assetType === 'poster').map((asset) => asset.entry.name)).toEqual(['MovieB.JPEG']);
+    expect(resultA.assets.some((asset) => asset.entry.name === 'poster.jpg')).toBe(false);
+  });
+
+  it('keeps explicit poster and single-film generic poster priorities unchanged', () => {
+    const multiFilmMain = entry('MovieA.mkv');
+    const multiFilmFiles = [multiFilmMain, entry('MovieB.mkv'), entry('MovieA.jpg'), entry('MovieA-poster.jpg')];
+    const multiFilmResult = matchSidecars(multiFilmMain, multiFilmFiles, [], 2);
+    expect(multiFilmResult.assets.filter((asset) => asset.assetType === 'poster').map((asset) => asset.entry.name)).toEqual(['MovieA-poster.jpg']);
+
+    const singleFilmMain = entry('MovieC.mkv');
+    const singleFilmResult = matchSidecars(singleFilmMain, [singleFilmMain, entry('MovieC.jpg'), entry('folder.jpg')], [], 1);
+    expect(singleFilmResult.assets.filter((asset) => asset.assetType === 'poster').map((asset) => asset.entry.name)).toEqual(['folder.jpg']);
+  });
+
+  it('matches a bare JPG to a multipart film logical base name', () => {
+    const main = entry('MovieA-cd1.mkv');
+    const files = [main, entry('MovieA-cd2.mkv'), entry('MovieB.mkv'), entry('MovieA.jpg')];
+    const result = matchSidecars(main, files, [], 2, undefined, undefined, 'MovieA');
+    expect(result.assets.filter((asset) => asset.assetType === 'poster').map((asset) => asset.entry.name)).toEqual(['MovieA.jpg']);
+  });
+
   it('sorts extrafanart naturally', () => {
     const main = entry('MovieA.mkv');
     const result = matchSidecars(main, [main], [entry('10.jpg', 'Movies/extrafanart'), entry('2.jpg', 'Movies/extrafanart'), entry('1.jpg', 'Movies/extrafanart')], 1);

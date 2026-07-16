@@ -705,6 +705,22 @@ export class FilmRepository {
     return Number(result.changes);
   }
 
+  public markDirectoryMissing(sourceId: string, relativeDirectory: string, now: string): number {
+    const scope = normalizedRelativePath(relativeDirectory);
+    const rows = this.db.prepare('SELECT DISTINCT film_id, relative_path FROM film_file WHERE source_id = ?').all(sourceId) as Array<{ film_id: string; relative_path: string }>;
+    const filmIds = [...new Set(rows.filter((row) => isRelativePathInDirectory(row.relative_path, scope)).map((row) => row.film_id))];
+    let changed = 0;
+    const markFilm = this.db.prepare('UPDATE film SET missing = 1, updated_at = ? WHERE id = ? AND archived = 0 AND missing = 0');
+    const markFiles = this.db.prepare('UPDATE film_file SET missing = 1, updated_at = ? WHERE film_id = ?');
+    const markAssets = this.db.prepare('UPDATE film_asset SET missing = 1 WHERE film_id = ?');
+    for (const filmId of filmIds) {
+      changed += Number(markFilm.run(now, filmId).changes);
+      markFiles.run(now, filmId);
+      markAssets.run(filmId);
+    }
+    return changed;
+  }
+
   public supplementFromMappedNfo(id: string, fields: Partial<ReturnType<typeof mappedCandidateValues>>, now: string): FilmDetailDto {
     const existing = this.detail(id);
     if (!existing) throw new Error('FILM_NOT_FOUND');
@@ -1181,4 +1197,14 @@ function isDirectory(rootPath: string): boolean {
 
 function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, (character) => `\\${character}`);
+}
+
+function normalizedRelativePath(value: string): string {
+  return value.replaceAll('\\', '/').replace(/^\.\//, '').replace(/\/$/, '') || '.';
+}
+
+function isRelativePathInDirectory(relativePath: string, directory: string): boolean {
+  if (directory === '.') return true;
+  const normalized = normalizedRelativePath(relativePath);
+  return normalized.startsWith(`${directory}/`);
 }

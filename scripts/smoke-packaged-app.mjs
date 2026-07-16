@@ -79,6 +79,13 @@ try {
       }
       const page = await window.filmLibrary.films.page({ page: 1, pageSize: 20 });
       const detail = page.ok && page.data.items[0] ? await window.filmLibrary.films.detail(page.data.items[0].id) : { ok: false };
+      const directoryRescan = detail.ok ? await window.filmLibrary.films.rescan(detail.data.id) : { ok: false };
+      let directoryRescanStatus = null;
+      for (let index = 0; index < 300 && directoryRescan.ok; index += 1) {
+        directoryRescanStatus = await window.filmLibrary.scan.status();
+        if (directoryRescanStatus.ok && directoryRescanStatus.data && directoryRescanStatus.data.status !== 'running') break;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
       const actorList = await window.filmLibrary.actors.list();
       const actorFiltered = await window.filmLibrary.films.page({ page: 1, pageSize: 20, actor: 'Smoke Actor' });
       const parts = detail.ok ? await window.filmLibrary.films.partsList(detail.data.id) : { ok: false };
@@ -92,6 +99,9 @@ try {
       const organizedAfter = await window.filmLibrary.films.page({ page: 1, pageSize: 20, organizationState: 'organized' });
       for (let index = 0; index < 50 && !document.querySelector('.app-sidebar'); index += 1) await new Promise((resolve) => setTimeout(resolve, 100));
       const sidebarText = document.querySelector('.app-sidebar')?.textContent || '';
+      location.hash = '#/sources';
+      for (let index = 0; index < 50 && !document.querySelector('.source-card'); index += 1) await new Promise((resolve) => setTimeout(resolve, 100));
+      const sourcesPageText = document.body.textContent || '';
       location.hash = '#/actors';
       for (let index = 0; index < 50 && !document.querySelector('.actor-card'); index += 1) await new Promise((resolve) => setTimeout(resolve, 100));
       const actorsPageText = document.body.textContent || '';
@@ -115,13 +125,13 @@ try {
       document.querySelector('.actor-links button')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       await new Promise((resolve) => setTimeout(resolve, 300));
       const detailSelectedActor = new URLSearchParams(location.hash.split('?')[1] || '').get('actor');
-      const ui = { sidebarText, actorsPageText, selectedActor, categoriesPageText, organizedActionsText, detailHeaderText, drawerText, detailActorText, detailSelectedActor, stickyHeader: Boolean(detailHeader) };
+      const ui = { sidebarText, sourcesPageText, actorsPageText, selectedActor, categoriesPageText, organizedActionsText, detailHeaderText, drawerText, detailActorText, detailSelectedActor, stickyHeader: Boolean(detailHeader) };
       const setting = await window.filmLibrary.settings.update({ cardSize: 280 });
       const removed = created.ok ? await window.filmLibrary.sources.remove({ id: created.data.id, mode: 'keep-records' }) : { ok: false };
       const allData = await window.filmLibrary.films.recordsPageAll({ page: 1, pageSize: 20 });
       const restored = created.ok ? await window.filmLibrary.sources.restore({ id: created.data.id }) : { ok: false };
       const after = await window.filmLibrary.sources.list();
-      return { health, info, before, created, started, scanStatus, page, detail, actorList, actorFiltered, parts, unorganizedBefore, classic, mystery, categorized, favorited, patched, patchedDetail, organizedAfter, ui, setting, removed, allData, restored, after };
+      return { health, info, before, created, started, scanStatus, page, detail, directoryRescan, directoryRescanStatus, actorList, actorFiltered, parts, unorganizedBefore, classic, mystery, categorized, favorited, patched, patchedDetail, organizedAfter, ui, setting, removed, allData, restored, after };
     })()`, true);
 
     if (evaluation?.exceptionDetails) throw new Error(`Renderer evaluation failed: ${JSON.stringify(evaluation.exceptionDetails)}`);
@@ -132,11 +142,12 @@ try {
     if (!result.started?.ok || result.scanStatus?.data?.status !== 'completed') throw new Error(`Scan failed: ${JSON.stringify(result.scanStatus)}`);
     if (!result.page?.ok || result.page.data.total !== 1) throw new Error(`Multi-part page failed: ${JSON.stringify(result.page)}`);
     if (!result.detail?.ok || result.detail.data.parts.length !== 3 || result.detail.data.images.length !== 3) throw new Error(`Multi-part detail failed: ${JSON.stringify(result.detail)}`);
+    if (!result.directoryRescan?.ok || result.directoryRescanStatus?.data?.status !== 'completed') throw new Error(`Directory rescan failed: ${JSON.stringify({ directoryRescan: result.directoryRescan, status: result.directoryRescanStatus })}`);
     if (!result.actorList?.ok || result.actorList.data[0]?.name !== 'Smoke Actor' || result.actorList.data[0]?.filmCount !== 1 || !result.actorFiltered?.ok || result.actorFiltered.data.total !== 1) throw new Error(`Actor index failed: ${JSON.stringify({ actorList: result.actorList, actorFiltered: result.actorFiltered })}`);
     if (!result.parts?.ok || result.parts.data.length !== 3) throw new Error(`Part API failed: ${JSON.stringify(result.parts)}`);
     if (!result.unorganizedBefore?.ok || result.unorganizedBefore.data.total !== 1 || !result.classic?.ok || result.classic.data.name !== 'Smoke Classic' || !result.categorized?.ok || result.categorized.data.customCategories.length !== 2 || !result.organizedAfter?.ok || result.organizedAfter.data.total !== 1) throw new Error(`Category update failed: ${JSON.stringify({ classic: result.classic, categorized: result.categorized, organizedAfter: result.organizedAfter })}`);
     if (!result.favorited?.ok || !result.patched?.ok || !result.patchedDetail?.ok || result.patchedDetail.data.title !== 'Smoke Auto Saved Title' || result.patchedDetail.data.originalTitle !== 'Smoke Original Title' || !result.patchedDetail.data.favorite || result.patchedDetail.data.rating !== 9.5 || result.patchedDetail.data.notes !== 'Smoke auto-saved notes' || result.patchedDetail.data.nfoTags[0]?.name !== 'Smoke Tag') throw new Error(`Patch update failed: ${JSON.stringify({ favorited: result.favorited, patched: result.patched, patchedDetail: result.patchedDetail })}`);
-    if (!result.ui?.sidebarText.includes('未整理') || !result.ui.sidebarText.includes('已整理') || !result.ui.sidebarText.includes('我的分类') || !result.ui.sidebarText.includes('演员') || result.ui.sidebarText.includes('想看') || result.ui.sidebarText.includes('正在观看') || result.ui.sidebarText.includes('标签管理') || !result.ui.actorsPageText.includes('Smoke Actor') || result.ui.selectedActor !== 'Smoke Actor' || !result.ui.categoriesPageText.includes('Smoke Classic') || !result.ui.organizedActionsText.includes('导出 CSV') || !result.ui.stickyHeader || !result.ui.detailHeaderText.includes('收藏') || !result.ui.detailHeaderText.includes('我的分类') || !result.ui.drawerText.includes('NFO 标签') || result.ui.drawerText.includes('类型') || !result.ui.detailActorText.includes('Smoke Actor') || !result.ui.detailActorText.includes('1 部') || result.ui.detailSelectedActor !== 'Smoke Actor') throw new Error(`UI verification failed: ${JSON.stringify(result.ui)}`);
+    if (!result.ui?.sidebarText.includes('未整理') || !result.ui.sidebarText.includes('已整理') || !result.ui.sidebarText.includes('我的分类') || !result.ui.sidebarText.includes('演员') || result.ui.sidebarText.includes('想看') || result.ui.sidebarText.includes('正在观看') || result.ui.sidebarText.includes('标签管理') || !result.ui.sourcesPageText.includes('重新扫描') || !result.ui.actorsPageText.includes('Smoke Actor') || result.ui.selectedActor !== 'Smoke Actor' || !result.ui.categoriesPageText.includes('Smoke Classic') || !result.ui.organizedActionsText.includes('导出 CSV') || !result.ui.stickyHeader || !result.ui.detailHeaderText.includes('收藏') || !result.ui.detailHeaderText.includes('我的分类') || !result.ui.detailHeaderText.includes('重新扫描目录') || !result.ui.drawerText.includes('NFO 标签') || result.ui.drawerText.includes('类型') || !result.ui.detailActorText.includes('Smoke Actor') || !result.ui.detailActorText.includes('1 部') || result.ui.detailSelectedActor !== 'Smoke Actor') throw new Error(`UI verification failed: ${JSON.stringify(result.ui)}`);
     if (!result.setting?.ok || result.setting.data.cardSize !== 280) throw new Error(`Settings update failed: ${JSON.stringify(result.setting)}`);
     if (!result.removed?.ok || !result.allData?.ok || result.allData.data.items[0]?.availability !== 'source_removed') throw new Error(`Source removal failed: ${JSON.stringify({ removed: result.removed, allData: result.allData })}`);
     if (!result.restored?.ok) throw new Error(`Source restore failed: ${JSON.stringify(result.restored)}`);

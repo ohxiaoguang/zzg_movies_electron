@@ -29,6 +29,8 @@ const genericNames: Record<Exclude<AssetType, 'extra_fanart'>, string[]> = {
   sample: ['sample'],
 };
 
+const sameNamePosterExtensions = new Set(['jpg', 'jpeg']);
+
 export function matchSidecars(
   mainFile: ScanFileEntry,
   filesInDirectory: ScanFileEntry[],
@@ -57,16 +59,27 @@ export function matchSidecars(
       return baseNames.some((base) => suffixes.some((suffix) => stem === `${base}-${suffix}`))
         && isCompatibleAsset(assetType, extension, normalizedImages, normalizedVideos);
     });
+    const sameNamePosterMatches = assetType === 'poster' && mainFilmCount > 1
+      ? sidecarFiles.filter((entry) => {
+          const extension = extensionOf(entry.name);
+          const stem = path.parse(entry.name).name.toLowerCase();
+          return sameNamePosterExtensions.has(extension)
+            && normalizedImages.has(extension)
+            && baseNames.includes(stem);
+        })
+      : [];
     const matches = exactMatches.length > 0
       ? exactMatches
-      : mainFilmCount === 1
-        ? sidecarFiles.filter((entry) => {
-            const extension = extensionOf(entry.name);
-            const stem = path.parse(entry.name).name.toLowerCase();
-            return genericNames[assetType as Exclude<AssetType, 'extra_fanart'>].includes(stem)
-              && isCompatibleAsset(assetType, extension, normalizedImages, normalizedVideos);
-          })
-        : [];
+      : sameNamePosterMatches.length > 0
+        ? sameNamePosterMatches
+        : mainFilmCount === 1
+          ? sidecarFiles.filter((entry) => {
+              const extension = extensionOf(entry.name);
+              const stem = path.parse(entry.name).name.toLowerCase();
+              return genericNames[assetType as Exclude<AssetType, 'extra_fanart'>].includes(stem)
+                && isCompatibleAsset(assetType, extension, normalizedImages, normalizedVideos);
+            })
+          : [];
 
     if (exactMatches.length === 0 && mainFilmCount > 1) {
       const hasGeneric = sidecarFiles.some((entry) => genericNames[assetType as Exclude<AssetType, 'extra_fanart'>].includes(path.parse(entry.name).name.toLowerCase()));

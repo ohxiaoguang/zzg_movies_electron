@@ -5,6 +5,7 @@ import type { MediaSourceDto, SettingsDto } from '../../shared/contracts';
 import { DEFAULT_IGNORED_DIRECTORIES, DEFAULT_IMAGE_EXTENSIONS, DEFAULT_VIDEO_EXTENSIONS } from '../../shared/enums';
 import { mapNfoMetadata } from '../metadata/NfoMapper';
 import { parseNfo } from '../metadata/NfoParser';
+import { resolveSafeMediaPath } from '../media/MediaPathResolver';
 import { calculateQuickFingerprint } from './FilmFingerprint';
 import { ScanCancellation } from './ScanCancellation';
 import type { FilmCandidate, FilmFileCandidate, ScanFileEntry } from './ScanCandidate';
@@ -37,6 +38,7 @@ export interface SourceScannerProgress {
 interface ScannerOptions {
   settings: SettingsDto;
   cancellation: ScanCancellation;
+  relativeDirectory?: string;
   onProgress?: (progress: SourceScannerProgress) => void;
 }
 
@@ -52,9 +54,12 @@ export class SourceScanner {
       otherErrors: 0,
     };
     const rootPath = path.resolve(this.source.rootPath);
+    const scanRootPath = this.options.relativeDirectory
+      ? resolveSafeMediaPath(rootPath, this.options.relativeDirectory)
+      : rootPath;
     let rootStat: fs.Stats;
     try {
-      rootStat = await fs.promises.stat(rootPath);
+      rootStat = await fs.promises.stat(scanRootPath);
       if (!rootStat.isDirectory()) throw new Error('SOURCE_NOT_DIRECTORY');
     } catch {
       return { complete: false, cancelled: false, offline: true, candidates: [], stats };
@@ -109,7 +114,7 @@ export class SourceScanner {
       });
     };
 
-    await visit(rootPath);
+    await visit(scanRootPath);
     if (this.options.cancellation.cancelled) {
       return { complete: false, cancelled: true, offline: false, candidates: [], stats };
     }

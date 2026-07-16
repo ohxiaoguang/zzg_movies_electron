@@ -109,6 +109,56 @@ describe('SQLite migrations and scanning', () => {
     fs.renameSync(offlineRoot, root);
   });
 
+  it('stores bare same-name JPG posters for films sharing one directory', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'film-library-multi-film-posters-'));
+    tempRoots.push(root);
+    for (const title of ['Alpha', 'Beta']) {
+      fs.writeFileSync(path.join(root, `${title}.mkv`), `${title} media`);
+      fs.writeFileSync(path.join(root, `${title}.jpg`), `${title} poster`);
+    }
+    const context = createContext(root);
+    context.scan.start({});
+    expect((await waitForScan(context.scan)).status).toBe('completed');
+
+    for (const title of ['Alpha', 'Beta']) {
+      const film = context.films.page({ page: 1, pageSize: 10, search: title }).items[0]!;
+      expect(film.posterAssetId).not.toBeNull();
+      const poster = context.films.detail(film.id)?.assets.find((asset) => asset.assetType === 'poster');
+      expect(poster?.relativePath).toBe(`${title}.jpg`);
+    }
+  });
+
+  it('rescans only one film directory and scopes missing markers to that directory', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'film-library-directory-rescan-'));
+    tempRoots.push(root);
+    for (const directory of ['Film A', 'Film B']) {
+      fs.mkdirSync(path.join(root, directory));
+      fs.writeFileSync(path.join(root, directory, `${directory}.mkv`), directory);
+      fs.writeFileSync(path.join(root, directory, `${directory}.nfo`), `<movie><title>${directory}</title><tag>${directory} old tag</tag></movie>`);
+    }
+    const context = createContext(root);
+    context.scan.start({});
+    await waitForScan(context.scan);
+    const filmA = context.films.page({ page: 1, pageSize: 20, search: 'Film A' }).items[0]!;
+    const filmB = context.films.page({ page: 1, pageSize: 20, search: 'Film B' }).items[0]!;
+
+    fs.writeFileSync(path.join(root, 'Film A', 'Film A.nfo'), '<movie><title>Film A refreshed</title><tag>Film A refreshed tag</tag></movie>');
+    fs.writeFileSync(path.join(root, 'Film B', 'Film B.nfo'), '<movie><title>Film B not refreshed</title><tag>Film B not refreshed tag</tag></movie>');
+    context.scan.startDirectory(context.source.id, 'Film A');
+    expect((await waitForScan(context.scan)).status).toBe('completed');
+    expect(context.films.detail(filmA.id)?.nfoTags.map((tag) => tag.name)).toEqual(['Film A refreshed tag']);
+    expect(context.films.detail(filmB.id)?.nfoTags.map((tag) => tag.name)).toEqual(['Film B old tag']);
+
+    fs.unlinkSync(path.join(root, 'Film A', 'Film A.mkv'));
+    fs.unlinkSync(path.join(root, 'Film B', 'Film B.mkv'));
+    context.scan.startDirectory(context.source.id, 'Film A');
+    const missingStatus = await waitForScan(context.scan);
+    expect(missingStatus.missing).toBe(1);
+    expect(context.films.detail(filmA.id)?.missing).toBe(true);
+    expect(context.films.detail(filmB.id)?.missing).toBe(false);
+    expect(() => context.scan.startDirectory(context.source.id, '../outside')).toThrow('MEDIA_PATH_OUTSIDE_SOURCE');
+  });
+
   it('archives a source without touching external files', () => {
     const root = fixtureRoot();
     const context = createContext(root);

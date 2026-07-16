@@ -11,6 +11,7 @@ const categoriesPath = path.resolve(process.cwd(), 'src/renderer/views/Categorie
 const actorsPath = path.resolve(process.cwd(), 'src/renderer/views/ActorsView.vue');
 const libraryPath = path.resolve(process.cwd(), 'src/renderer/views/LibraryView.vue');
 const layoutPath = path.resolve(process.cwd(), 'src/renderer/layouts/AppLayout.vue');
+const sourcesPath = path.resolve(process.cwd(), 'src/renderer/views/SourcesView.vue');
 
 describe('renderer regressions', () => {
   const drawer = fs.readFileSync(drawerPath, 'utf8');
@@ -115,6 +116,17 @@ describe('renderer regressions', () => {
     expect(drawer).toContain('@click="filterByActor(actor)"');
     expect(drawer).toContain("router.push({ path: '/library', query: { actor: name } })");
     expect(drawer).not.toContain('detail.actors.slice(0, 5)');
+  });
+
+  it('exposes explicit film-directory and per-source rescan controls', () => {
+    const header = fs.readFileSync(headerPath, 'utf8');
+    const sources = fs.readFileSync(sourcesPath, 'utf8');
+    expect(header).toContain('重新扫描目录');
+    expect(header).toContain("emit('rescan')");
+    expect(drawer).toContain('window.filmLibrary.films.rescan(detail.value.id)');
+    expect(drawer).toContain('rescanJobId');
+    expect(sources).toContain('重新扫描此来源');
+    expect(sources).toContain('scan.start([source.id])');
   });
 
   it('exports the current organized-page filters through the CSV API', () => {

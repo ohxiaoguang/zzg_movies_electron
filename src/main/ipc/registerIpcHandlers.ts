@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import type { IpcMainInvokeEvent } from 'electron';
@@ -155,7 +156,7 @@ export function registerIpcHandlers(context: IpcContext): () => void {
     if (!isRecord(payload) || !isUuid(payload.id)) throw new Error('INVALID_FILM_ID');
     const detail = context.films.detail(payload.id);
     if (!detail) throw new Error('FILM_NOT_FOUND');
-    return context.scan.start({ sourceIds: [detail.sourceId] });
+    return context.scan.startDirectory(detail.sourceId, path.dirname(detail.relativePath));
   });
   handle(IPC_CHANNELS.filmsPartsList, (_event, payload) => {
     if (!isUuid(payload)) throw new Error('INVALID_FILM_ID');

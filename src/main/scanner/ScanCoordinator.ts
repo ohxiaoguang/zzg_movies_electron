@@ -10,6 +10,7 @@ import { assertUniqueIncomingPhysicalFiles, dedupeFilmCandidates, type FilmCandi
 import { SourceScanner } from './SourceScanner';
 
 type ProgressListener = (progress: ScanStatusDto) => void;
+interface ScanTarget { source: MediaSourceDto; relativeDirectory: string | null; }
 
 interface ScanMergeFailureDetails {
   sourceId: string;
@@ -21,6 +22,12 @@ interface ScanMergeFailureDetails {
   groupKey: string;
   sqlStage: string;
   sqliteErrorCode: string | null;
+}
+
+function normalizeRelativeDirectory(value: string): string {
+  const normalized = value.trim().replaceAll('\\', '/').replace(/^\.\//, '').replace(/\/$/, '') || '.';
+  if (normalized.startsWith('/') || normalized === '..' || normalized.startsWith('../') || normalized.includes('/../')) throw new Error('MEDIA_PATH_OUTSIDE_SOURCE');
+  return normalized;
 }
 
 export class ScanCoordinator {
@@ -42,12 +49,23 @@ export class ScanCoordinator {
   }
 
   public start(input: ScanStartInput): ScanStartDto {
-    if (this.state?.status === 'running') throw new Error('SCAN_ALREADY_RUNNING');
     const available = this.sources.list().filter((source) => source.enabled && !source.archived);
     const selected = input.sourceIds?.length
       ? available.filter((source) => input.sourceIds!.includes(source.id))
       : available;
     if (input.sourceIds?.length && selected.length !== input.sourceIds.length) throw new Error('SOURCE_NOT_FOUND');
+    return this.begin(selected.map((source) => ({ source, relativeDirectory: null })));
+  }
+
+  public startDirectory(sourceId: string, relativeDirectory: string): ScanStartDto {
+    const source = this.sources.list().find((item) => item.id === sourceId && item.enabled && !item.archived);
+    if (!source) throw new Error('SOURCE_NOT_FOUND');
+    const normalized = normalizeRelativeDirectory(relativeDirectory);
+    return this.begin([{ source, relativeDirectory: normalized }]);
+  }
+
+  private begin(targets: ScanTarget[]): ScanStartDto {
+    if (this.state?.status === 'running') throw new Error('SCAN_ALREADY_RUNNING');
     const jobId = randomUUID();
     const startedAt = new Date().toISOString();
     this.cancellation = new ScanCancellation();
@@ -69,14 +87,14 @@ export class ScanCoordinator {
       message: null,
       startedAt,
       finishedAt: null,
-      sourceCount: selected.length,
+      sourceCount: targets.length,
       cancelled: false,
     };
     this.database.db
       .prepare('INSERT INTO scan_job (id, started_at, status, source_count) VALUES (?, ?, ?, ?)')
-      .run(jobId, startedAt, 'running', selected.length);
+      .run(jobId, startedAt, 'running', targets.length);
     this.emit();
-    void this.run(selected, jobId);
+    void this.run(targets, jobId);
     return { jobId };
   }
 
@@ -88,18 +106,20 @@ export class ScanCoordinator {
     return this.state;
   }
 
-  private async run(selected: MediaSourceDto[], jobId: string): Promise<void> {
+  private async run(targets: ScanTarget[], jobId: string): Promise<void> {
     const cancellation = this.cancellation!;
     let runError: string | null = null;
     let activeSource: MediaSourceDto | null = null;
     try {
-      for (const source of selected) {
+      for (const target of targets) {
+        const source = target.source;
         activeSource = source;
         if (cancellation.cancelled) break;
-        this.updateState({ currentSource: source.name, currentDirectory: '.', currentFilm: null });
+        this.updateState({ currentSource: source.name, currentDirectory: target.relativeDirectory ?? '.', currentFilm: null });
         const scanner = new SourceScanner(source, {
           settings: this.settings.get(),
           cancellation,
+          relativeDirectory: target.relativeDirectory ?? undefined,
           onProgress: (progress) => {
             this.updateState({
               currentDirectory: progress.currentDirectory,
@@ -117,8 +137,11 @@ export class ScanCoordinator {
         });
         if (result.cancelled || cancellation.cancelled) break;
         if (result.offline) {
-          this.sources.setScanResult(source.id, 'offline', null);
-          this.updateState({ message: `${source.name} 离线，已保留原有缺失状态` });
+          if (target.relativeDirectory) this.updateState({ message: `${source.name} · ${target.relativeDirectory} 目录不可用，已保留原有缺失状态` });
+          else {
+            this.sources.setScanResult(source.id, 'offline', null);
+            this.updateState({ message: `${source.name} 离线，已保留原有缺失状态` });
+          }
           continue;
         }
         if (!result.complete) {
@@ -126,7 +149,7 @@ export class ScanCoordinator {
           this.updateState({ message: `${source.name} 扫描不完整，未执行缺失标记` });
           continue;
         }
-        const merge = this.mergeSource(source, result.candidates);
+        const merge = this.mergeSource(source, result.candidates, target.relativeDirectory);
         this.updateState({
           created: this.state!.created + merge.created,
           updated: this.state!.updated + merge.updated,
@@ -134,7 +157,8 @@ export class ScanCoordinator {
           missing: this.state!.missing + merge.missing,
           otherErrors: this.state!.otherErrors + merge.errors,
         });
-        this.sources.setScanResult(source.id, 'completed', new Date().toISOString());
+        if (target.relativeDirectory) this.updateState({ message: `${source.name} · ${target.relativeDirectory} 目录扫描完成` });
+        else this.sources.setScanResult(source.id, 'completed', new Date().toISOString());
         this.emit();
       }
       const cancelled = cancellation.cancelled;
@@ -215,7 +239,7 @@ export class ScanCoordinator {
     }
   }
 
-  private mergeSource(source: MediaSourceDto, candidates: FilmCandidate[]): { created: number; updated: number; moved: number; missing: number; errors: number } {
+  private mergeSource(source: MediaSourceDto, candidates: FilmCandidate[], relativeDirectory: string | null = null): { created: number; updated: number; moved: number; missing: number; errors: number } {
     const now = new Date().toISOString();
     let created = 0;
     let updated = 0;
@@ -233,7 +257,9 @@ export class ScanCoordinator {
     }
     assertUniqueIncomingPhysicalFiles(source.id, deduplicated.candidates);
     const missing = this.database.transaction(() => {
-      const sourceMissing = this.films.markSourceMissing(source.id, now);
+      const sourceMissing = relativeDirectory
+        ? this.films.markDirectoryMissing(source.id, relativeDirectory, now)
+        : this.films.markSourceMissing(source.id, now);
       for (const candidate of deduplicated.candidates) {
         const result = this.films.upsertCandidate(candidate, now);
         if (result.created) created += 1;

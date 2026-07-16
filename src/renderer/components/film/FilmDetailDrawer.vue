@@ -5,11 +5,13 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import type { ActorDto, CustomCategoryDto, FilmDetailDto, FilmPartDto, FilmUpdatePatch } from '../../../shared/contracts';
 import type { AssetType } from '../../../shared/enums';
 import { mediaUrl } from '../../api';
+import { useScanStore } from '../../stores/scan';
 import FilmDetailHeader, { type SelectedCategoryItem } from './FilmDetailHeader.vue';
 
 const props = defineProps<{ modelValue: boolean; filmId: string | null }>();
 const emit = defineEmits<{ 'update:modelValue': [value: boolean]; updated: [] }>();
 const router = useRouter();
+const scan = useScanStore();
 type SaveState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
 interface CategorySelection { ids: string[]; newNames: string[]; }
 interface PendingSave { patch?: FilmUpdatePatch; favorite?: boolean; categories?: CategorySelection; }
@@ -27,6 +29,7 @@ const brokenImageIds = ref(new Set<string>());
 const hydrated = ref(false);
 const saveState = ref<SaveState>('idle');
 const saveError = ref('');
+const rescanStarting = ref(false);
 const form = reactive({ title: '', originalTitle: '', favorite: false, rating: 0, notes: '', categoryIds: [] as string[], newCategoryNames: [] as string[] });
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -35,6 +38,7 @@ let activeFilmId: string | null = null;
 let changeVersion = 0;
 let pendingSave: PendingSave = {};
 let lastSavedPatch: FilmUpdatePatch = {};
+let rescanJobId: string | null = null;
 const thumbnailRefs = new Map<string, HTMLElement>();
 
 const poster = computed(() => assetOf('poster') ?? assetOf('thumb'));
@@ -52,6 +56,7 @@ const selectedCategories = computed<SelectedCategoryItem[]>(() => {
   return selected;
 });
 const saveStateLabel = computed(() => saveState.value === 'saving' ? '正在保存…' : saveState.value === 'dirty' ? '待保存' : saveState.value === 'saved' ? '已保存' : saveState.value === 'error' ? `保存失败：${saveError.value}` : '');
+const rescanBusy = computed(() => rescanStarting.value || Boolean(rescanJobId && scan.progress?.jobId === rescanJobId && scan.progress.status === 'running'));
 
 watch(() => [props.modelValue, props.filmId], () => {
   if (props.modelValue) void load();
@@ -63,6 +68,16 @@ watch([imageIndex, images], () => {
   void scrollActiveThumbnail();
 }, { flush: 'post' });
 watch(activeMediaTab, () => void scrollActiveThumbnail());
+watch(() => scan.progress, (progress) => {
+  if (!progress || progress.jobId !== rescanJobId || progress.status === 'running') return;
+  const completed = progress.status === 'completed';
+  rescanJobId = null;
+  emit('updated');
+  if (completed) {
+    ElMessage.success('当前影片目录扫描完成');
+    if (props.modelValue && props.filmId) void load();
+  }
+});
 
 async function load(): Promise<void> {
   const filmId = props.filmId;
@@ -269,6 +284,23 @@ async function importNfo(mode: 'supplement' | 'force-merge' | 'force-replace'): 
   emit('updated');
 }
 
+async function rescanDirectory(): Promise<void> {
+  if (!detail.value || rescanBusy.value) return;
+  await flushPending();
+  if (saveState.value === 'error') { ElMessage.error('请先解决当前详情保存失败问题'); return; }
+  rescanStarting.value = true;
+  scan.listen();
+  try {
+    const result = await window.filmLibrary.films.rescan(detail.value.id);
+    if (!result.ok) { ElMessage.error(result.error.message); return; }
+    rescanJobId = result.data.jobId;
+    scan.dialogVisible = true;
+    ElMessage.success('已开始重新扫描当前影片目录');
+  } finally {
+    rescanStarting.value = false;
+  }
+}
+
 function assetOf(type: AssetType): string | null { const asset = detail.value?.assets.find((item) => item.assetType === type && !item.missing); return asset ? mediaUrl('asset', asset.id) : null; }
 function previousImage(): void { if (images.value.length) imageIndex.value = (imageIndex.value - 1 + images.value.length) % images.value.length; }
 function nextImage(): void { if (images.value.length) imageIndex.value = (imageIndex.value + 1) % images.value.length; }
@@ -292,7 +324,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', handleKeydown); do
   <el-drawer :model-value="modelValue" size="min(720px, 94vw)" title="影片详情" @close="close">
     <div v-if="loading" class="detail-loading"><el-skeleton :rows="10" animated /></div>
     <template v-else-if="detail">
-      <FilmDetailHeader :detail="detail" :poster="poster" :favorite="form.favorite" :categories="selectedCategories" :category-options="categoryOptions" :save-state="saveState" :save-state-label="saveStateLabel" @favorite-change="queueFavorite" @category-add="addCategory" @category-remove="removeCategory" @retry="retrySave" @play="openFilm" @show-folder="showPrimaryFolder" />
+      <FilmDetailHeader :detail="detail" :poster="poster" :favorite="form.favorite" :categories="selectedCategories" :category-options="categoryOptions" :save-state="saveState" :save-state-label="saveStateLabel" :rescan-busy="rescanBusy" @favorite-change="queueFavorite" @category-add="addCategory" @category-remove="removeCategory" @retry="retrySave" @play="openFilm" @show-folder="showPrimaryFolder" @rescan="rescanDirectory" />
 
       <section v-if="preview || images.length" class="detail-section media-section"><el-tabs v-model="activeMediaTab"><el-tab-pane v-if="preview" label="预览视频" name="video"><video class="detail-video" :src="preview" controls muted playsinline preload="metadata" /></el-tab-pane><el-tab-pane v-if="images.length" label="图片图库" name="images"><div class="gallery-main"><img v-if="currentImageUrl" ref="galleryImage" :src="currentImageUrl" alt="影片图片" @error="markImageMissing" @click="galleryImage?.requestFullscreen?.()" /><button v-if="images.length > 1" class="gallery-arrow left" aria-label="上一张" @click.stop="previousImage">‹</button><button v-if="images.length > 1" class="gallery-arrow right" aria-label="下一张" @click.stop="nextImage">›</button><span class="gallery-count">{{ imageIndex + 1 }} / {{ images.length }}</span></div><div ref="thumbnailStripRef" class="gallery-thumbs"><button v-for="(image, index) in images" :key="image.id" :ref="(element) => setThumbnailRef(image.id, element)" :class="{ active: index === imageIndex }" @click="imageIndex = index"><img :src="mediaUrl('asset', image.id)" alt="缩略图" /></button></div></el-tab-pane></el-tabs></section>
       <div v-else class="media-empty">暂无预览视频或图片</div>
