@@ -10,7 +10,8 @@ describe('GitHub release workflow', () => {
   it('runs for version tags on a Windows runner with release permission', () => {
     expect(workflow).toContain("- 'v*'");
     expect(workflow).toContain("- '[0-9]*'");
-    expect(workflow).toContain('runs-on: windows-latest');
+    expect(workflow).toContain('runs-on: windows-2022');
+    expect(workflow).not.toContain('runs-on: windows-latest');
     expect(workflow).toContain('contents: write');
   });
 

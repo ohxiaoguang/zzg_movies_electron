@@ -16,7 +16,9 @@ concurrency:
 jobs:
   release:
     name: Build and publish ${{ github.ref_name }}
-    runs-on: windows-latest
+    # Forge's current @electron/rebuild/node-gyp does not recognize the
+    # Visual Studio 2026 toolchain used by windows-latest.
+    runs-on: windows-2022
     timeout-minutes: 45
     env:
       RELEASE_TAG: ${{ github.ref_name }}

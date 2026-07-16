@@ -52,6 +52,8 @@ node scripts/smoke-dev-save.mjs <remote-debugging-port> <temporary-root>
 
 向 GitHub 推送语义化版本 Tag（例如 `v1.2.3` 或 `1.2.3`）会触发 `.github/workflows/release.yml`。工作流在 Windows Runner 中执行类型检查、Lint、Forge 打包和生产包启动验证，然后创建同名 GitHub Release，上传安装程序、ZIP、Squirrel `RELEASES` 和增量包。Tag 发布流程不运行 Vitest 测试套件。
 
+Release 固定使用 `windows-2022` Runner。当前 Forge 间接依赖的 `@electron/rebuild 3.x / node-gyp` 尚不能识别 `windows-latest` 中的 Visual Studio 2026，而 Windows Server 2022 提供兼容的 Visual Studio 2022 C++ 工具链。
+
 打包前会去掉可选的 `v` 前缀，并把该版本写入临时的 `package.json` / `package-lock.json`；因此 `v1.2.3` 对应程序内部版本 `1.2.3`，设置页和 `app.getVersion()`、安装包及 ZIP 版本保持一致。CI 中的临时版本修改不会提交回仓库。
 
 ~~~powershell
