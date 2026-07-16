@@ -29,7 +29,7 @@ export class SettingsRepository {
       }
     }
     return {
-      cardSize: clamp(settings.cardSize, 160, 360, DEFAULT_SETTINGS.cardSize),
+      cardSize: clamp(settings.cardSize, 140, 320, DEFAULT_SETTINGS.cardSize),
       hoverDelayMs: clamp(settings.hoverDelayMs, 100, 3000, DEFAULT_SETTINGS.hoverDelayMs),
       slideshowIntervalMs: clamp(settings.slideshowIntervalMs, 500, 10_000, DEFAULT_SETTINGS.slideshowIntervalMs),
       pageSize: clamp(settings.pageSize, 12, 200, DEFAULT_SETTINGS.pageSize),
@@ -43,6 +43,7 @@ export class SettingsRepository {
 
   public update(input: SettingsUpdateInput): SettingsDto {
     const current = this.get();
+    if (input.cardSize !== undefined && (!Number.isFinite(input.cardSize) || input.cardSize < 140 || input.cardSize > 320)) throw new Error('INVALID_CARD_SIZE');
     const next: SettingsDto = {
       cardSize: input.cardSize ?? current.cardSize,
       hoverDelayMs: input.hoverDelayMs ?? current.hoverDelayMs,
@@ -58,7 +59,9 @@ export class SettingsRepository {
       `INSERT INTO app_setting (key, value_json) VALUES (?, ?)
        ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json`,
     );
-    for (const [key, value] of Object.entries(next)) statement.run(key, JSON.stringify(value));
+    this.db.transaction(() => {
+      for (const [key, value] of Object.entries(next)) statement.run(key, JSON.stringify(value));
+    })();
     return this.get();
   }
 

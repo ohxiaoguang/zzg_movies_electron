@@ -20,6 +20,7 @@ interface SourceRow {
   updated_at: string;
   last_scan_at: string | null;
   last_scan_status: string | null;
+  deleted_at: string | null;
 }
 
 export class SourceRepository {
@@ -27,9 +28,17 @@ export class SourceRepository {
 
   public list(): MediaSourceDto[] {
     const rows = this.db
-      .prepare('SELECT * FROM media_source ORDER BY archived ASC, name COLLATE NOCASE ASC')
+      .prepare('SELECT * FROM media_source WHERE deleted_at IS NULL ORDER BY archived ASC, name COLLATE NOCASE ASC')
       .all() as SourceRow[];
     return rows.map((row) => this.toDto(row));
+  }
+
+  public findDeletedByRootPath(rootPath: string): MediaSourceDto | null {
+    const normalized = path.resolve(rootPath);
+    const row = this.db
+      .prepare('SELECT * FROM media_source WHERE root_path = ? COLLATE NOCASE AND deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT 1')
+      .get(normalized) as SourceRow | undefined;
+    return row ? this.toDto(row) : null;
   }
 
   public findById(id: string): MediaSourceDto | null {
@@ -40,13 +49,18 @@ export class SourceRepository {
   public create(input: CreateSourceInput): MediaSourceDto {
     const now = new Date().toISOString();
     const id = randomUUID();
+    const rootPath = path.resolve(input.rootPath);
+    const existing = this.db
+      .prepare('SELECT id, deleted_at FROM media_source WHERE root_path = ? COLLATE NOCASE AND deleted_at IS NULL')
+      .get(rootPath) as { id: string; deleted_at: string | null } | undefined;
+    if (existing) throw new Error('SOURCE_PATH_EXISTS');
     this.db
       .prepare(
         `INSERT INTO media_source
           (id, name, root_path, enabled, recursive, archived, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
       )
-      .run(id, input.name, path.resolve(input.rootPath), input.enabled === false ? 0 : 1, input.recursive === false ? 0 : 1, now, now);
+      .run(id, input.name, rootPath, input.enabled === false ? 0 : 1, input.recursive === false ? 0 : 1, now, now);
     return this.findById(id)!;
   }
 
@@ -71,15 +85,23 @@ export class SourceRepository {
   public remove(input: RemoveSourceInput): void {
     const existing = this.findById(input.id);
     if (!existing) throw new Error('SOURCE_NOT_FOUND');
-    if (input.mode === 'archive') {
-      const now = new Date().toISOString();
-      this.db
-        .prepare('UPDATE media_source SET archived = 1, enabled = 0, updated_at = ? WHERE id = ?')
-        .run(now, input.id);
-      this.db.prepare('UPDATE film SET archived = 1, updated_at = ? WHERE source_id = ?').run(now, input.id);
-      return;
-    }
-    this.db.prepare('DELETE FROM media_source WHERE id = ?').run(input.id);
+    const now = new Date().toISOString();
+    if (input.mode === 'delete-records') this.db.prepare('DELETE FROM film WHERE source_id = ?').run(input.id);
+    this.db
+      .prepare('UPDATE media_source SET deleted_at = ?, enabled = 0, updated_at = ? WHERE id = ?')
+      .run(now, now, input.id);
+  }
+
+  public restore(id: string): MediaSourceDto {
+    const existing = this.findById(id);
+    if (!existing) throw new Error('SOURCE_NOT_FOUND');
+    const conflict = this.db
+      .prepare('SELECT id FROM media_source WHERE root_path = ? COLLATE NOCASE AND deleted_at IS NULL AND id <> ?')
+      .get(existing.rootPath, id) as { id: string } | undefined;
+    if (conflict) throw new Error('SOURCE_PATH_EXISTS');
+    const now = new Date().toISOString();
+    this.db.prepare('UPDATE media_source SET deleted_at = NULL, enabled = 1, archived = 0, updated_at = ? WHERE id = ?').run(now, id);
+    return this.findById(id)!;
   }
 
   public setScanResult(id: string, status: string, scannedAt: string | null): void {
@@ -110,6 +132,7 @@ export class SourceRepository {
       updatedAt: row.updated_at,
       lastScanAt: row.last_scan_at,
       lastScanStatus: row.last_scan_status,
+      deletedAt: row.deleted_at,
     };
   }
 }

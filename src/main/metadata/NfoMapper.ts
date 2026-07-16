@@ -1,4 +1,3 @@
-import type { FilmStatus } from '../../shared/enums';
 import type { NfoMetadata } from './NfoParser';
 
 export interface MappedNfoFields {
@@ -17,9 +16,7 @@ export interface MappedNfoFields {
   directors: string[];
   actors: string[];
   tags: string[];
-  genres: string[];
   rating: number;
-  status: FilmStatus;
   width: number | null;
   height: number | null;
   videoCodec: string | null;
@@ -44,9 +41,7 @@ export function mapNfoMetadata(metadata: NfoMetadata | null, fallbackTitle: stri
     directors: metadata?.directors ?? [],
     actors: metadata?.actors ?? [],
     tags: metadata?.tags ?? [],
-    genres: metadata?.genres ?? [],
     rating: metadata?.userRating ?? metadata?.rating ?? 0,
-    status: metadata?.watched ? 'watched' : 'unorganized',
     width: metadata?.width ?? null,
     height: metadata?.height ?? null,
     videoCodec: metadata?.videoCodec ?? null,

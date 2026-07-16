@@ -18,7 +18,7 @@ export const useLibraryStore = defineStore('library', () => {
     autoScanOnStartup: DEFAULT_SETTINGS.autoScanOnStartup,
     ffprobePath: '',
   });
-  const filters = reactive<FilmPageQuery>({ page: 1, pageSize: DEFAULT_SETTINGS.pageSize, sort: 'recent', status: 'all' });
+  const filters = reactive<FilmPageQuery>({ page: 1, pageSize: DEFAULT_SETTINGS.pageSize, sort: 'recent', organizationState: 'all', categoryIds: [], categoryMatch: 'any', nfoTagIds: [], nfoTagMatch: 'any', allData: false, availability: 'all' });
   const viewMode = ref<'grid' | 'table'>('grid');
 
   const items = computed(() => pageData.value.items);
@@ -34,10 +34,23 @@ export const useLibraryStore = defineStore('library', () => {
   async function fetchPage(): Promise<void> {
     loading.value = true;
     error.value = null;
-    const result = await window.filmLibrary.films.page({ ...filters });
-    if (result.ok) pageData.value = result.data;
-    else error.value = result.error.message;
-    loading.value = false;
+    try {
+      const query = {
+        ...filters,
+        categoryIds: filters.categoryIds ? [...filters.categoryIds] : [],
+        nfoTagIds: filters.nfoTagIds ? [...filters.nfoTagIds] : [],
+      };
+      const result = query.allData
+        ? await window.filmLibrary.films.recordsPageAll(query)
+        : await window.filmLibrary.films.page(query);
+      if (result.ok) pageData.value = result.data;
+      else error.value = result.error.message;
+    } catch (reason) {
+      console.error('[library] page failed', reason);
+      error.value = '无法加载影片，请查看日志';
+    } finally {
+      loading.value = false;
+    }
   }
 
   function setFilter<K extends keyof FilmPageQuery>(key: K, value: FilmPageQuery[K]): void {
@@ -46,7 +59,7 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   function resetFilters(): void {
-    Object.assign(filters, { page: 1, pageSize: settings.value.pageSize, search: '', sourceId: '', status: 'all', tag: '', genre: '', minRating: undefined, favoriteOnly: false, missingOnly: false, sort: 'recent' });
+    Object.assign(filters, { page: 1, pageSize: settings.value.pageSize, search: '', sourceId: '', actor: '', organizationState: 'all', categoryIds: [], categoryMatch: 'any', nfoTagIds: [], nfoTagMatch: 'any', minRating: undefined, favoriteOnly: false, missingOnly: false, allData: false, availability: 'all', sort: 'recent' });
   }
 
   return { pageData, items, loading, error, settings, filters, viewMode, loadSettings, fetchPage, setFilter, resetFilters };

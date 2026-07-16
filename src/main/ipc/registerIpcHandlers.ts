@@ -5,14 +5,25 @@ import type { IpcMainInvokeEvent } from 'electron';
 import type {
   ApiResult,
   CreateSourceInput,
+  FindDeletedSourceInput,
+  FilmRecordDeleteBatchInput,
+  FilmRecordDeleteInput,
+  FilmCategoriesUpdateInput,
+  FilmFavoriteUpdateInput,
   FilmPageQuery,
+  FilmUpdatePatchInput,
   FilmUpdateInput,
   RemoveSourceInput,
+  RestoreSourceInput,
   ScanStartInput,
   SettingsUpdateInput,
+  CustomCategoryCreateInput,
+  CustomCategoryRenameInput,
+  CustomCategoryRemoveInput,
+  CustomCategoryReorderInput,
   UpdateSourceInput,
 } from '../../shared/contracts';
-import { isFilmStatus, isRecord, isUuid } from '../../shared/validation';
+import { isRecord, isUuid } from '../../shared/validation';
 import { parseNfo } from '../metadata/NfoParser';
 import { mapNfoMetadata } from '../metadata/NfoMapper';
 import type { DatabaseManager } from '../database/DatabaseManager';
@@ -24,6 +35,7 @@ import { resolveExistingSafeMediaPath } from '../media/MediaPathResolver';
 import { FileOpenService } from '../system/FileOpenService';
 import type { AppLogger } from '../system/AppLogger';
 import { IPC_CHANNELS } from '../../shared/ipcChannels';
+import { buildFilmCsv } from '../export/FilmCsvExporter';
 
 interface IpcContext {
   window: BrowserWindow;
@@ -73,8 +85,29 @@ export function registerIpcHandlers(context: IpcContext): () => void {
     context.database.transaction(() => context.sources.remove(input));
     return null;
   });
+  handle(IPC_CHANNELS.sourcesRestore, (_event, payload) => context.sources.restore(validateRestoreSource(payload).id));
+  handle(IPC_CHANNELS.sourcesFindDeleted, (_event, payload) => context.sources.findDeletedByRootPath(validateFindDeletedSource(payload).rootPath));
 
   handle(IPC_CHANNELS.filmsPage, (_event, payload) => context.films.page(validateFilmPageQuery(payload, context.settings.get().pageSize)));
+  handle(IPC_CHANNELS.filmsNavigationCounts, () => context.films.navigationCounts());
+  handle(IPC_CHANNELS.filmsExportCsv, async (_event, payload) => {
+    const query = validateFilmPageQuery(payload, context.settings.get().pageSize);
+    const rows = context.films.csvRows(query);
+    const date = new Date().toISOString().slice(0, 10);
+    const destination = await dialog.showSaveDialog(context.window, {
+      title: '导出已整理影片 CSV',
+      defaultPath: `已整理影片-${date}.csv`,
+      filters: [{ name: 'CSV 文件', extensions: ['csv'] }],
+    });
+    if (destination.canceled || !destination.filePath) return { saved: false, rowCount: 0 };
+    try {
+      await fs.promises.writeFile(destination.filePath, buildFilmCsv(rows), 'utf8');
+    } catch {
+      throw new Error('CSV_EXPORT_FAILED');
+    }
+    context.logger.info('Organized films exported to CSV', { rowCount: rows.length });
+    return { saved: true, rowCount: rows.length, filePath: destination.filePath };
+  });
   handle(IPC_CHANNELS.filmsDetail, (_event, payload) => {
     if (!isUuid(payload)) throw new Error('INVALID_FILM_ID');
     const detail = context.films.detail(payload);
@@ -82,6 +115,19 @@ export function registerIpcHandlers(context: IpcContext): () => void {
     return detail;
   });
   handle(IPC_CHANNELS.filmsUpdate, (_event, payload) => context.films.update(validateFilmUpdate(payload)));
+  handle(IPC_CHANNELS.filmsUpdatePatch, (_event, payload) => {
+    const input = validateFilmUpdatePatch(payload);
+    context.logger.info('film:update-patch', { filmId: input.id, fields: Object.keys(input.patch) });
+    return context.films.updatePatch({ id: input.id, ...input.patch });
+  });
+  handle(IPC_CHANNELS.filmsUpdateFavorite, (_event, payload) => {
+    const input = validateFilmFavoriteUpdate(payload);
+    return context.films.updateFavorite(input.id, input.favorite);
+  });
+  handle(IPC_CHANNELS.filmsUpdateCategories, (_event, payload) => {
+    const input = validateFilmCategoriesUpdate(payload);
+    return context.films.updateCategories(input.id, input.categoryIds, input.newCategoryNames);
+  });
   handle(IPC_CHANNELS.filmsOpen, async (_event, payload) => {
     if (!isUuid(payload)) throw new Error('INVALID_FILM_ID');
     await context.fileOpen.openFilm(payload);
@@ -93,7 +139,7 @@ export function registerIpcHandlers(context: IpcContext): () => void {
     return null;
   });
   handle(IPC_CHANNELS.filmsImportNfo, async (_event, payload) => {
-    if (!isRecord(payload) || !isUuid(payload.id) || (payload.mode !== 'supplement' && payload.mode !== 'force')) throw new Error('INVALID_NFO_REQUEST');
+    if (!isRecord(payload) || !isUuid(payload.id) || !['supplement', 'force-merge', 'force-replace'].includes(String(payload.mode))) throw new Error('INVALID_NFO_REQUEST');
     const detail = context.films.detail(payload.id);
     if (!detail || !detail.nfoRelativePath) throw new Error('NFO_NOT_FOUND');
     const source = context.sources.findById(detail.sourceId);
@@ -101,9 +147,9 @@ export function registerIpcHandlers(context: IpcContext): () => void {
     const nfoPath = await resolveExistingSafeMediaPath(source.rootPath, detail.nfoRelativePath);
     const xml = await fs.promises.readFile(nfoPath, 'utf8');
     const mapped = mapNfoMetadata(parseNfo(xml), detail.title);
-    return payload.mode === 'force'
-      ? context.films.forceImportNfo(detail.id, mapped, new Date().toISOString())
-      : context.films.supplementFromMappedNfo(detail.id, mapped, new Date().toISOString());
+    return payload.mode === 'supplement'
+      ? context.films.supplementFromMappedNfo(detail.id, mapped, new Date().toISOString())
+      : context.films.forceImportNfo(detail.id, mapped, new Date().toISOString(), payload.mode === 'force-merge' ? 'merge' : 'replace');
   });
   handle(IPC_CHANNELS.filmsRescan, (_event, payload) => {
     if (!isRecord(payload) || !isUuid(payload.id)) throw new Error('INVALID_FILM_ID');
@@ -111,7 +157,44 @@ export function registerIpcHandlers(context: IpcContext): () => void {
     if (!detail) throw new Error('FILM_NOT_FOUND');
     return context.scan.start({ sourceIds: [detail.sourceId] });
   });
-  handle(IPC_CHANNELS.tagsList, () => context.films.listTags());
+  handle(IPC_CHANNELS.filmsPartsList, (_event, payload) => {
+    if (!isUuid(payload)) throw new Error('INVALID_FILM_ID');
+    return context.films.parts(payload);
+  });
+  handle(IPC_CHANNELS.filmsPartsOpen, async (_event, payload) => {
+    if (!isUuid(payload)) throw new Error('INVALID_PART_ID');
+    await context.fileOpen.openPart(payload);
+    return null;
+  });
+  handle(IPC_CHANNELS.filmsPartsShowInFolder, async (_event, payload) => {
+    if (!isUuid(payload)) throw new Error('INVALID_PART_ID');
+    await context.fileOpen.showPartInFolder(payload);
+    return null;
+  });
+  handle(IPC_CHANNELS.filmsRecordsPageAll, (_event, payload) => context.films.page({ ...validateFilmPageQuery(payload, context.settings.get().pageSize), allData: true }));
+  handle(IPC_CHANNELS.filmsRecordsDelete, (_event, payload) => {
+    const input = validateFilmRecordDelete(payload);
+    context.films.deleteRecords([input.id]);
+    return null;
+  });
+  handle(IPC_CHANNELS.filmsRecordsDeleteBatch, (_event, payload) => {
+    const input = validateFilmRecordDeleteBatch(payload);
+    context.films.deleteRecords(input.ids);
+    return null;
+  });
+  handle(IPC_CHANNELS.nfoTagsList, () => context.films.listTags());
+  handle(IPC_CHANNELS.actorsList, () => context.films.listActors());
+  handle(IPC_CHANNELS.categoriesList, () => context.films.listCategories());
+  handle(IPC_CHANNELS.categoriesCreate, (_event, payload) => context.films.createCategory(validateCategoryCreate(payload).name));
+  handle(IPC_CHANNELS.categoriesRename, (_event, payload) => {
+    const input = validateCategoryRename(payload);
+    return context.films.renameCategory(input.id, input.name);
+  });
+  handle(IPC_CHANNELS.categoriesRemove, (_event, payload) => {
+    context.films.removeCategory(validateCategoryRemove(payload).id);
+    return null;
+  });
+  handle(IPC_CHANNELS.categoriesReorder, (_event, payload) => context.films.reorderCategories(validateCategoryReorder(payload).ids));
 
   handle(IPC_CHANNELS.scanStart, (_event, payload) => context.scan.start(validateScanStart(payload)));
   handle(IPC_CHANNELS.scanCancel, () => {
@@ -148,7 +231,18 @@ export function registerIpcHandlers(context: IpcContext): () => void {
   });
 
   handle(IPC_CHANNELS.settingsGet, () => context.settings.get());
-  handle(IPC_CHANNELS.settingsUpdate, (_event, payload) => context.settings.update(validateSettingsUpdate(payload)));
+  handle(IPC_CHANNELS.settingsUpdate, (_event, payload) => {
+    const input = validateSettingsUpdate(payload);
+    context.logger.info('settings:update start', { keys: Object.keys(input) });
+    try {
+      const result = context.settings.update(input);
+      context.logger.info('settings:update success', { cardSize: result.cardSize });
+      return result;
+    } catch (error) {
+      context.logger.error('settings:update failed', { error: error instanceof Error ? error.message : 'SETTINGS_UPDATE_FAILED' });
+      throw error;
+    }
+  });
   handle(IPC_CHANNELS.settingsTestFfprobe, (_event, payload) => testFfprobe(validateFfprobePath(payload)));
 
   const removeProgressListener = context.scan.onProgress((progress) => {
@@ -182,7 +276,16 @@ function publicMessage(code: string): string {
     TITLE_REQUIRED: '标题不能为空',
     FILE_OPEN_FAILED: '无法打开原始影片',
     FILM_MISSING: '原始影片文件不存在',
-    INVALID_STATUS: '无效的影片状态',
+    INVALID_CARD_SIZE: '卡片宽度必须在 140 到 320 像素之间',
+    SOURCE_PATH_EXISTS: '该目录已经存在活动来源',
+    CATEGORY_NOT_FOUND: '分类不存在',
+    CATEGORY_EXISTS: '同名分类已经存在',
+    INVALID_CATEGORY_NAME: '分类名称不能为空',
+    INVALID_CATEGORY_ORDER: '分类排序数据无效',
+    CSV_EXPORT_FAILED: 'CSV 导出失败，请检查保存位置后重试',
+    INVALID_PART_ID: '影片分段不存在',
+    DATABASE_MERGE_FAILED: '数据库合并失败，请查看扫描详情和日志',
+    INCOMING_FILM_FILE_DUPLICATES: '扫描候选中发现同一个影片文件被重复关联',
   };
   return messages[code] ?? '操作失败，请查看日志获取更多信息';
 }
@@ -216,8 +319,48 @@ function validateUpdateSource(payload: unknown): UpdateSourceInput {
 }
 
 function validateRemoveSource(payload: unknown): RemoveSourceInput {
-  if (!isRecord(payload) || !isUuid(payload.id) || (payload.mode !== 'archive' && payload.mode !== 'delete')) throw new Error('INVALID_REMOVE_SOURCE');
+  if (!isRecord(payload) || !isUuid(payload.id) || (payload.mode !== 'keep-records' && payload.mode !== 'delete-records')) throw new Error('INVALID_REMOVE_SOURCE');
   return { id: payload.id, mode: payload.mode };
+}
+
+function validateRestoreSource(payload: unknown): RestoreSourceInput {
+  if (!isRecord(payload) || !isUuid(payload.id)) throw new Error('INVALID_SOURCE_INPUT');
+  return { id: payload.id };
+}
+
+function validateFindDeletedSource(payload: unknown): FindDeletedSourceInput {
+  if (!isRecord(payload) || typeof payload.rootPath !== 'string' || !payload.rootPath.trim()) throw new Error('INVALID_SOURCE_INPUT');
+  return { rootPath: payload.rootPath.trim() };
+}
+
+function validateFilmRecordDelete(payload: unknown): FilmRecordDeleteInput {
+  if (!isRecord(payload) || !isUuid(payload.id)) throw new Error('INVALID_FILM_ID');
+  return { id: payload.id };
+}
+
+function validateFilmRecordDeleteBatch(payload: unknown): FilmRecordDeleteBatchInput {
+  if (!isRecord(payload) || !Array.isArray(payload.ids) || payload.ids.length > 500 || payload.ids.some((id) => !isUuid(id))) throw new Error('INVALID_FILM_IDS');
+  return { ids: [...new Set(payload.ids)] };
+}
+
+function validateCategoryCreate(payload: unknown): CustomCategoryCreateInput {
+  if (!isRecord(payload) || typeof payload.name !== 'string' || !payload.name.trim()) throw new Error('INVALID_CATEGORY_NAME');
+  return { name: payload.name.slice(0, 500) };
+}
+
+function validateCategoryRename(payload: unknown): CustomCategoryRenameInput {
+  if (!isRecord(payload) || !isUuid(payload.id) || typeof payload.name !== 'string' || !payload.name.trim()) throw new Error('INVALID_CATEGORY_NAME');
+  return { id: payload.id, name: payload.name.slice(0, 500) };
+}
+
+function validateCategoryRemove(payload: unknown): CustomCategoryRemoveInput {
+  if (!isRecord(payload) || !isUuid(payload.id)) throw new Error('CATEGORY_NOT_FOUND');
+  return { id: payload.id };
+}
+
+function validateCategoryReorder(payload: unknown): CustomCategoryReorderInput {
+  if (!isRecord(payload) || !Array.isArray(payload.ids) || payload.ids.length > 500 || payload.ids.some((id) => !isUuid(id))) throw new Error('INVALID_CATEGORY_ORDER');
+  return { ids: [...new Set(payload.ids)] };
 }
 
 function validateFilmPageQuery(payload: unknown, defaultPageSize: number): FilmPageQuery {
@@ -225,20 +368,41 @@ function validateFilmPageQuery(payload: unknown, defaultPageSize: number): FilmP
   const page = numberInRange(payload.page, 1, 100_000, 1);
   const pageSize = numberInRange(payload.pageSize, 1, 200, defaultPageSize);
   const query: FilmPageQuery = { page, pageSize };
-  for (const key of ['search', 'sourceId', 'tag', 'genre'] as const) {
+  for (const key of ['search', 'sourceId', 'actor'] as const) {
     const value = payload[key];
     if (value !== undefined) {
       if (typeof value !== 'string' || value.length > 500) throw new Error('INVALID_PAGE_QUERY');
       query[key] = value;
     }
   }
-  if (payload.status !== undefined) {
-    if (payload.status !== 'all' && !isFilmStatus(payload.status)) throw new Error('INVALID_PAGE_QUERY');
-    query.status = payload.status;
+  if (payload.categoryIds !== undefined) {
+    if (!Array.isArray(payload.categoryIds) || payload.categoryIds.length > 100 || payload.categoryIds.some((id) => !isUuid(id))) throw new Error('INVALID_PAGE_QUERY');
+    query.categoryIds = [...new Set(payload.categoryIds)];
+  }
+  if (payload.categoryMatch !== undefined) {
+    if (payload.categoryMatch !== 'any' && payload.categoryMatch !== 'all') throw new Error('INVALID_PAGE_QUERY');
+    query.categoryMatch = payload.categoryMatch;
+  }
+  if (payload.nfoTagIds !== undefined) {
+    if (!Array.isArray(payload.nfoTagIds) || payload.nfoTagIds.length > 100 || payload.nfoTagIds.some((id) => !isUuid(id))) throw new Error('INVALID_PAGE_QUERY');
+    query.nfoTagIds = [...new Set(payload.nfoTagIds)];
+  }
+  if (payload.nfoTagMatch !== undefined) {
+    if (payload.nfoTagMatch !== 'any' && payload.nfoTagMatch !== 'all') throw new Error('INVALID_PAGE_QUERY');
+    query.nfoTagMatch = payload.nfoTagMatch;
+  }
+  if (payload.organizationState !== undefined) {
+    if (!['all', 'organized', 'unorganized'].includes(String(payload.organizationState))) throw new Error('INVALID_PAGE_QUERY');
+    query.organizationState = payload.organizationState as FilmPageQuery['organizationState'];
   }
   if (payload.minRating !== undefined) query.minRating = numberInRange(payload.minRating, 0, 10, 0);
   if (payload.favoriteOnly !== undefined) query.favoriteOnly = Boolean(payload.favoriteOnly);
   if (payload.missingOnly !== undefined) query.missingOnly = Boolean(payload.missingOnly);
+  if (payload.allData !== undefined) query.allData = Boolean(payload.allData);
+  if (payload.availability !== undefined) {
+    if (!['all', 'available', 'partial_missing', 'missing', 'source_offline', 'source_removed', 'archived'].includes(String(payload.availability))) throw new Error('INVALID_PAGE_QUERY');
+    query.availability = payload.availability as FilmPageQuery['availability'];
+  }
   if (payload.sort !== undefined) {
     if (!['recent', 'title', 'year', 'rating', 'file'].includes(String(payload.sort))) throw new Error('INVALID_PAGE_QUERY');
     query.sort = payload.sort as FilmPageQuery['sort'];
@@ -251,21 +415,38 @@ function validateFilmUpdate(payload: unknown): FilmUpdateInput {
   const input: FilmUpdateInput = { id: payload.id };
   if (payload.title !== undefined && typeof payload.title !== 'string') throw new Error('INVALID_FILM_UPDATE');
   if (payload.title !== undefined) input.title = payload.title;
-  if (payload.status !== undefined) {
-    if (!isFilmStatus(payload.status)) throw new Error('INVALID_STATUS');
-    input.status = payload.status;
+  if (payload.originalTitle !== undefined) {
+    if (typeof payload.originalTitle !== 'string') throw new Error('INVALID_FILM_UPDATE');
+    input.originalTitle = payload.originalTitle;
   }
-  if (payload.favorite !== undefined) input.favorite = Boolean(payload.favorite);
-  if (payload.rating !== undefined) input.rating = numberInRange(payload.rating, 0, 10, 0);
+  if (payload.rating !== undefined) input.rating = decimalInRange(payload.rating, 0, 10, 0);
   if (payload.notes !== undefined) {
     if (typeof payload.notes !== 'string') throw new Error('INVALID_FILM_UPDATE');
     input.notes = payload.notes;
   }
-  if (payload.tags !== undefined) {
-    if (!Array.isArray(payload.tags) || payload.tags.some((tag) => typeof tag !== 'string')) throw new Error('INVALID_FILM_UPDATE');
-    input.tags = payload.tags.slice(0, 100).map((tag) => tag.trim()).filter(Boolean);
-  }
   return input;
+}
+
+function validateFilmFavoriteUpdate(payload: unknown): FilmFavoriteUpdateInput {
+  if (!isRecord(payload) || !isUuid(payload.id) || typeof payload.favorite !== 'boolean') throw new Error('INVALID_FILM_UPDATE');
+  return { id: payload.id, favorite: payload.favorite };
+}
+
+function validateFilmCategoriesUpdate(payload: unknown): FilmCategoriesUpdateInput {
+  if (!isRecord(payload) || !isUuid(payload.id) || !Array.isArray(payload.categoryIds) || payload.categoryIds.length > 100 || payload.categoryIds.some((id) => !isUuid(id))) throw new Error('INVALID_FILM_UPDATE');
+  if (payload.newCategoryNames !== undefined && (!Array.isArray(payload.newCategoryNames) || payload.newCategoryNames.length > 100 || payload.newCategoryNames.some((name) => typeof name !== 'string'))) throw new Error('INVALID_FILM_UPDATE');
+  return {
+    id: payload.id,
+    categoryIds: [...new Set(payload.categoryIds)],
+    newCategoryNames: payload.newCategoryNames?.map((name) => name.trim()).filter(Boolean),
+  };
+}
+
+function validateFilmUpdatePatch(payload: unknown): FilmUpdatePatchInput {
+  if (!isRecord(payload) || !isUuid(payload.id) || !isRecord(payload.patch)) throw new Error('INVALID_FILM_UPDATE');
+  const { id, ...patch } = validateFilmUpdate({ id: payload.id, ...payload.patch });
+  void id;
+  return { id: payload.id, patch };
 }
 
 function validateScanStart(payload: unknown): ScanStartInput {
@@ -304,6 +485,12 @@ function numberInRange(value: unknown, min: number, max: number, fallback: numbe
   const number = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(number)) return fallback;
   return Math.min(max, Math.max(min, Math.floor(number)));
+}
+
+function decimalInRange(value: unknown, min: number, max: number, fallback: number): number {
+  const number = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.min(max, Math.max(min, number));
 }
 
 function testFfprobe(ffprobePath: string): Promise<{ ok: boolean; message: string; version: string | null }> {

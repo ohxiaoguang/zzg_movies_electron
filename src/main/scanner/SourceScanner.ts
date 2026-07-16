@@ -7,7 +7,8 @@ import { mapNfoMetadata } from '../metadata/NfoMapper';
 import { parseNfo } from '../metadata/NfoParser';
 import { calculateQuickFingerprint } from './FilmFingerprint';
 import { ScanCancellation } from './ScanCancellation';
-import type { FilmCandidate, ScanFileEntry } from './ScanCandidate';
+import type { FilmCandidate, FilmFileCandidate, ScanFileEntry } from './ScanCandidate';
+import { logicalFilmKey, parseFilmPartName } from './PartNaming';
 import { enrichMatchedAssets, matchSidecars } from './SidecarMatcher';
 
 export interface SourceScanStats {
@@ -119,27 +120,44 @@ export class SourceScanner {
         return { complete: false, cancelled: true, offline: false, candidates: [], stats };
       }
       const videoFiles = files.filter((file) => this.videoExtensions.has(extensionOf(file.name)));
-      const mainFiles = videoFiles.filter((file) => !isPreviewSidecar(file, videoFiles));
-      for (const mainFile of mainFiles) {
+      const groups = groupVideoFiles(videoFiles.filter((file) => !isPreviewSidecar(file, videoFiles)));
+      for (const group of groups) {
         if (this.options.cancellation.cancelled) {
           return { complete: false, cancelled: true, offline: false, candidates: [], stats };
         }
         this.options.onProgress?.({
           currentDirectory: path.relative(rootPath, directory) || '.',
-          currentFilm: mainFile.name,
+          currentFilm: group.files[0]?.name ?? null,
           discovered: stats.discovered,
           processed: stats.processed,
         });
         try {
           const match = matchSidecars(
-            mainFile,
+            group.files[0]!,
             files,
             extraFanartByDirectory.get(directory) ?? [],
-            mainFiles.length,
+            groups.length,
             [...this.imageExtensions],
             [...this.videoExtensions],
+            group.baseName,
           );
-          const fileStat = await fs.promises.stat(mainFile.absolutePath);
+          const primary = group.files[0]!;
+          const fileEntries: FilmFileCandidate[] = [];
+          for (const file of group.files) {
+            const fileStat = await fs.promises.stat(file.absolutePath);
+            fileEntries.push({
+              absolutePath: file.absolutePath,
+              relativePath: file.relativePath,
+              filename: file.name,
+              partType: parseFilmPartName(file.name)?.partType ?? 'single',
+              partNumber: parseFilmPartName(file.name)?.partNumber ?? 1,
+              isPrimary: file.absolutePath === primary.absolutePath,
+              fileSize: fileStat.size,
+              fileModifiedAt: fileStat.mtime.toISOString(),
+              fingerprint: await calculateQuickFingerprint(file.absolutePath, fileStat.size),
+            });
+          }
+          const primaryFile = fileEntries.find((file) => file.isPrimary)!;
           const nfoStat = match.nfo ? await statOrNull(match.nfo.absolutePath) : null;
           let nfoMetadata = null;
           let nfoStatus: FilmCandidate['nfoStatus'] = match.nfo ? 'ok' : 'missing';
@@ -160,7 +178,7 @@ export class SourceScanner {
             nfoError = 'NFO_UNREADABLE';
             stats.nfoErrors += 1;
           }
-          const fallbackTitle = path.parse(mainFile.name).name;
+          const fallbackTitle = group.baseName;
           const mapped = mapNfoMetadata(nfoMetadata, fallbackTitle);
           const assetStats = new Map<string, fs.Stats>();
           await Promise.all(
@@ -170,17 +188,16 @@ export class SourceScanner {
             }),
           );
           const assets = enrichMatchedAssets(match.assets, assetStats);
-          const fingerprint = await calculateQuickFingerprint(mainFile.absolutePath, fileStat.size);
           candidates.push({
             ...mapped,
             sourceId: this.source.id,
             sourceRootPath: rootPath,
-            absolutePath: mainFile.absolutePath,
-            relativePath: mainFile.relativePath,
-            filename: mainFile.name,
-            fileSize: fileStat.size,
-            fileModifiedAt: fileStat.mtime.toISOString(),
-            fingerprint,
+            absolutePath: primary.absolutePath,
+            relativePath: primary.relativePath,
+            filename: primary.name,
+            fileSize: primaryFile.fileSize,
+            fileModifiedAt: primaryFile.fileModifiedAt,
+            fingerprint: primaryFile.fingerprint,
             nfoRelativePath: match.nfo?.relativePath ?? null,
             nfoModifiedAt: nfoStat?.mtime.toISOString() ?? null,
             nfoHash,
@@ -188,6 +205,9 @@ export class SourceScanner {
             nfoError,
             assets,
             ambiguousAssets: match.ambiguousAssets,
+            logicalKey: group.key,
+            partBaseName: group.baseName,
+            files: fileEntries,
           });
           stats.ambiguousAssets += match.ambiguousAssets;
         } catch {
@@ -197,7 +217,7 @@ export class SourceScanner {
         stats.processed += 1;
         this.options.onProgress?.({
           currentDirectory: path.relative(rootPath, directory) || '.',
-          currentFilm: mainFile.name,
+          currentFilm: group.files[0]?.name ?? null,
           discovered: stats.discovered,
           processed: stats.processed,
         });
@@ -249,6 +269,37 @@ function isPreviewSidecar(file: ScanFileEntry, videoFiles: ScanFileEntry[]): boo
   if (!hasSibling) return false;
   if (generic.has(stem)) return true;
   return /-(preview|trailer|sample)$/i.test(stem);
+}
+
+export interface VideoFileGroup {
+  key: string;
+  baseName: string;
+  files: ScanFileEntry[];
+}
+
+export function groupVideoFiles(videoFiles: ScanFileEntry[]): VideoFileGroup[] {
+  const groups = new Map<string, VideoFileGroup>();
+  for (const file of videoFiles) {
+    const parsed = parseFilmPartName(file.name);
+    const relativeDirectory = path.dirname(file.relativePath);
+    const key = logicalFilmKey(relativeDirectory, file.name);
+    const group = groups.get(key) ?? {
+      key,
+      baseName: parsed?.baseName ?? path.parse(file.name).name,
+      files: [],
+    };
+    group.files.push(file);
+    groups.set(key, group);
+  }
+  return [...groups.values()].map((group) => ({
+    ...group,
+    files: [...group.files].sort((left, right) => {
+      const leftPart = parseFilmPartName(left.name);
+      const rightPart = parseFilmPartName(right.name);
+      return (leftPart?.partNumber ?? 1) - (rightPart?.partNumber ?? 1)
+        || left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: 'base' });
+    }),
+  }));
 }
 
 async function statOrNull(filePath: string): Promise<fs.Stats | null> {

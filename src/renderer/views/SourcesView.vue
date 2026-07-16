@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import { Delete, Edit, FolderOpened, Plus, Refresh, Operation } from '@element-plus/icons-vue';
 import type { MediaSourceDto } from '../../shared/contracts';
 import { useSourceStore } from '../stores/sources';
@@ -13,7 +13,8 @@ const removeVisible = ref(false);
 const editingId = ref<string | null>(null);
 const removing = ref<MediaSourceDto | null>(null);
 const saving = ref(false);
-const removeMode = ref<'archive' | 'delete'>('archive');
+const removeMode = ref<'keep-records' | 'delete-records'>('keep-records');
+const removingSource = ref(false);
 const form = reactive({ name: '', rootPath: '', enabled: true, recursive: true });
 
 onMounted(() => void sourceStore.fetch());
@@ -34,9 +35,18 @@ async function save(): Promise<void> {
   saving.value = true;
   try {
     const sourceInput = { name: form.name, rootPath: form.rootPath, enabled: form.enabled, recursive: form.recursive };
-    const result = editingId.value
-      ? await window.filmLibrary.sources.update({ id: editingId.value, ...sourceInput })
-      : await window.filmLibrary.sources.create(sourceInput);
+    let result;
+    if (editingId.value) {
+      result = await window.filmLibrary.sources.update({ id: editingId.value, ...sourceInput });
+    } else {
+      const deleted = await window.filmLibrary.sources.findDeleted({ rootPath: sourceInput.rootPath });
+      if (deleted.ok && deleted.data) {
+        await ElMessageBox.confirm('检测到同一路径曾经删除过来源，是否恢复原来源记录？', '恢复来源', { type: 'info' });
+        result = await window.filmLibrary.sources.restore({ id: deleted.data.id });
+      } else {
+        result = await window.filmLibrary.sources.create(sourceInput);
+      }
+    }
     if (result.ok) { ElMessage.success(editingId.value ? '来源已更新' : '来源已添加'); dialogVisible.value = false; await sourceStore.fetch(); }
     else ElMessage.error(result.error.message);
   } catch (error) {
@@ -46,12 +56,20 @@ async function save(): Promise<void> {
     saving.value = false;
   }
 }
-function openRemove(source: MediaSourceDto): void { removing.value = source; removeMode.value = 'archive'; removeVisible.value = true; }
+function openRemove(source: MediaSourceDto): void { removing.value = source; removeMode.value = 'keep-records'; removeVisible.value = true; }
 async function remove(): Promise<void> {
   if (!removing.value) return;
-  const result = await window.filmLibrary.sources.remove({ id: removing.value.id, mode: removeMode.value });
-  if (result.ok) { ElMessage.success(removeMode.value === 'archive' ? '来源已归档，影片记录保留' : '来源配置和影片记录已删除'); removeVisible.value = false; await sourceStore.fetch(); }
-  else ElMessage.error(result.error.message);
+  removingSource.value = true;
+  try {
+    const result = await window.filmLibrary.sources.remove({ id: removing.value.id, mode: removeMode.value });
+    if (result.ok) { ElMessage.success(removeMode.value === 'keep-records' ? '来源已删除，影片记录保留在所有数据中' : '来源和相关数据库影片已删除'); removeVisible.value = false; await sourceStore.fetch(); }
+    else ElMessage.error(result.error.message);
+  } catch (error) {
+    console.error('[sources] remove failed', error);
+    ElMessage.error('删除来源失败，请查看日志');
+  } finally {
+    removingSource.value = false;
+  }
 }
 async function scanSource(source: MediaSourceDto): Promise<void> {
   const started = await scan.start([source.id]);
@@ -72,7 +90,7 @@ async function scanSource(source: MediaSourceDto): Promise<void> {
     <div v-else class="empty-state source-empty"><div><FolderOpened :size="38" /><h3>还没有影片来源</h3><p>添加一个外部目录，然后执行扫描。</p><el-button type="primary" @click="openCreate">添加第一个来源</el-button></div></div>
 
     <el-dialog v-model="dialogVisible" :title="editingId ? '编辑来源' : '添加影片来源'" width="520px"><el-form label-position="top"><el-form-item label="名称"><el-input v-model="form.name" placeholder="例如：主盘电影" /></el-form-item><el-form-item label="根目录"><el-input v-model="form.rootPath" placeholder="选择外部影片目录"><template #append><el-button @click="chooseDirectory">选择目录</el-button></template></el-input></el-form-item><el-form-item label="扫描选项"><el-switch v-model="form.enabled" active-text="启用来源" /><el-switch v-model="form.recursive" active-text="递归扫描" style="margin-left: 24px" /></el-form-item></el-form><template #footer><el-button @click="dialogVisible = false">取消</el-button><el-button type="primary" :loading="saving" @click="save">保存</el-button></template></el-dialog>
-    <el-dialog v-model="removeVisible" title="删除来源" width="500px"><p>请选择如何处理“{{ removing?.name }}”在本地数据库中的记录。外部媒体文件始终不会被操作。</p><el-radio-group v-model="removeMode" class="remove-options"><el-radio value="archive">仅删除来源配置，保留影片记录并归档</el-radio><el-radio value="delete">删除来源配置和数据库影片记录</el-radio></el-radio-group><template #footer><el-button @click="removeVisible = false">取消</el-button><el-button :type="removeMode === 'delete' ? 'danger' : 'primary'" @click="remove">确认</el-button></template></el-dialog>
+    <el-dialog v-model="removeVisible" title="删除来源" width="500px"><p>请选择如何处理“{{ removing?.name }}”在本地数据库中的记录。外部媒体文件始终不会被操作。</p><el-radio-group v-model="removeMode" class="remove-options"><el-radio value="keep-records">删除来源配置，保留影片数据库记录</el-radio><el-radio value="delete-records">删除来源配置和相关影片数据库记录</el-radio></el-radio-group><template #footer><el-button @click="removeVisible = false">取消</el-button><el-button :loading="removingSource" :type="removeMode === 'delete-records' ? 'danger' : 'primary'" @click="remove">确认</el-button></template></el-dialog>
   </div>
 </template>
 

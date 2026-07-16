@@ -22,4 +22,21 @@ export class FileOpenService {
     if (!fs.existsSync(filePath)) throw new Error('FILM_MISSING');
     shell.showItemInFolder(filePath);
   }
+
+  public async openPart(partId: string): Promise<string> {
+    const location = this.films.partLocation(partId);
+    if (!location) throw new Error('FILM_MISSING');
+    const filePath = await resolveExistingSafeMediaPath(location.rootPath, location.relativePath);
+    const result = await shell.openPath(filePath);
+    if (result) throw new Error('FILE_OPEN_FAILED');
+    return filePath;
+  }
+
+  public async showPartInFolder(partId: string): Promise<void> {
+    const location = this.films.partLocation(partId);
+    if (!location) throw new Error('FILM_MISSING');
+    const filePath = await resolveExistingSafeMediaPath(location.rootPath, location.relativePath);
+    if (!fs.existsSync(filePath)) throw new Error('FILM_MISSING');
+    shell.showItemInFolder(filePath);
+  }
 }

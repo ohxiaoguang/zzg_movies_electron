@@ -36,12 +36,13 @@ export function matchSidecars(
   mainFilmCount: number,
   imageExtensions: readonly string[] = DEFAULT_IMAGE_EXTENSIONS,
   videoExtensions: readonly string[] = DEFAULT_VIDEO_EXTENSIONS,
+  logicalBaseName?: string,
 ): SidecarMatch {
-  const base = path.parse(mainFile.name).name.toLowerCase();
+  const baseNames = [...new Set([logicalBaseName, path.parse(mainFile.name).name].filter(Boolean).map((value) => value!.toLowerCase()))];
   const normalizedImages = new Set(imageExtensions.map((extension) => extension.toLowerCase().replace(/^\./, '')));
   const normalizedVideos = new Set(videoExtensions.map((extension) => extension.toLowerCase().replace(/^\./, '')));
   const sidecarFiles = filesInDirectory.filter((entry) => entry.absolutePath !== mainFile.absolutePath);
-  const exactNfo = sidecarFiles.find((entry) => entry.name.toLowerCase() === `${base}.nfo`);
+  const exactNfo = sidecarFiles.find((entry) => baseNames.some((base) => entry.name.toLowerCase() === `${base}.nfo`));
   const genericNfo = mainFilmCount === 1 ? sidecarFiles.find((entry) => isGenericNfo(entry.name)) ?? null : null;
   const nfo = exactNfo ?? genericNfo;
   const assets: Array<{ assetType: AssetType; entry: ScanFileEntry; sortOrder: number }> = [];
@@ -53,7 +54,8 @@ export function matchSidecars(
       const extension = extensionOf(entry.name);
       if (!normalizedImages.has(extension) && !normalizedVideos.has(extension)) return false;
       const stem = path.parse(entry.name).name.toLowerCase();
-      return suffixes.some((suffix) => stem === `${base}-${suffix}`) && isCompatibleAsset(assetType, extension, normalizedImages, normalizedVideos);
+      return baseNames.some((base) => suffixes.some((suffix) => stem === `${base}-${suffix}`))
+        && isCompatibleAsset(assetType, extension, normalizedImages, normalizedVideos);
     });
     const matches = exactMatches.length > 0
       ? exactMatches

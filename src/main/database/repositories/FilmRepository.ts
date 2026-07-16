@@ -1,17 +1,25 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import type {
+  ActorDto,
   FilmAssetDto,
+  CustomCategoryDto,
   FilmDetailDto,
+  FilmImageDto,
+  FilmPartDto,
   FilmPageDto,
   FilmPageQuery,
   FilmSummaryDto,
   FilmUpdateInput,
   TagDto,
 } from '../../../shared/contracts';
-import type { AssetType, FilmStatus } from '../../../shared/enums';
-import { isFilmStatus } from '../../../shared/validation';
-import type { FilmCandidate } from '../../scanner/ScanCandidate';
+import type { FilmCsvRow } from '../../export/FilmCsvExporter';
+import type { AssetType } from '../../../shared/enums';
+import type { FilmCandidate, FilmFileCandidate } from '../../scanner/ScanCandidate';
+import { logicalFilmKey, normalizeRelativePath, physicalFileKey } from '../../scanner/PartNaming';
+import { FilmFileOwnershipRepairService } from '../FilmFileOwnershipRepairService';
 
 interface FilmSummaryRow {
   id: string;
@@ -22,11 +30,16 @@ interface FilmSummaryRow {
   title: string;
   original_title: string | null;
   year: number | null;
-  status: FilmStatus;
   favorite: number;
   rating: number;
   missing: number;
   updated_at: string;
+  source_root_path: string;
+  source_deleted_at: string | null;
+  total_file_count: number;
+  existing_file_count: number;
+  missing_file_count: number;
+  archived: number;
 }
 
 interface FilmRow extends FilmSummaryRow {
@@ -55,6 +68,31 @@ interface FilmRow extends FilmSummaryRow {
   last_seen_at: string | null;
 }
 
+interface CategoryRow {
+  id: string;
+  name: string;
+  sort_order: number;
+  film_count?: number;
+  film_id?: string;
+}
+
+interface FilmFileRow {
+  id: string;
+  film_id: string;
+  source_id: string;
+  relative_path: string;
+  filename: string;
+  part_type: 'single' | 'cd' | 'disc';
+  part_number: number;
+  is_primary: number;
+  file_size: number;
+  file_modified_at: string | null;
+  fingerprint: string | null;
+  missing: number;
+  created_at: string;
+  updated_at: string;
+}
+
 interface AssetRow {
   id: string;
   film_id: string;
@@ -72,10 +110,34 @@ export interface ExistingFilmRow {
   fingerprint: string | null;
 }
 
+export interface FilmFileConflictDetails {
+  sourceId: string;
+  relativePath: string;
+  existingFilmId: string | null;
+  existingFilmTitle: string | null;
+  targetFilmId: string;
+  targetFilmTitle: string | null;
+  groupKey: string;
+  sqlStage: string;
+  sqliteErrorCode: string | null;
+}
+
+export class FilmFileOwnershipConflictError extends Error {
+  public readonly details: FilmFileConflictDetails;
+
+  public constructor(details: FilmFileConflictDetails, cause: unknown) {
+    super('DATABASE_MERGE_FAILED', { cause });
+    this.name = 'FilmFileOwnershipConflictError';
+    this.details = details;
+  }
+}
+
 export interface MediaLocation {
   rootPath: string;
   relativePath: string;
 }
+
+export type NfoForceImportMode = 'merge' | 'replace';
 
 export class FilmRepository {
   public constructor(private readonly db: Database.Database) {}
@@ -84,24 +146,33 @@ export class FilmRepository {
     const page = Math.max(1, Math.floor(query.page));
     const pageSize = Math.min(200, Math.max(1, Math.floor(query.pageSize)));
     const { where, params } = this.buildWhere(query);
-    const totalRow = this.db.prepare(`SELECT COUNT(*) AS count FROM film f ${where}`).get(...params) as { count: number };
-    const total = Number(totalRow.count);
     const orderBy = this.orderBy(query.sort);
     const rows = this.db
       .prepare(
         `SELECT f.id, f.source_id, s.name AS source_name, f.relative_path, f.filename,
-                f.title, f.original_title, f.year, f.status, f.favorite, f.rating,
-                f.missing, f.updated_at
+                f.title, f.original_title, f.year, f.favorite, f.rating,
+                f.missing, f.archived, f.updated_at, s.root_path AS source_root_path,
+                s.deleted_at AS source_deleted_at,
+                COUNT(ff.id) AS total_file_count,
+                COALESCE(SUM(CASE WHEN ff.missing = 0 THEN 1 ELSE 0 END), 0) AS existing_file_count,
+                COALESCE(SUM(CASE WHEN ff.missing = 1 THEN 1 ELSE 0 END), 0) AS missing_file_count
          FROM film f
          JOIN media_source s ON s.id = f.source_id
+         LEFT JOIN film_file ff ON ff.film_id = f.id
          ${where}
+         GROUP BY f.id
          ORDER BY ${orderBy}
-         LIMIT ? OFFSET ?`,
+         `,
       )
-      .all(...params, pageSize, (page - 1) * pageSize) as FilmSummaryRow[];
+      .all(...params) as FilmSummaryRow[];
     const assetMap = this.assetsForFilms(rows.map((row) => row.id));
+    const categoryMap = this.categoriesForFilms(rows.map((row) => row.id));
+    const summaries = rows
+      .map((row) => this.toSummary(row, assetMap.get(row.id) ?? [], categoryMap.get(row.id) ?? []))
+      .filter((summary) => this.matchesAvailability(summary, query));
+    const total = summaries.length;
     return {
-      items: rows.map((row) => this.toSummary(row, assetMap.get(row.id) ?? [])),
+      items: summaries.slice((page - 1) * pageSize, page * pageSize),
       page,
       pageSize,
       total,
@@ -109,11 +180,71 @@ export class FilmRepository {
     };
   }
 
+  public navigationCounts(): import('../../../shared/contracts').FilmNavigationCountsDto {
+    const row = this.db.prepare(
+      `SELECT
+         SUM(CASE WHEN f.archived = 0 AND s.deleted_at IS NULL AND EXISTS (SELECT 1 FROM film_file ff WHERE ff.film_id = f.id AND ff.missing = 0) THEN 1 ELSE 0 END) AS all_count,
+         SUM(CASE WHEN f.archived = 0 AND s.deleted_at IS NULL AND EXISTS (SELECT 1 FROM film_file ff WHERE ff.film_id = f.id AND ff.missing = 0) AND NOT EXISTS (SELECT 1 FROM film_custom_category fcc WHERE fcc.film_id = f.id) THEN 1 ELSE 0 END) AS unorganized_count,
+         SUM(CASE WHEN f.archived = 0 AND s.deleted_at IS NULL AND EXISTS (SELECT 1 FROM film_file ff WHERE ff.film_id = f.id AND ff.missing = 0) AND EXISTS (SELECT 1 FROM film_custom_category fcc WHERE fcc.film_id = f.id) THEN 1 ELSE 0 END) AS organized_count,
+         SUM(CASE WHEN f.archived = 0 AND s.deleted_at IS NULL AND f.favorite = 1 AND EXISTS (SELECT 1 FROM film_file ff WHERE ff.film_id = f.id AND ff.missing = 0) THEN 1 ELSE 0 END) AS favorite_count,
+         COUNT(*) AS all_data_count
+       FROM film f JOIN media_source s ON s.id = f.source_id`,
+    ).get() as { all_count: number | null; unorganized_count: number | null; organized_count: number | null; favorite_count: number | null; all_data_count: number };
+    return { all: Number(row.all_count), unorganized: Number(row.unorganized_count), organized: Number(row.organized_count), favorite: Number(row.favorite_count), allData: Number(row.all_data_count) };
+  }
+
+  public listActors(): ActorDto[] {
+    const rows = this.db.prepare(
+      `SELECT actor.value AS name, COUNT(DISTINCT f.id) AS film_count
+       FROM film f
+       JOIN media_source s ON s.id = f.source_id
+       JOIN json_each(f.actors_json) actor
+       WHERE f.archived = 0
+         AND s.deleted_at IS NULL
+         AND EXISTS (SELECT 1 FROM film_file actor_ff WHERE actor_ff.film_id = f.id AND actor_ff.missing = 0)
+         AND actor.type = 'text'
+         AND TRIM(actor.value) <> ''
+       GROUP BY actor.value COLLATE NOCASE
+       ORDER BY actor.value COLLATE NOCASE`,
+    ).all() as Array<{ name: string; film_count: number }>;
+    return rows.map((row) => ({ name: row.name.trim(), filmCount: Number(row.film_count) }));
+  }
+
+  public csvRows(query: FilmPageQuery): FilmCsvRow[] {
+    const exportQuery: FilmPageQuery = { ...query, organizationState: 'organized', allData: false, missingOnly: false };
+    const { where, params } = this.buildWhere(exportQuery);
+    const rows = this.db.prepare(
+      `SELECT f.id, f.filename, f.title, f.actors_json, f.plot, f.outline
+       FROM film f JOIN media_source s ON s.id = f.source_id
+       ${where}
+       AND EXISTS (SELECT 1 FROM film_file export_ff WHERE export_ff.film_id = f.id AND export_ff.missing = 0)
+       ORDER BY ${this.orderBy(exportQuery.sort)}`,
+    ).all(...params) as Array<{ id: string; filename: string; title: string; actors_json: string; plot: string | null; outline: string | null }>;
+    const categoryMap = this.categoriesForFilms(rows.map((row) => row.id));
+    return rows.map((row) => ({
+      filename: row.filename,
+      nfoTitle: row.title,
+      customCategories: (categoryMap.get(row.id) ?? []).map((category) => category.name),
+      actors: jsonArray(row.actors_json),
+      nfoSummary: row.plot?.trim() || row.outline?.trim() || '',
+    }));
+  }
+
   public detail(id: string): FilmDetailDto | null {
     const row = this.db
       .prepare(
-        `SELECT f.*, s.name AS source_name
+        `SELECT f.id, f.source_id, f.relative_path, f.filename, f.title, f.original_title, f.sort_title,
+                f.year, f.release_date, f.runtime_seconds, f.plot, f.outline, f.tagline,
+                f.content_rating, f.studio, f.country_json, f.director_json, f.actors_json,
+                f.favorite, f.rating, f.notes, f.width, f.height, f.video_codec, f.audio_codec,
+                f.container_format, f.nfo_relative_path, f.nfo_status, f.nfo_error, f.missing,
+                f.archived, f.imported_at, f.updated_at, f.last_seen_at,
+                s.name AS source_name, s.root_path AS source_root_path, s.deleted_at AS source_deleted_at,
+                COUNT(ff.id) AS total_file_count,
+                COALESCE(SUM(CASE WHEN ff.missing = 0 THEN 1 ELSE 0 END), 0) AS existing_file_count,
+                COALESCE(SUM(CASE WHEN ff.missing = 1 THEN 1 ELSE 0 END), 0) AS missing_file_count
          FROM film f JOIN media_source s ON s.id = f.source_id
+         LEFT JOIN film_file ff ON ff.film_id = f.id
          WHERE f.id = ?`,
       )
       .get(id) as (FilmRow & { source_name: string }) | undefined;
@@ -122,12 +253,21 @@ export class FilmRepository {
       (asset) => this.toAsset(asset),
     );
     const tags = this.db
-      .prepare('SELECT t.name FROM tag t JOIN film_tag ft ON ft.tag_id = t.id WHERE ft.film_id = ? ORDER BY t.name COLLATE NOCASE')
-      .all(id) as Array<{ name: string }>;
-    const genres = this.db
-      .prepare('SELECT g.name FROM genre g JOIN film_genre fg ON fg.genre_id = g.id WHERE fg.film_id = ? ORDER BY g.name COLLATE NOCASE')
-      .all(id) as Array<{ name: string }>;
-    const summary = this.toSummary(row, assets);
+      .prepare(
+        `SELECT t.id, t.name, COUNT(all_ft.film_id) AS film_count
+         FROM tag t JOIN film_tag ft ON ft.tag_id = t.id
+         LEFT JOIN film_tag all_ft ON all_ft.tag_id = t.id
+         WHERE ft.film_id = ?
+         GROUP BY t.id ORDER BY t.name COLLATE NOCASE`,
+      )
+      .all(id) as Array<{ id: string; name: string; film_count: number }>;
+    const categories = this.categoriesForFilms([id]).get(id) ?? [];
+    const summary = this.toSummary(row, assets, categories);
+    const parts = this.partsForFilm(id);
+    const images = assets
+      .filter((asset): asset is FilmImageDto => ['poster', 'fanart', 'thumb', 'extra_fanart'].includes(asset.assetType) && !asset.missing)
+      .sort((left, right) => imagePriority(left.assetType) - imagePriority(right.assetType) || left.sortOrder - right.sortOrder)
+      .filter((asset, index, all) => all.findIndex((candidate) => candidate.relativePath.toLowerCase() === asset.relativePath.toLowerCase()) === index);
     return {
       ...summary,
       sortTitle: row.sort_title,
@@ -141,8 +281,7 @@ export class FilmRepository {
       countries: jsonArray(row.country_json),
       directors: jsonArray(row.director_json),
       actors: jsonArray(row.actors_json),
-      tags: tags.map((tag) => tag.name),
-      genres: genres.map((genre) => genre.name),
+      nfoTags: tags.map((tag) => ({ id: tag.id, name: tag.name, filmCount: Number(tag.film_count) })),
       notes: row.notes,
       width: row.width,
       height: row.height,
@@ -156,6 +295,9 @@ export class FilmRepository {
       importedAt: row.imported_at,
       lastSeenAt: row.last_seen_at,
       assets,
+      parts,
+      images,
+      availability: summary.availability,
     };
   }
 
@@ -170,14 +312,9 @@ export class FilmRepository {
       fields.push('title = ?');
       values.push(title.slice(0, 500));
     }
-    if (input.status !== undefined) {
-      if (!isFilmStatus(input.status)) throw new Error('INVALID_STATUS');
-      fields.push('status = ?');
-      values.push(input.status);
-    }
-    if (input.favorite !== undefined) {
-      fields.push('favorite = ?');
-      values.push(input.favorite ? 1 : 0);
+    if (input.originalTitle !== undefined) {
+      fields.push('original_title = ?');
+      values.push(input.originalTitle.trim().slice(0, 500) || null);
     }
     if (input.rating !== undefined) {
       if (!Number.isFinite(input.rating) || input.rating < 0 || input.rating > 10) throw new Error('INVALID_RATING');
@@ -188,15 +325,16 @@ export class FilmRepository {
       fields.push('notes = ?');
       values.push(input.notes.slice(0, 10_000));
     }
-    this.db.transaction(() => {
-      if (fields.length > 0) {
-        fields.push('updated_at = ?');
-        values.push(new Date().toISOString(), input.id);
-        this.db.prepare(`UPDATE film SET ${fields.join(', ')} WHERE id = ?`).run(...values);
-      }
-      if (input.tags !== undefined) this.replaceTags(input.id, input.tags);
-    })();
+    if (fields.length > 0) {
+      fields.push('updated_at = ?');
+      values.push(new Date().toISOString(), input.id);
+      this.db.prepare(`UPDATE film SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+    }
     return this.detail(input.id)!;
+  }
+
+  public updatePatch(input: FilmUpdateInput): FilmDetailDto {
+    return this.update(input);
   }
 
   public listTags(): TagDto[] {
@@ -213,17 +351,123 @@ export class FilmRepository {
       });
   }
 
+  public listCategories(): CustomCategoryDto[] {
+    return (this.db.prepare(
+      `SELECT c.id, c.name, c.sort_order, COUNT(fcc.film_id) AS film_count
+       FROM custom_category c
+       LEFT JOIN film_custom_category fcc ON fcc.category_id = c.id
+       GROUP BY c.id
+       ORDER BY c.sort_order, c.normalized_name, c.id`,
+    ).all() as CategoryRow[]).map(toCategoryDto);
+  }
+
+  public createCategory(name: string): CustomCategoryDto {
+    const normalized = normalizeCategoryName(name);
+    const now = new Date().toISOString();
+    return this.db.transaction(() => {
+      const existing = this.categoryByNormalizedName(normalized.normalizedName);
+      if (existing) throw new Error('CATEGORY_EXISTS');
+      const row = this.db.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM custom_category').get() as { next_order: number };
+      const id = randomUUID();
+      this.db.prepare('INSERT INTO custom_category (id, name, normalized_name, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(id, normalized.name, normalized.normalizedName, Number(row.next_order), now, now);
+      return this.categoryById(id)!;
+    })();
+  }
+
+  public renameCategory(id: string, name: string): CustomCategoryDto {
+    const normalized = normalizeCategoryName(name);
+    return this.db.transaction(() => {
+      if (!this.categoryById(id)) throw new Error('CATEGORY_NOT_FOUND');
+      const conflict = this.categoryByNormalizedName(normalized.normalizedName);
+      if (conflict && conflict.id !== id) throw new Error('CATEGORY_EXISTS');
+      this.db.prepare('UPDATE custom_category SET name = ?, normalized_name = ?, updated_at = ? WHERE id = ?')
+        .run(normalized.name, normalized.normalizedName, new Date().toISOString(), id);
+      return this.categoryById(id)!;
+    })();
+  }
+
+  public removeCategory(id: string): void {
+    this.db.transaction(() => {
+      const result = this.db.prepare('DELETE FROM custom_category WHERE id = ?').run(id);
+      if (!result.changes) throw new Error('CATEGORY_NOT_FOUND');
+    })();
+  }
+
+  public reorderCategories(ids: string[]): CustomCategoryDto[] {
+    const uniqueIds = [...new Set(ids)];
+    return this.db.transaction(() => {
+      const existing = this.db.prepare('SELECT id FROM custom_category ORDER BY sort_order, normalized_name, id').all() as Array<{ id: string }>;
+      if (uniqueIds.length !== existing.length || uniqueIds.some((id) => !existing.some((row) => row.id === id))) throw new Error('INVALID_CATEGORY_ORDER');
+      const update = this.db.prepare('UPDATE custom_category SET sort_order = ?, updated_at = ? WHERE id = ?');
+      const now = new Date().toISOString();
+      uniqueIds.forEach((id, index) => update.run(index, now, id));
+      return this.listCategories();
+    })();
+  }
+
+  public updateFavorite(id: string, favorite: boolean): FilmDetailDto {
+    const result = this.db.prepare('UPDATE film SET favorite = ?, updated_at = ? WHERE id = ?').run(favorite ? 1 : 0, new Date().toISOString(), id);
+    if (!result.changes) throw new Error('FILM_NOT_FOUND');
+    return this.detail(id)!;
+  }
+
+  public updateCategories(id: string, categoryIds: string[], newCategoryNames: string[] = []): FilmDetailDto {
+    return this.db.transaction(() => {
+      if (!this.db.prepare('SELECT 1 FROM film WHERE id = ?').get(id)) throw new Error('FILM_NOT_FOUND');
+      const ids = new Set<string>();
+      for (const categoryId of categoryIds) {
+        if (!this.categoryById(categoryId)) throw new Error('CATEGORY_NOT_FOUND');
+        ids.add(categoryId);
+      }
+      for (const rawName of newCategoryNames) {
+        const normalized = normalizeCategoryName(rawName);
+        const existing = this.categoryByNormalizedName(normalized.normalizedName);
+        if (existing) ids.add(existing.id);
+        else ids.add(this.createCategory(normalized.name).id);
+      }
+      this.db.prepare('DELETE FROM film_custom_category WHERE film_id = ?').run(id);
+      const insert = this.db.prepare('INSERT INTO film_custom_category (film_id, category_id, created_at) VALUES (?, ?, ?)');
+      const now = new Date().toISOString();
+      for (const categoryId of ids) insert.run(id, categoryId, now);
+      this.db.prepare('UPDATE film SET updated_at = ? WHERE id = ?').run(now, id);
+      return this.detail(id)!;
+    })();
+  }
+
+  public deleteRecords(ids: string[]): void {
+    const uniqueIds = [...new Set(ids)];
+    if (!uniqueIds.length) return;
+    this.db.transaction(() => {
+      const placeholders = uniqueIds.map(() => '?').join(',');
+      this.db.prepare(`DELETE FROM film WHERE id IN (${placeholders})`).run(...uniqueIds);
+      this.db.prepare('DELETE FROM tag WHERE NOT EXISTS (SELECT 1 FROM film_tag WHERE film_tag.tag_id = tag.id)').run();
+    })();
+  }
+
   public findByPath(sourceId: string, relativePath: string): ExistingFilmRow | null {
-    return (this.db
-      .prepare('SELECT id, relative_path, fingerprint FROM film WHERE source_id = ? AND relative_path = ?')
-      .get(sourceId, relativePath) as ExistingFilmRow | undefined) ?? null;
+    const normalized = normalizeRelativePath(relativePath);
+    const rows = this.db
+      .prepare('SELECT film_id AS id, relative_path, fingerprint FROM film_file WHERE source_id = ? ORDER BY created_at, id')
+      .all(sourceId) as ExistingFilmRow[];
+    return rows.find((row) => normalizeRelativePath(row.relative_path) === normalized) ?? null;
   }
 
   public findByFingerprint(sourceId: string, fingerprint: string): ExistingFilmRow[] {
     return this.db
-      .prepare('SELECT id, relative_path, fingerprint FROM film WHERE source_id = ? AND fingerprint = ?')
+      .prepare('SELECT DISTINCT film_id AS id, relative_path, fingerprint FROM film_file WHERE source_id = ? AND fingerprint = ?')
       .all(sourceId, fingerprint) as ExistingFilmRow[];
   }
+
+  public findByLogicalKey(sourceId: string, key: string): ExistingFilmRow | null {
+    const rows = this.db
+      .prepare('SELECT film_id AS id, relative_path, filename, fingerprint FROM film_file WHERE source_id = ?')
+      .all(sourceId) as Array<ExistingFilmRow & { filename: string }>;
+    const row = rows.find((candidate) => logicalFilmKey(path.dirname(candidate.relative_path), candidate.filename) === key);
+    return row ? { id: row.id, relative_path: row.relative_path, fingerprint: row.fingerprint } : null;
+  }
+
+  public parts(filmId: string): FilmPartDto[] { return this.partsForFilm(filmId); }
 
   public assetLocation(assetId: string): MediaLocation | null {
     const row = this.db
@@ -253,27 +497,66 @@ export class FilmRepository {
   public filmLocation(filmId: string): MediaLocation | null {
     const row = this.db
       .prepare(
-        `SELECT f.relative_path, s.root_path
-         FROM film f JOIN media_source s ON s.id = f.source_id
-         WHERE f.id = ? AND f.archived = 0`,
+        `SELECT ff.relative_path, s.root_path
+         FROM film_file ff JOIN film f ON f.id = ff.film_id JOIN media_source s ON s.id = ff.source_id
+         WHERE ff.film_id = ? AND ff.is_primary = 1 AND ff.missing = 0 AND f.archived = 0`,
       )
       .get(filmId) as { relative_path: string; root_path: string } | undefined;
     return row ? { rootPath: row.root_path, relativePath: row.relative_path } : null;
   }
 
-  public insertCandidate(candidate: FilmCandidate, now: string): string {
-    const id = randomUUID();
+  public upsertCandidate(candidate: FilmCandidate, now: string): { id: string; created: boolean; moved: boolean; merged: number } {
+    const existingIds = this.findCandidateFilmIds(candidate);
+    const newFilmId = randomUUID();
+    if (!existingIds.length) {
+      try {
+        return { id: this.insertCandidate(candidate, now, newFilmId), created: true, moved: false, merged: 0 };
+      } catch (error) {
+        throw this.asOwnershipConflict(error, candidate, newFilmId, 'film_file.insert');
+      }
+    }
+
+    const existingPrimaryPath = this.findByPath(candidate.sourceId, candidate.relativePath);
+    const repair = new FilmFileOwnershipRepairService(this.db);
+    const survivor = repair.chooseSurvivor(existingIds);
+    let merged = 0;
+    try {
+      for (const filmId of existingIds) {
+        if (filmId === survivor) continue;
+        repair.mergeFilms(survivor, filmId, now, candidate.logicalKey);
+        merged += 1;
+      }
+      this.updateFromCandidate(survivor, candidate, now);
+    } catch (error) {
+      throw this.asOwnershipConflict(error, candidate, survivor, 'film_file.upsert');
+    }
+    const moved = merged > 0 || !existingPrimaryPath || existingPrimaryPath.id !== survivor;
+    return { id: survivor, created: false, moved, merged };
+  }
+
+  public partLocation(partId: string): MediaLocation | null {
+    const row = this.db
+      .prepare(
+        `SELECT ff.relative_path, s.root_path
+         FROM film_file ff JOIN film f ON f.id = ff.film_id JOIN media_source s ON s.id = ff.source_id
+         WHERE ff.id = ? AND ff.missing = 0 AND f.archived = 0`,
+      )
+      .get(partId) as { relative_path: string; root_path: string } | undefined;
+    return row ? { rootPath: row.root_path, relativePath: row.relative_path } : null;
+  }
+
+  public insertCandidate(candidate: FilmCandidate, now: string, id = randomUUID()): string {
     const fields = mappedCandidateValues(candidate);
     this.db
       .prepare(
         `INSERT INTO film (
           id, source_id, relative_path, filename, file_size, file_modified_at, fingerprint,
           title, original_title, sort_title, year, release_date, runtime_seconds, plot, outline,
-          tagline, content_rating, studio, country_json, director_json, actors_json, status,
+          tagline, content_rating, studio, country_json, director_json, actors_json,
           favorite, rating, notes, width, height, video_codec, audio_codec, container_format,
           nfo_relative_path, nfo_modified_at, nfo_hash, nfo_status, nfo_error, missing, archived,
           imported_at, updated_at, last_seen_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)` ,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)` ,
       )
       .run(
         id,
@@ -297,7 +580,6 @@ export class FilmRepository {
         JSON.stringify(fields.countries),
         JSON.stringify(fields.directors),
         JSON.stringify(fields.actors),
-        fields.status,
         fields.rating,
         fields.width,
         fields.height,
@@ -313,14 +595,59 @@ export class FilmRepository {
         now,
         now,
       );
-    this.replaceGenres(id, fields.genres);
     this.replaceTags(id, fields.tags);
+    this.syncFiles(id, candidate.sourceId, candidate.files, now);
     this.replaceAssets(id, candidate);
     return id;
   }
 
+  public filmLabel(id: string | null): { id: string; title: string } | null {
+    if (!id) return null;
+    const row = this.db.prepare('SELECT id, title FROM film WHERE id = ?').get(id) as { id: string; title: string } | undefined;
+    return row ?? null;
+  }
+
+  private asOwnershipConflict(error: unknown, candidate: FilmCandidate, targetFilmId: string, sqlStage: string): FilmFileOwnershipConflictError | Error {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.toLowerCase().includes('unique constraint') && !message.toLowerCase().includes('constraint failed')) return error instanceof Error ? error : new Error(message);
+    const existing = this.findByPath(candidate.sourceId, candidate.relativePath);
+    const sqliteErrorCode = typeof error === 'object' && error !== null && 'code' in error ? String((error as { code?: unknown }).code ?? '') || null : null;
+    return new FilmFileOwnershipConflictError({
+      sourceId: candidate.sourceId,
+      relativePath: candidate.relativePath,
+      existingFilmId: existing?.id ?? null,
+      existingFilmTitle: this.filmLabel(existing?.id ?? null)?.title ?? null,
+      targetFilmId,
+      targetFilmTitle: this.filmLabel(targetFilmId)?.title ?? candidate.title,
+      groupKey: candidate.logicalKey,
+      sqlStage,
+      sqliteErrorCode,
+    }, error);
+  }
+
+  private findCandidateFilmIds(candidate: FilmCandidate): string[] {
+    const pathKeys = new Set(candidate.files.map((file) => physicalFileKey(candidate.sourceId, file.relativePath)));
+    const fingerprints = new Set(candidate.files.map((file) => file.fingerprint).filter(Boolean));
+    const rows = this.db.prepare('SELECT film_id, source_id, relative_path, filename, fingerprint FROM film_file WHERE source_id = ?').all(candidate.sourceId) as Array<{ film_id: string; source_id: string; relative_path: string; filename: string; fingerprint: string | null }>;
+    const fingerprintCounts = new Map<string, number>();
+    for (const row of rows) if (row.fingerprint) fingerprintCounts.set(row.fingerprint, (fingerprintCounts.get(row.fingerprint) ?? 0) + 1);
+    const ids = new Set<string>();
+    for (const row of rows) {
+      const matchesPath = pathKeys.has(physicalFileKey(row.source_id, row.relative_path));
+      const matchesFingerprint = Boolean(row.fingerprint && fingerprints.has(row.fingerprint) && fingerprintCounts.get(row.fingerprint) === 1);
+      const matchesLogicalKey = logicalFilmKey(path.dirname(row.relative_path), row.filename) === candidate.logicalKey;
+      if (matchesPath || matchesFingerprint || matchesLogicalKey) ids.add(row.film_id);
+    }
+    const legacyRows = this.db.prepare('SELECT id, source_id, relative_path, filename FROM film WHERE source_id = ?').all(candidate.sourceId) as Array<{ id: string; source_id: string; relative_path: string; filename: string }>;
+    for (const row of legacyRows) {
+      if (pathKeys.has(physicalFileKey(row.source_id, row.relative_path)) || logicalFilmKey(path.dirname(row.relative_path), row.filename) === candidate.logicalKey) ids.add(row.id);
+    }
+    return [...ids].sort();
+  }
+
   public updateFromCandidate(id: string, candidate: FilmCandidate, now: string): void {
     const fields = mappedCandidateValues(candidate);
+    const editFlags = this.userEditFlags(id);
     this.db
       .prepare(
         `UPDATE film SET
@@ -365,20 +692,23 @@ export class FilmRepository {
         now,
         id,
       );
+    if (!editFlags.tagsUserEdited) this.replaceTags(id, fields.tags);
     this.replaceAssets(id, candidate);
+    this.syncFiles(id, candidate.sourceId, candidate.files, now);
+    this.syncLegacyMissing(id, now);
   }
 
   public markSourceMissing(sourceId: string, now: string): number {
     const result = this.db.prepare('UPDATE film SET missing = 1, updated_at = ? WHERE source_id = ? AND archived = 0 AND missing = 0').run(now, sourceId);
-    this.db
-      .prepare('UPDATE film_asset SET missing = 1 WHERE film_id IN (SELECT id FROM film WHERE source_id = ? AND missing = 1)')
-      .run(sourceId);
+    this.db.prepare('UPDATE film_file SET missing = 1, updated_at = ? WHERE source_id = ?').run(now, sourceId);
+    this.db.prepare('UPDATE film_asset SET missing = 1 WHERE film_id IN (SELECT id FROM film WHERE source_id = ?)').run(sourceId);
     return Number(result.changes);
   }
 
   public supplementFromMappedNfo(id: string, fields: Partial<ReturnType<typeof mappedCandidateValues>>, now: string): FilmDetailDto {
     const existing = this.detail(id);
     if (!existing) throw new Error('FILM_NOT_FOUND');
+    const editFlags = this.userEditFlags(id);
     const fillable: Array<[string, unknown]> = [
       ['original_title', existing.originalTitle ?? fields.originalTitle ?? null],
       ['sort_title', existing.sortTitle ?? fields.sortTitle ?? null],
@@ -408,72 +738,166 @@ export class FilmRepository {
           id,
         );
       }
-      if (fields.tags?.length && existing.tags.length === 0) this.replaceTags(id, fields.tags);
-      if (fields.genres?.length && existing.genres.length === 0) this.replaceGenres(id, fields.genres);
+      if (fields.tags?.length && existing.nfoTags.length === 0 && !editFlags.tagsUserEdited) this.replaceTags(id, fields.tags);
     })();
     return this.detail(id)!;
   }
 
-  public forceImportNfo(id: string, fields: ReturnType<typeof mappedCandidateValues>, now: string): FilmDetailDto {
+  public forceImportNfo(id: string, fields: ReturnType<typeof mappedCandidateValues>, now: string, mode: NfoForceImportMode = 'replace'): FilmDetailDto {
     const existing = this.detail(id);
     if (!existing) throw new Error('FILM_NOT_FOUND');
+    const editFlags = this.userEditFlags(id);
+    const merged = mode === 'merge';
+    const tags = merged
+      ? uniqueNames([...existing.nfoTags.map((tag) => tag.name), ...fields.tags])
+      : fields.tags;
     this.db.transaction(() => {
       this.db
         .prepare(
           `UPDATE film SET title = ?, original_title = ?, sort_title = ?, year = ?, release_date = ?,
            runtime_seconds = ?, plot = ?, outline = ?, tagline = ?, content_rating = ?, studio = ?,
-           country_json = ?, director_json = ?, actors_json = ?, status = ?, rating = ?, width = ?,
-           height = ?, video_codec = ?, audio_codec = ?, container_format = ?, updated_at = ? WHERE id = ?`,
+           country_json = ?, director_json = ?, actors_json = ?, rating = ?, width = ?,
+           height = ?, video_codec = ?, audio_codec = ?, container_format = ?, tags_user_edited = ?,
+           updated_at = ? WHERE id = ?`,
         )
         .run(
-          fields.title,
-          fields.originalTitle,
-          fields.sortTitle,
-          fields.year,
-          fields.releaseDate,
-          fields.runtimeSeconds,
-          fields.plot,
-          fields.outline,
-          fields.tagline,
-          fields.contentRating,
-          fields.studio,
-          JSON.stringify(fields.countries),
-          JSON.stringify(fields.directors),
-          JSON.stringify(fields.actors),
-          fields.status,
-          fields.rating,
-          fields.width,
-          fields.height,
-          fields.videoCodec,
-          fields.audioCodec,
-          fields.containerFormat,
+          merged ? firstNonEmpty(existing.title, fields.title) : fields.title,
+          merged ? firstNonEmpty(existing.originalTitle, fields.originalTitle) : fields.originalTitle,
+          merged ? firstNonEmpty(existing.sortTitle, fields.sortTitle) : fields.sortTitle,
+          merged ? existing.year ?? fields.year : fields.year,
+          merged ? firstNonEmpty(existing.releaseDate, fields.releaseDate) : fields.releaseDate,
+          merged ? existing.runtimeSeconds ?? fields.runtimeSeconds : fields.runtimeSeconds,
+          merged ? firstNonEmpty(existing.plot, fields.plot) : fields.plot,
+          merged ? firstNonEmpty(existing.outline, fields.outline) : fields.outline,
+          merged ? firstNonEmpty(existing.tagline, fields.tagline) : fields.tagline,
+          merged ? firstNonEmpty(existing.contentRating, fields.contentRating) : fields.contentRating,
+          merged ? firstNonEmpty(existing.studio, fields.studio) : fields.studio,
+          JSON.stringify(merged ? uniqueNames([...existing.countries, ...fields.countries]) : fields.countries),
+          JSON.stringify(merged ? uniqueNames([...existing.directors, ...fields.directors]) : fields.directors),
+          JSON.stringify(merged ? uniqueNames([...existing.actors, ...fields.actors]) : fields.actors),
+          merged && fields.rating <= 0 ? existing.rating : fields.rating,
+          merged ? existing.width ?? fields.width : fields.width,
+          merged ? existing.height ?? fields.height : fields.height,
+          merged ? firstNonEmpty(existing.videoCodec, fields.videoCodec) : fields.videoCodec,
+          merged ? firstNonEmpty(existing.audioCodec, fields.audioCodec) : fields.audioCodec,
+          merged ? firstNonEmpty(existing.containerFormat, fields.containerFormat) : fields.containerFormat,
+          merged && editFlags.tagsUserEdited ? 1 : 0,
           now,
           id,
         );
-      this.replaceTags(id, fields.tags);
-      this.replaceGenres(id, fields.genres);
+      this.replaceTags(id, tags);
     })();
     return this.detail(id)!;
   }
 
+  private userEditFlags(id: string): { tagsUserEdited: boolean } {
+    const row = this.db.prepare('SELECT tags_user_edited FROM film WHERE id = ?').get(id) as { tags_user_edited: number } | undefined;
+    return {
+      tagsUserEdited: Boolean(row?.tags_user_edited),
+    };
+  }
+
+  private partsForFilm(filmId: string): FilmPartDto[] {
+    const rows = this.db
+      .prepare('SELECT id, part_type, part_number, filename, relative_path, file_size, file_modified_at, missing FROM film_file WHERE film_id = ? ORDER BY part_number ASC, filename COLLATE NOCASE ASC')
+      .all(filmId) as Array<Pick<FilmFileRow, 'id' | 'part_type' | 'part_number' | 'filename' | 'relative_path' | 'file_size' | 'file_modified_at' | 'missing'>>;
+    return rows.map((row) => ({
+      id: row.id,
+      partType: row.part_type,
+      partNumber: row.part_number,
+      filename: row.filename,
+      relativePath: row.relative_path,
+      fileSize: row.file_size,
+      fileModifiedAt: row.file_modified_at,
+      missing: Boolean(row.missing),
+    }));
+  }
+
+  private syncFiles(filmId: string, sourceId: string, candidates: FilmFileCandidate[], now: string): void {
+    const existing = this.db.prepare('SELECT * FROM film_file WHERE film_id = ? ORDER BY created_at, id').all(filmId) as FilmFileRow[];
+    const touched = new Set<string>();
+    const candidateKeys = new Set(candidates.map((candidate) => physicalFileKey(sourceId, candidate.relativePath)));
+    const repair = new FilmFileOwnershipRepairService(this.db);
+    const insert = this.db.prepare(
+      `INSERT INTO film_file
+       (id, film_id, source_id, relative_path, filename, part_type, part_number, is_primary,
+        file_size, file_modified_at, fingerprint, missing, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+    );
+    const update = this.db.prepare(
+      `UPDATE film_file SET source_id = ?, relative_path = ?, filename = ?, part_type = ?, part_number = ?,
+       is_primary = ?, file_size = ?, file_modified_at = ?, fingerprint = ?, missing = 0, updated_at = ?
+       WHERE id = ?`,
+    );
+    const sourceRows = (): FilmFileRow[] => this.db.prepare('SELECT * FROM film_file WHERE source_id = ? ORDER BY created_at, id').all(sourceId) as FilmFileRow[];
+    const findCurrentRow = (file: FilmFileCandidate): FilmFileRow | undefined => {
+      const rows = sourceRows();
+      const key = physicalFileKey(sourceId, file.relativePath);
+      const byPath = rows.find((row) => physicalFileKey(row.source_id, row.relative_path) === key);
+      if (byPath) return byPath;
+      if (!file.fingerprint) return undefined;
+      const byFingerprint = rows.filter((row) => row.fingerprint === file.fingerprint);
+      return byFingerprint.length === 1 ? byFingerprint[0] : undefined;
+    };
+
+    for (const candidate of candidates) {
+      if (candidate.isPrimary) this.db.prepare('UPDATE film_file SET is_primary = 0 WHERE film_id = ?').run(filmId);
+      let row = findCurrentRow(candidate);
+      if (row && row.film_id !== filmId) {
+        repair.mergeFilms(filmId, row.film_id, now, `scan:${physicalFileKey(sourceId, candidate.relativePath)}`);
+        row = findCurrentRow(candidate);
+      }
+      if (row) {
+        update.run(
+          sourceId, candidate.relativePath, candidate.filename, candidate.partType, candidate.partNumber,
+          candidate.isPrimary ? 1 : 0, candidate.fileSize, candidate.fileModifiedAt, candidate.fingerprint, now, row.id,
+        );
+        touched.add(row.id);
+      } else {
+        const id = randomUUID();
+        insert.run(
+          id, filmId, sourceId, candidate.relativePath, candidate.filename, candidate.partType,
+          candidate.partNumber, candidate.isPrimary ? 1 : 0, candidate.fileSize, candidate.fileModifiedAt,
+          candidate.fingerprint, now, now,
+        );
+        touched.add(id);
+      }
+    }
+    const markMissing = this.db.prepare('UPDATE film_file SET missing = 1, updated_at = ? WHERE film_id = ? AND id = ?');
+    for (const row of existing) if (!touched.has(row.id) && !candidateKeys.has(physicalFileKey(sourceId, row.relative_path))) markMissing.run(now, filmId, row.id);
+    this.syncLegacyMissing(filmId, now);
+  }
+
+  private syncLegacyMissing(filmId: string, now: string): void {
+    const row = this.db
+      .prepare('SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN missing = 0 THEN 1 ELSE 0 END), 0) AS existing FROM film_file WHERE film_id = ?')
+      .get(filmId) as { total: number; existing: number };
+    this.db.prepare('UPDATE film SET missing = ?, updated_at = ? WHERE id = ?').run(Number(row.existing) === 0 ? 1 : 0, now, filmId);
+  }
+
   private replaceAssets(filmId: string, candidate: FilmCandidate): void {
-    this.db.prepare('DELETE FROM film_asset WHERE film_id = ?').run(filmId);
+    const existing = this.db.prepare('SELECT * FROM film_asset WHERE film_id = ?').all(filmId) as AssetRow[];
+    const byKey = new Map(existing.map((asset) => [`${asset.asset_type}:${asset.relative_path.toLowerCase()}`, asset]));
+    const touched = new Set<string>();
     const insert = this.db.prepare(
       `INSERT INTO film_asset (id, film_id, asset_type, relative_path, sort_order, file_size, file_modified_at, missing)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     );
+    const seen = new Set<string>();
     for (const asset of candidate.assets) {
-      insert.run(
-        randomUUID(),
-        filmId,
-        asset.assetType,
-        asset.entry.relativePath,
-        asset.sortOrder,
-        asset.fileSize,
-        asset.fileModifiedAt,
-        asset.missing ? 1 : 0,
-      );
+      const key = `${asset.assetType}:${asset.entry.relativePath.toLowerCase()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const previous = byKey.get(key);
+      if (previous) {
+        this.db.prepare('UPDATE film_asset SET sort_order = ?, file_size = ?, file_modified_at = ?, missing = 0 WHERE id = ?')
+          .run(asset.sortOrder, asset.fileSize, asset.fileModifiedAt, previous.id);
+        touched.add(previous.id);
+      } else {
+        insert.run(randomUUID(), filmId, asset.assetType, asset.entry.relativePath, asset.sortOrder, asset.fileSize, asset.fileModifiedAt, asset.missing ? 1 : 0);
+      }
     }
+    for (const asset of existing) if (!touched.has(asset.id) && !seen.has(`${asset.asset_type}:${asset.relative_path.toLowerCase()}`)) this.db.prepare('UPDATE film_asset SET missing = 1 WHERE id = ?').run(asset.id);
   }
 
   private replaceTags(filmId: string, names: string[]): void {
@@ -485,18 +909,6 @@ export class FilmRepository {
       const tagId = existing?.id ?? randomUUID();
       if (!existing) insert.run(tagId, name);
       link.run(filmId, tagId);
-    }
-  }
-
-  private replaceGenres(filmId: string, names: string[]): void {
-    this.db.prepare('DELETE FROM film_genre WHERE film_id = ?').run(filmId);
-    const insert = this.db.prepare('INSERT OR IGNORE INTO genre (id, name) VALUES (?, ?)');
-    const link = this.db.prepare('INSERT OR IGNORE INTO film_genre (film_id, genre_id) VALUES (?, ?)');
-    for (const name of uniqueNames(names)) {
-      const existing = this.db.prepare('SELECT id FROM genre WHERE name = ? COLLATE NOCASE').get(name) as { id: string } | undefined;
-      const genreId = existing?.id ?? randomUUID();
-      if (!existing) insert.run(genreId, name);
-      link.run(filmId, genreId);
     }
   }
 
@@ -515,16 +927,69 @@ export class FilmRepository {
     return result;
   }
 
-  private toSummary(row: FilmSummaryRow, assets: FilmAssetDto[]): FilmSummaryDto {
+  private categoriesForFilms(filmIds: string[]): Map<string, CustomCategoryDto[]> {
+    const result = new Map<string, CustomCategoryDto[]>();
+    if (!filmIds.length) return result;
+    const placeholders = filmIds.map(() => '?').join(',');
+    const rows = this.db.prepare(
+      `SELECT fcc.film_id, c.id, c.name, c.sort_order
+       FROM film_custom_category fcc
+       JOIN custom_category c ON c.id = fcc.category_id
+       WHERE fcc.film_id IN (${placeholders})
+       ORDER BY c.sort_order, c.normalized_name, c.id`,
+    ).all(...filmIds) as CategoryRow[];
+    for (const row of rows) {
+      const list = result.get(row.film_id!) ?? [];
+      list.push(toCategoryDto(row));
+      result.set(row.film_id!, list);
+    }
+    return result;
+  }
+
+  private categoryById(id: string): CustomCategoryDto | null {
+    const row = this.db.prepare(
+      `SELECT c.id, c.name, c.sort_order, COUNT(fcc.film_id) AS film_count
+       FROM custom_category c LEFT JOIN film_custom_category fcc ON fcc.category_id = c.id
+       WHERE c.id = ? GROUP BY c.id`,
+    ).get(id) as CategoryRow | undefined;
+    return row ? toCategoryDto(row) : null;
+  }
+
+  private categoryByNormalizedName(normalizedName: string): CustomCategoryDto | null {
+    const row = this.db.prepare(
+      `SELECT c.id, c.name, c.sort_order, COUNT(fcc.film_id) AS film_count
+       FROM custom_category c LEFT JOIN film_custom_category fcc ON fcc.category_id = c.id
+       WHERE c.normalized_name = ? GROUP BY c.id`,
+    ).get(normalizedName) as CategoryRow | undefined;
+    return row ? toCategoryDto(row) : null;
+  }
+
+  private toSummary(row: FilmSummaryRow, assets: FilmAssetDto[], customCategories: CustomCategoryDto[]): FilmSummaryDto {
     const available = assets.filter((asset) => !asset.missing);
     const poster = available.find((asset) => asset.assetType === 'poster');
     const preview = available.find((asset) => asset.assetType === 'preview')
       ?? available.find((asset) => asset.assetType === 'trailer')
       ?? available.find((asset) => asset.assetType === 'sample');
     const images = available
-      .filter((asset) => asset.assetType === 'fanart' || asset.assetType === 'extra_fanart' || asset.assetType === 'thumb')
+      .filter((asset) => asset.assetType === 'fanart' || asset.assetType === 'extra_fanart')
       .sort((left, right) => assetImagePriority(left.assetType) - assetImagePriority(right.assetType) || left.sortOrder - right.sortOrder)
       .map((asset) => asset.id);
+    const totalFileCount = Number(row.total_file_count) || (row.relative_path ? 1 : 0);
+    const existingFileCount = Number(row.existing_file_count);
+    const missingFileCount = Math.max(0, totalFileCount - existingFileCount);
+    const sourceDeleted = Boolean(row.source_deleted_at);
+    const sourceOffline = !sourceDeleted && !isDirectory(row.source_root_path);
+    const availability = sourceDeleted
+      ? 'source_removed'
+      : row.archived
+        ? 'archived'
+        : sourceOffline
+          ? 'source_offline'
+          : existingFileCount === 0
+            ? 'missing'
+            : missingFileCount > 0
+              ? 'partial_missing'
+              : 'available';
     return {
       id: row.id,
       sourceId: row.source_id,
@@ -534,14 +999,20 @@ export class FilmRepository {
       title: row.title,
       originalTitle: row.original_title,
       year: row.year,
-      status: row.status,
       favorite: Boolean(row.favorite),
+      organizationState: customCategories.length ? 'organized' : 'unorganized',
+      customCategories,
       rating: row.rating,
-      missing: Boolean(row.missing),
+      missing: availability === 'missing',
       posterAssetId: poster?.id ?? null,
       previewAssetId: preview?.id ?? null,
       previewImageAssetIds: images,
       updatedAt: row.updated_at,
+      availability,
+      totalFileCount,
+      existingFileCount,
+      missingFileCount,
+      sourceDeleted,
     };
   }
 
@@ -558,7 +1029,8 @@ export class FilmRepository {
   }
 
   private buildWhere(query: FilmPageQuery): { where: string; params: unknown[] } {
-    const clauses = ['f.archived = 0'];
+    const allData = Boolean(query.allData || query.missingOnly);
+    const clauses = allData ? ['1 = 1'] : ['f.archived = 0', 's.deleted_at IS NULL'];
     const params: unknown[] = [];
     if (query.search?.trim()) {
       const search = `%${escapeLike(query.search.trim())}%`;
@@ -569,17 +1041,31 @@ export class FilmRepository {
       clauses.push('f.source_id = ?');
       params.push(query.sourceId);
     }
-    if (query.status && query.status !== 'all') {
-      clauses.push('f.status = ?');
-      params.push(query.status);
+    if (query.actor?.trim()) {
+      clauses.push("EXISTS (SELECT 1 FROM json_each(f.actors_json) actor_filter WHERE actor_filter.type = 'text' AND actor_filter.value = ? COLLATE NOCASE)");
+      params.push(query.actor.trim());
     }
-    if (query.tag?.trim()) {
-      clauses.push('EXISTS (SELECT 1 FROM film_tag qft JOIN tag qt ON qt.id = qft.tag_id WHERE qft.film_id = f.id AND qt.name = ? COLLATE NOCASE)');
-      params.push(query.tag.trim());
+    if (query.organizationState === 'organized') clauses.push('EXISTS (SELECT 1 FROM film_custom_category org WHERE org.film_id = f.id)');
+    if (query.organizationState === 'unorganized') clauses.push('NOT EXISTS (SELECT 1 FROM film_custom_category org WHERE org.film_id = f.id)');
+    if (query.categoryIds?.length) {
+      const ids = [...new Set(query.categoryIds)];
+      if (query.categoryMatch === 'all') {
+        clauses.push(`(SELECT COUNT(DISTINCT fcc_all.category_id) FROM film_custom_category fcc_all WHERE fcc_all.film_id = f.id AND fcc_all.category_id IN (${ids.map(() => '?').join(',')})) = ?`);
+        params.push(...ids, ids.length);
+      } else {
+        clauses.push(`EXISTS (SELECT 1 FROM film_custom_category fcc_any WHERE fcc_any.film_id = f.id AND fcc_any.category_id IN (${ids.map(() => '?').join(',')}))`);
+        params.push(...ids);
+      }
     }
-    if (query.genre?.trim()) {
-      clauses.push('EXISTS (SELECT 1 FROM film_genre qfg JOIN genre qg ON qg.id = qfg.genre_id WHERE qfg.film_id = f.id AND qg.name = ? COLLATE NOCASE)');
-      params.push(query.genre.trim());
+    if (query.nfoTagIds?.length) {
+      const ids = [...new Set(query.nfoTagIds)];
+      if (query.nfoTagMatch === 'all') {
+        clauses.push(`(SELECT COUNT(DISTINCT ft_all.tag_id) FROM film_tag ft_all WHERE ft_all.film_id = f.id AND ft_all.tag_id IN (${ids.map(() => '?').join(',')})) = ?`);
+        params.push(...ids, ids.length);
+      } else {
+        clauses.push(`EXISTS (SELECT 1 FROM film_tag ft_any WHERE ft_any.film_id = f.id AND ft_any.tag_id IN (${ids.map(() => '?').join(',')}))`);
+        params.push(...ids);
+      }
     }
     if (query.minRating !== undefined && Number.isFinite(query.minRating)) {
       clauses.push('f.rating >= ?');
@@ -588,6 +1074,14 @@ export class FilmRepository {
     if (query.favoriteOnly) clauses.push('f.favorite = 1');
     if (query.missingOnly) clauses.push('f.missing = 1');
     return { where: `WHERE ${clauses.join(' AND ')}`, params };
+  }
+
+  private matchesAvailability(summary: FilmSummaryDto, query: FilmPageQuery): boolean {
+    const allData = Boolean(query.allData || query.missingOnly);
+    if (!allData && summary.existingFileCount === 0) return false;
+    if (query.availability && query.availability !== 'all' && summary.availability !== query.availability) return false;
+    if (query.missingOnly && !['missing', 'partial_missing'].includes(summary.availability)) return false;
+    return true;
   }
 
   private orderBy(sort: FilmPageQuery['sort']): string {
@@ -610,7 +1104,11 @@ function assetImagePriority(assetType: AssetType): number {
   return assetType === 'fanart' ? 0 : assetType === 'extra_fanart' ? 1 : 2;
 }
 
-function mappedCandidateValues(candidate: FilmCandidate): Omit<FilmCandidate, 'sourceId' | 'sourceRootPath' | 'absolutePath' | 'relativePath' | 'filename' | 'fileSize' | 'fileModifiedAt' | 'fingerprint' | 'nfoRelativePath' | 'nfoModifiedAt' | 'nfoHash' | 'nfoStatus' | 'nfoError' | 'assets' | 'ambiguousAssets'> {
+function imagePriority(assetType: AssetType): number {
+  return assetType === 'fanart' ? 0 : assetType === 'extra_fanart' ? 1 : assetType === 'poster' ? 2 : 3;
+}
+
+function mappedCandidateValues(candidate: FilmCandidate): Omit<FilmCandidate, 'sourceId' | 'sourceRootPath' | 'absolutePath' | 'relativePath' | 'filename' | 'fileSize' | 'fileModifiedAt' | 'fingerprint' | 'nfoRelativePath' | 'nfoModifiedAt' | 'nfoHash' | 'nfoStatus' | 'nfoError' | 'assets' | 'ambiguousAssets' | 'logicalKey' | 'partBaseName' | 'files'> {
   return {
     title: candidate.title,
     originalTitle: candidate.originalTitle,
@@ -627,9 +1125,7 @@ function mappedCandidateValues(candidate: FilmCandidate): Omit<FilmCandidate, 's
     directors: candidate.directors,
     actors: candidate.actors,
     tags: candidate.tags,
-    genres: candidate.genres,
     rating: candidate.rating,
-    status: candidate.status,
     width: candidate.width,
     height: candidate.height,
     videoCodec: candidate.videoCodec,
@@ -654,6 +1150,33 @@ function uniqueNames(names: string[]): string[] {
     if (normalized) values.set(normalized.toLocaleLowerCase(), normalized.slice(0, 200));
   }
   return [...values.values()];
+}
+
+function firstNonEmpty<T extends string | null>(first: T, second: T): T {
+  return first && first.trim() ? first : second;
+}
+
+function normalizeCategoryName(rawName: string): { name: string; normalizedName: string } {
+  const name = rawName.trim().replace(/\s+/g, ' ').slice(0, 200);
+  if (!name) throw new Error('INVALID_CATEGORY_NAME');
+  return { name, normalizedName: name.toLocaleLowerCase('en-US') };
+}
+
+function toCategoryDto(row: CategoryRow): CustomCategoryDto {
+  return {
+    id: row.id,
+    name: row.name,
+    sortOrder: Number(row.sort_order),
+    ...(row.film_count === undefined ? {} : { filmCount: Number(row.film_count) }),
+  };
+}
+
+function isDirectory(rootPath: string): boolean {
+  try {
+    return fs.statSync(rootPath).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 function escapeLike(value: string): string {

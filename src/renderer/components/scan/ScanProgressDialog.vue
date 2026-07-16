@@ -12,7 +12,7 @@ function close(): void { emit('update:modelValue', false); emit('close'); }
 <template>
   <el-dialog :model-value="modelValue" width="520px" :close-on-click-modal="false" :show-close="!running" title="正在扫描影片来源" @close="close">
     <template v-if="progress">
-      <div class="scan-status"><span class="pulse" :class="{ done: !running }" />{{ progress.message || (running ? '正在发现和解析影片…' : progress.status === 'completed' ? '扫描完成' : '扫描已停止') }}</div>
+      <div class="scan-status"><span class="pulse" :class="{ done: !running }" />{{ progress.message || (running ? '正在发现和解析影片…' : progress.status === 'completed' ? '扫描完成' : progress.status === 'database_failed' ? '数据库合并失败' : '扫描已停止') }}</div>
       <el-progress :percentage="progressPercent" :status="running ? undefined : progress.status === 'completed' ? 'success' : 'warning'" />
       <div class="scan-current"><span>{{ progress.currentSource || '—' }}</span><span>{{ progress.currentDirectory || '—' }}</span><strong>{{ progress.currentFilm || '等待中' }}</strong></div>
       <div class="scan-metrics"><div><strong>{{ progress.discovered }}</strong><span>已发现</span></div><div><strong>{{ progress.processed }}</strong><span>已处理</span></div><div><strong>{{ progress.created }}</strong><span>新增</span></div><div><strong>{{ progress.updated }}</strong><span>更新</span></div><div><strong>{{ progress.moved }}</strong><span>移动</span></div><div><strong>{{ progress.missing }}</strong><span>缺失</span></div><div><strong>{{ progress.nfoErrors }}</strong><span>NFO 错误</span></div><div><strong>{{ progress.ambiguousAssets }}</strong><span>资源歧义</span></div></div>

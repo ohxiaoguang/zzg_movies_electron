@@ -10,9 +10,10 @@
     "start": "electron-forge start",
     "lint": "eslint .",
     "typecheck": "vue-tsc --noEmit",
-    "test": "vitest run",
+    "test": "node scripts/run-tests.mjs",
     "test:watch": "vitest",
     "smoke:package": "node scripts/smoke-packaged-app.mjs",
+    "smoke:dev": "node scripts/smoke-dev-save.mjs",
     "package": "electron-forge package",
     "make": "electron-forge make"
   },

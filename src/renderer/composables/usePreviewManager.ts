@@ -1,16 +1,26 @@
 let activeVideo: { id: string; element: HTMLVideoElement } | null = null;
 
+function releaseElement(element: HTMLVideoElement): void {
+  element.pause();
+  element.removeAttribute('src');
+  element.load();
+}
+
 export function claimPreview(id: string, element: HTMLVideoElement): void {
   if (activeVideo && activeVideo.element !== element) {
-    activeVideo.element.pause();
-    activeVideo.element.removeAttribute('src');
-    activeVideo.element.load();
+    releaseElement(activeVideo.element);
   }
   activeVideo = { id, element };
 }
 
 export function releasePreview(id: string, element: HTMLVideoElement): void {
   if (activeVideo?.id === id && activeVideo.element === element) activeVideo = null;
-  element.pause();
+  releaseElement(element);
 }
 
+export function releaseActivePreview(): void {
+  if (!activeVideo) return;
+  const current = activeVideo;
+  activeVideo = null;
+  releaseElement(current.element);
+}

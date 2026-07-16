@@ -1,0 +1,97 @@
+name: Release Windows app
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - '[0-9]*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish ${{ github.ref_name }}
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+
+    steps:
+      - name: Check out tagged commit
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Set application version from tag
+        shell: pwsh
+        run: |
+          $tag = $env:RELEASE_TAG
+          $version = $tag -replace '^v', ''
+          if ($version -notmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$') {
+            throw "Tag '$tag' is not a semantic version. Use v1.2.3 or 1.2.3."
+          }
+          npm version $version --no-git-tag-version --allow-same-version
+          $actual = node -p "require('./package.json').version"
+          if ($actual -ne $version) { throw "Expected package version $version, got $actual" }
+          "RELEASE_VERSION=$version" >> $env:GITHUB_ENV
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prepare current NuGet for Squirrel
+        shell: pwsh
+        run: |
+          $vendor = Join-Path $env:RUNNER_TEMP 'squirrel-vendor'
+          New-Item -ItemType Directory -Force -Path $vendor | Out-Null
+          Copy-Item -Path 'node_modules/electron-winstaller/vendor/*' -Destination $vendor -Recurse -Force
+          Invoke-WebRequest 'https://dist.nuget.org/win-x86-commandline/latest/nuget.exe' -OutFile (Join-Path $vendor 'nuget.exe')
+          "SQUIRREL_VENDOR_DIR=$vendor" >> $env:GITHUB_ENV
+
+      - name: Verify source
+        run: |
+          npm run typecheck
+          npm run lint
+          npm test
+
+      - name: Build Windows artifacts
+        run: npm run make
+
+      - name: Verify packaged application
+        run: npm run smoke:package
+        env:
+          EXPECTED_APP_VERSION: ${{ env.RELEASE_VERSION }}
+
+      - name: Verify artifact version
+        shell: pwsh
+        run: |
+          $zip = "out/make/zip/win32/x64/local-film-library-win32-x64-$env:RELEASE_VERSION.zip"
+          if (!(Test-Path $zip)) { throw "Versioned ZIP was not created: $zip" }
+          if (!(Test-Path 'out/make/squirrel.windows/x64/LocalFilmLibrarySetup.exe')) { throw 'Windows installer was not created' }
+
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:RELEASE_TAG
+          $assets = @(
+            (Resolve-Path 'out/make/squirrel.windows/x64/LocalFilmLibrarySetup.exe').Path
+            (Resolve-Path 'out/make/squirrel.windows/x64/RELEASES').Path
+            (Resolve-Path "out/make/zip/win32/x64/local-film-library-win32-x64-$env:RELEASE_VERSION.zip").Path
+          ) + @(Get-ChildItem 'out/make/squirrel.windows/x64' -Filter '*.nupkg' | ForEach-Object FullName)
+          if ($assets.Count -lt 4) { throw 'Expected installer, ZIP, RELEASES, and at least one Squirrel package' }
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag @assets --clobber
+          } else {
+            gh release create $tag @assets --verify-tag --generate-notes --title "Local Film Library $env:RELEASE_VERSION"
+          }

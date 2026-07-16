@@ -6,6 +6,7 @@ coverage/
 .electron-cache/
 .build-appdata/
 .build-nuget/
+.tmp-*/
 *.db
 *.db-shm
 *.db-wal

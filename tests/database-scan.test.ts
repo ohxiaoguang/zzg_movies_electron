@@ -59,7 +59,8 @@ describe('SQLite migrations and scanning', () => {
   it('creates migrated tables, scans NFO/assets, and supports paging', async () => {
     const root = fixtureRoot();
     const context = createContext(root);
-    expect(context.database.db.pragma('user_version', { simple: true })).toBe(1);
+    expect(context.database.db.pragma('user_version', { simple: true })).toBe(6);
+    expect(context.database.db.prepare('SELECT name FROM sqlite_master WHERE type = \'table\' AND name = \'film_file\'').get()).toBeTruthy();
     const start = context.scan.start({});
     expect(start.jobId).toMatch(/[0-9a-f-]{36}/);
     const status = await waitForScan(context.scan);
@@ -68,7 +69,7 @@ describe('SQLite migrations and scanning', () => {
     expect(page.total).toBe(1);
     expect(page.items[0].previewAssetId).not.toBeNull();
     expect(page.items[0].previewImageAssetIds).toHaveLength(3);
-    expect(context.films.detail(page.items[0].id)?.genres).toEqual(['科幻']);
+    expect(context.database.db.prepare('SELECT COUNT(*) AS count FROM film_genre').get()).toEqual({ count: 0 });
   });
 
   it('is idempotent, preserves user fields, and detects a moved film by fingerprint', async () => {
@@ -78,7 +79,8 @@ describe('SQLite migrations and scanning', () => {
     await waitForScan(context.scan);
     const first = context.films.page({ page: 1, pageSize: 60 });
     const film = first.items[0];
-    context.films.update({ id: film.id, title: '用户标题', favorite: true, rating: 8.5, notes: '用户备注', tags: ['手动'] });
+    context.films.update({ id: film.id, title: '用户标题', rating: 8.5, notes: '用户备注' });
+    context.films.updateFavorite(film.id, true);
     context.scan.start({});
     const secondStatus = await waitForScan(context.scan);
     expect(secondStatus.status).toBe('completed');
@@ -111,8 +113,9 @@ describe('SQLite migrations and scanning', () => {
     const root = fixtureRoot();
     const context = createContext(root);
     const before = fs.readFileSync(path.join(root, 'Movie A.mkv'), 'utf8');
-    context.database.transaction(() => context.sources.remove({ id: context.source.id, mode: 'archive' }));
+    context.database.transaction(() => context.sources.remove({ id: context.source.id, mode: 'keep-records' }));
     expect(fs.readFileSync(path.join(root, 'Movie A.mkv'), 'utf8')).toBe(before);
-    expect(context.sources.findById(context.source.id)?.archived).toBe(true);
+    expect(context.sources.findById(context.source.id)?.deletedAt).not.toBeNull();
+    expect(context.sources.list()).toHaveLength(0);
   });
 });

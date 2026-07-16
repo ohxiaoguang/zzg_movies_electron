@@ -1,10 +1,7 @@
 export const ASSET_TYPES = ['poster', 'fanart', 'thumb', 'extra_fanart', 'preview', 'trailer', 'sample'] as const;
 export type AssetType = (typeof ASSET_TYPES)[number];
 
-export const FILM_STATUSES = ['unorganized', 'want', 'watching', 'watched'] as const;
-export type FilmStatus = (typeof FILM_STATUSES)[number];
-
-export const SCAN_STATUSES = ['running', 'completed', 'failed', 'cancelled'] as const;
+export const SCAN_STATUSES = ['running', 'completed', 'failed', 'database_failed', 'cancelled'] as const;
 export type ScanStatus = (typeof SCAN_STATUSES)[number];
 
 export const DEFAULT_VIDEO_EXTENSIONS = ['mp4', 'mkv', 'mov', 'avi', 'webm', 'm4v', 'ts', 'flv', 'wmv'];
@@ -17,7 +14,7 @@ export const DEFAULT_IGNORED_DIRECTORIES = [
 ];
 
 export const DEFAULT_SETTINGS = {
-  cardSize: 220,
+  cardSize: 200,
   hoverDelayMs: 450,
   slideshowIntervalMs: 1200,
   pageSize: 60,
@@ -27,4 +24,3 @@ export const DEFAULT_SETTINGS = {
   autoScanOnStartup: false,
   ffprobePath: '',
 } as const;
-
