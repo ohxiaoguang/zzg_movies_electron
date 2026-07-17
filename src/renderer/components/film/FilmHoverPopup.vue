@@ -197,9 +197,9 @@ onBeforeUnmount(() => {
     <section ref="popup" class="film-hover-popup" :style="popupStyle" @mouseenter="$emit('enter')" @mouseleave="$emit('leave')">
       <div class="popup-media">
         <video v-if="mode === 'video'" ref="video" muted loop playsinline preload="metadata" @playing="onVideoPlaying" @waiting="onVideoWaiting" @error="onVideoError" />
-        <div v-if="mode === 'video' && videoPreparing" class="preview-preparing"><span />正在准备视频预览…</div>
         <img v-else-if="mode === 'slideshow' && currentImageUrl" :src="currentImageUrl" :alt="film.title" />
         <div v-else class="popup-empty">暂无预览</div>
+        <div v-if="mode === 'video' && videoPreparing" class="preview-preparing"><span />正在准备视频预览…</div>
       </div>
       <div class="popup-content">
         <div class="popup-heading">

@@ -98,6 +98,7 @@ describe('renderer regressions', () => {
     expect(popup).toContain("mediaUrl('preview', props.film.id)");
     expect(popup).toContain('props.film.allowOriginalPreview');
     expect(popup).toContain('正在准备视频预览');
+    expect(popup).toMatch(/<video v-if="mode === 'video'"[\s\S]*?<img v-else-if="mode === 'slideshow'[\s\S]*?<div v-else class="popup-empty">暂无预览<\/div>[\s\S]*?<div v-if="mode === 'video' && videoPreparing"/);
   });
 
   it('lists NFO actors and routes an actor click to the library filter', () => {
