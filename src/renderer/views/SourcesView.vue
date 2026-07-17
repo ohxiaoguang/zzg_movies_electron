@@ -16,6 +16,7 @@ const saving = ref(false);
 const removeMode = ref<'keep-records' | 'delete-records'>('keep-records');
 const removingSource = ref(false);
 const scanningSourceId = ref<string | null>(null);
+const previewUpdatingIds = ref<Set<string>>(new Set());
 const form = reactive({ name: '', rootPath: '', enabled: true, recursive: true });
 
 onMounted(() => void sourceStore.fetch());
@@ -84,6 +85,26 @@ async function scanSource(source: MediaSourceDto): Promise<void> {
   if (!started) { scanningSourceId.value = null; ElMessage.error('无法启动扫描'); return; }
   ElMessage.success(`已开始重新扫描“${source.name}”`);
 }
+async function updateOriginalPreview(source: MediaSourceDto, value: string | number | boolean): Promise<void> {
+  if (previewUpdatingIds.value.has(source.id)) return;
+  previewUpdatingIds.value = new Set([...previewUpdatingIds.value, source.id]);
+  try {
+    const result = await window.filmLibrary.sources.update({ id: source.id, allowOriginalPreview: Boolean(value) });
+    if (!result.ok) {
+      ElMessage.error(result.error.message);
+      return;
+    }
+    source.allowOriginalPreview = result.data.allowOriginalPreview;
+    ElMessage.success(source.allowOriginalPreview ? '已允许该来源使用原片预览' : '已关闭该来源的原片预览');
+  } catch (error) {
+    console.error('[sources] original preview update failed', error);
+    ElMessage.error('原片预览设置保存失败，请查看日志');
+  } finally {
+    const next = new Set(previewUpdatingIds.value);
+    next.delete(source.id);
+    previewUpdatingIds.value = next;
+  }
+}
 </script>
 
 <template>
@@ -93,7 +114,7 @@ async function scanSource(source: MediaSourceDto): Promise<void> {
     <el-alert v-if="sourceStore.error" :title="sourceStore.error" type="error" show-icon :closable="false" class="source-error" />
     <div v-if="sourceStore.sources.length" class="source-list">
       <div v-for="source in sourceStore.sources" :key="source.id" class="source-card" :class="{ archived: source.archived }">
-        <div class="source-icon"><FolderOpened /></div><div class="source-main"><div class="source-title"><strong>{{ source.name }}</strong><el-tag v-if="source.archived" size="small" type="info">已归档</el-tag><span v-else :class="['online-state', source.online ? 'online' : 'offline']"><i />{{ source.online ? '在线' : '离线' }}</span></div><div class="source-path text-mono">{{ source.rootPath }}</div><div class="source-meta"><span>{{ source.recursive ? '递归扫描' : '仅当前目录' }}</span><span>上次扫描：{{ source.lastScanAt ? new Date(source.lastScanAt).toLocaleString() : '从未扫描' }}</span><span>{{ source.lastScanStatus || '待扫描' }}</span></div></div><div class="source-actions"><el-button size="small" :loading="scanningSourceId === source.id" :disabled="source.archived || !source.enabled || (scan.progress?.status === 'running' && scanningSourceId !== source.id)" title="重新扫描此来源" @click="scanSource(source)"><Operation />重新扫描</el-button><el-button circle text title="编辑" @click="openEdit(source)"><Edit /></el-button><el-button circle text type="danger" title="删除" @click="openRemove(source)"><Delete /></el-button></div>
+        <div class="source-icon"><FolderOpened /></div><div class="source-main"><div class="source-title"><strong>{{ source.name }}</strong><el-tag v-if="source.archived" size="small" type="info">已归档</el-tag><span v-else :class="['online-state', source.online ? 'online' : 'offline']"><i />{{ source.online ? '在线' : '离线' }}</span></div><div class="source-path text-mono">{{ source.rootPath }}</div><div class="source-meta"><span>{{ source.recursive ? '递归扫描' : '仅当前目录' }}</span><span>上次扫描：{{ source.lastScanAt ? new Date(source.lastScanAt).toLocaleString() : '从未扫描' }}</span><span>{{ source.lastScanStatus || '待扫描' }}</span></div></div><div class="source-actions"><el-checkbox class="original-preview-checkbox" :model-value="source.allowOriginalPreview" :disabled="source.archived || previewUpdatingIds.has(source.id)" title="没有专用预览视频时，允许直接使用原视频完整预览" @change="updateOriginalPreview(source, $event)">原片预览</el-checkbox><el-button size="small" :loading="scanningSourceId === source.id" :disabled="source.archived || !source.enabled || (scan.progress?.status === 'running' && scanningSourceId !== source.id)" title="重新扫描此来源" @click="scanSource(source)"><Operation />重新扫描</el-button><el-button circle text title="编辑" @click="openEdit(source)"><Edit /></el-button><el-button circle text type="danger" title="删除" @click="openRemove(source)"><Delete /></el-button></div>
       </div>
     </div>
     <div v-else class="empty-state source-empty"><div><FolderOpened :size="38" /><h3>还没有影片来源</h3><p>添加一个外部目录，然后执行扫描。</p><el-button type="primary" @click="openCreate">添加第一个来源</el-button></div></div>
@@ -123,6 +144,7 @@ async function scanSource(source: MediaSourceDto): Promise<void> {
 .source-path { margin-top: 7px; overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
 .source-meta { display: flex; gap: 18px; margin-top: 11px; color: var(--subtle); font-size: 11px; }
 .source-actions { display: flex; align-items: center; gap: 4px; }.source-actions .el-button:not(.is-circle) svg { width: 14px; margin-right: 4px; }
+.original-preview-checkbox { margin-right: 10px; white-space: nowrap; }
 .source-empty { text-align: center; }.source-empty h3 { margin: 13px 0 5px; color: var(--ink); }.source-empty p { margin: 0 0 17px; }
 .remove-options { display: grid; gap: 15px; }
 </style>

@@ -36,6 +36,7 @@ interface FilmSummaryRow {
   updated_at: string;
   source_root_path: string;
   source_deleted_at: string | null;
+  source_allow_original_preview: number;
   total_file_count: number;
   existing_file_count: number;
   missing_file_count: number;
@@ -153,6 +154,7 @@ export class FilmRepository {
                 f.title, f.original_title, f.year, f.favorite, f.rating,
                 f.missing, f.archived, f.updated_at, s.root_path AS source_root_path,
                 s.deleted_at AS source_deleted_at,
+                s.allow_original_preview AS source_allow_original_preview,
                 COUNT(ff.id) AS total_file_count,
                 COALESCE(SUM(CASE WHEN ff.missing = 0 THEN 1 ELSE 0 END), 0) AS existing_file_count,
                 COALESCE(SUM(CASE WHEN ff.missing = 1 THEN 1 ELSE 0 END), 0) AS missing_file_count
@@ -240,6 +242,7 @@ export class FilmRepository {
                 f.container_format, f.nfo_relative_path, f.nfo_status, f.nfo_error, f.missing,
                 f.archived, f.imported_at, f.updated_at, f.last_seen_at,
                 s.name AS source_name, s.root_path AS source_root_path, s.deleted_at AS source_deleted_at,
+                s.allow_original_preview AS source_allow_original_preview,
                 COUNT(ff.id) AS total_file_count,
                 COALESCE(SUM(CASE WHEN ff.missing = 0 THEN 1 ELSE 0 END), 0) AS existing_file_count,
                 COALESCE(SUM(CASE WHEN ff.missing = 1 THEN 1 ELSE 0 END), 0) AS missing_file_count
@@ -491,6 +494,26 @@ export class FilmRepository {
                   a.sort_order ASC, a.id ASC LIMIT 1`,
       )
       .get(filmId, ...assetTypes, ...assetTypes) as { relative_path: string; root_path: string } | undefined;
+    return row ? { rootPath: row.root_path, relativePath: row.relative_path } : null;
+  }
+
+  public previewLocation(filmId: string): MediaLocation | null {
+    const dedicated = this.preferredAssetLocation(filmId, ['preview', 'trailer', 'sample']);
+    if (dedicated) return dedicated;
+    const row = this.db
+      .prepare(
+        `SELECT ff.relative_path, s.root_path
+         FROM film_file ff
+         JOIN film f ON f.id = ff.film_id
+         JOIN media_source s ON s.id = ff.source_id
+         WHERE ff.film_id = ?
+           AND ff.is_primary = 1
+           AND ff.missing = 0
+           AND f.archived = 0
+           AND s.deleted_at IS NULL
+           AND s.allow_original_preview = 1`,
+      )
+      .get(filmId) as { relative_path: string; root_path: string } | undefined;
     return row ? { rootPath: row.root_path, relativePath: row.relative_path } : null;
   }
 
@@ -1022,6 +1045,7 @@ export class FilmRepository {
       missing: availability === 'missing',
       posterAssetId: poster?.id ?? null,
       previewAssetId: preview?.id ?? null,
+      allowOriginalPreview: Boolean(row.source_allow_original_preview),
       previewImageAssetIds: images,
       updatedAt: row.updated_at,
       availability,

@@ -42,7 +42,9 @@ let rescanJobId: string | null = null;
 const thumbnailRefs = new Map<string, HTMLElement>();
 
 const poster = computed(() => assetOf('poster') ?? assetOf('thumb'));
-const preview = computed(() => detail.value?.previewAssetId ? mediaUrl('asset', detail.value.previewAssetId) : null);
+const preview = computed(() => detail.value && (detail.value.previewAssetId || detail.value.allowOriginalPreview)
+  ? mediaUrl('preview', detail.value.id)
+  : null);
 const images = computed(() => (detail.value?.images ?? []).filter((image) => !image.missing && !brokenImageIds.value.has(image.id)));
 const currentImage = computed(() => images.value[imageIndex.value] ?? null);
 const currentImageUrl = computed(() => currentImage.value ? mediaUrl('asset', currentImage.value.id) : null);

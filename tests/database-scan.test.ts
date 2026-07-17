@@ -59,7 +59,7 @@ describe('SQLite migrations and scanning', () => {
   it('creates migrated tables, scans NFO/assets, and supports paging', async () => {
     const root = fixtureRoot();
     const context = createContext(root);
-    expect(context.database.db.pragma('user_version', { simple: true })).toBe(6);
+    expect(context.database.db.pragma('user_version', { simple: true })).toBe(7);
     expect(context.database.db.prepare('SELECT name FROM sqlite_master WHERE type = \'table\' AND name = \'film_file\'').get()).toBeTruthy();
     const start = context.scan.start({});
     expect(start.jobId).toMatch(/[0-9a-f-]{36}/);
@@ -68,7 +68,11 @@ describe('SQLite migrations and scanning', () => {
     const page = context.films.page({ page: 1, pageSize: 60, search: '测试电影' });
     expect(page.total).toBe(1);
     expect(page.items[0].previewAssetId).not.toBeNull();
+    expect(page.items[0].allowOriginalPreview).toBe(false);
     expect(page.items[0].previewImageAssetIds).toHaveLength(3);
+    context.sources.update({ id: context.source.id, allowOriginalPreview: true });
+    expect(context.films.page({ page: 1, pageSize: 60 }).items[0].allowOriginalPreview).toBe(true);
+    expect(context.films.previewLocation(page.items[0].id)?.relativePath).toBe('Movie A-preview.mp4');
     expect(context.database.db.prepare('SELECT COUNT(*) AS count FROM film_genre').get()).toEqual({ count: 0 });
   });
 
@@ -123,9 +127,17 @@ describe('SQLite migrations and scanning', () => {
     for (const title of ['Alpha', 'Beta']) {
       const film = context.films.page({ page: 1, pageSize: 10, search: title }).items[0]!;
       expect(film.posterAssetId).not.toBeNull();
+      expect(film.allowOriginalPreview).toBe(false);
+      expect(context.films.previewLocation(film.id)).toBeNull();
       const poster = context.films.detail(film.id)?.assets.find((asset) => asset.assetType === 'poster');
       expect(poster?.relativePath).toBe(`${title}.jpg`);
     }
+
+    const updatedSource = context.sources.update({ id: context.source.id, allowOriginalPreview: true });
+    expect(updatedSource.allowOriginalPreview).toBe(true);
+    const alpha = context.films.page({ page: 1, pageSize: 10, search: 'Alpha' }).items[0]!;
+    expect(alpha.allowOriginalPreview).toBe(true);
+    expect(context.films.previewLocation(alpha.id)).toEqual({ rootPath: root, relativePath: 'Alpha.mkv' });
   });
 
   it('rescans only one film directory and scopes missing markers to that directory', async () => {

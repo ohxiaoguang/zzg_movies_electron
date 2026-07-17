@@ -300,7 +300,13 @@ function validateCreateSource(payload: unknown): CreateSourceInput {
   const name = payload.name.trim().slice(0, 200);
   const rootPath = payload.rootPath.trim();
   if (!name || !rootPath) throw new Error('INVALID_SOURCE_INPUT');
-  return { name, rootPath, enabled: payload.enabled !== false, recursive: payload.recursive !== false };
+  return {
+    name,
+    rootPath,
+    enabled: payload.enabled !== false,
+    recursive: payload.recursive !== false,
+    allowOriginalPreview: payload.allowOriginalPreview === true,
+  };
 }
 
 function validateUpdateSource(payload: unknown): UpdateSourceInput {
@@ -316,6 +322,7 @@ function validateUpdateSource(payload: unknown): UpdateSourceInput {
   }
   if (payload.enabled !== undefined) result.enabled = Boolean(payload.enabled);
   if (payload.recursive !== undefined) result.recursive = Boolean(payload.recursive);
+  if (payload.allowOriginalPreview !== undefined) result.allowOriginalPreview = Boolean(payload.allowOriginalPreview);
   return result;
 }
 

@@ -61,7 +61,7 @@ export class MediaProtocol {
 
   private resolveLocation(kind: string, id: string): MediaLocation | null {
     if (kind === 'asset') return this.films.assetLocation(id);
-    if (kind === 'preview') return this.films.preferredAssetLocation(id, ['preview', 'trailer', 'sample']);
+    if (kind === 'preview') return this.films.previewLocation(id);
     if (kind === 'poster') return this.films.preferredAssetLocation(id, ['poster']);
     return null;
   }

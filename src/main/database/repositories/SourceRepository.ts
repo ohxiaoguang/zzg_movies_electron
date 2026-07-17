@@ -15,6 +15,7 @@ interface SourceRow {
   root_path: string;
   enabled: number;
   recursive: number;
+  allow_original_preview: number;
   archived: number;
   created_at: string;
   updated_at: string;
@@ -57,10 +58,19 @@ export class SourceRepository {
     this.db
       .prepare(
         `INSERT INTO media_source
-          (id, name, root_path, enabled, recursive, archived, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
+          (id, name, root_path, enabled, recursive, allow_original_preview, archived, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)`,
       )
-      .run(id, input.name, rootPath, input.enabled === false ? 0 : 1, input.recursive === false ? 0 : 1, now, now);
+      .run(
+        id,
+        input.name,
+        rootPath,
+        input.enabled === false ? 0 : 1,
+        input.recursive === false ? 0 : 1,
+        input.allowOriginalPreview === true ? 1 : 0,
+        now,
+        now,
+      );
     return this.findById(id)!;
   }
 
@@ -71,14 +81,15 @@ export class SourceRepository {
     const rootPath = input.rootPath ? path.resolve(input.rootPath) : existing.rootPath;
     const enabled = input.enabled ?? existing.enabled;
     const recursive = input.recursive ?? existing.recursive;
+    const allowOriginalPreview = input.allowOriginalPreview ?? existing.allowOriginalPreview;
     const updatedAt = new Date().toISOString();
     this.db
       .prepare(
         `UPDATE media_source
-         SET name = ?, root_path = ?, enabled = ?, recursive = ?, updated_at = ?
+         SET name = ?, root_path = ?, enabled = ?, recursive = ?, allow_original_preview = ?, updated_at = ?
          WHERE id = ?`,
       )
-      .run(name, rootPath, enabled ? 1 : 0, recursive ? 1 : 0, updatedAt, input.id);
+      .run(name, rootPath, enabled ? 1 : 0, recursive ? 1 : 0, allowOriginalPreview ? 1 : 0, updatedAt, input.id);
     return this.findById(input.id)!;
   }
 
@@ -126,6 +137,7 @@ export class SourceRepository {
       rootPath: row.root_path,
       enabled: Boolean(row.enabled),
       recursive: Boolean(row.recursive),
+      allowOriginalPreview: Boolean(row.allow_original_preview),
       archived: Boolean(row.archived),
       online: isDirectory(row.root_path),
       createdAt: row.created_at,

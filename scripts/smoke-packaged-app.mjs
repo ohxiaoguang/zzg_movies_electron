@@ -70,7 +70,8 @@ try {
       const info = await window.filmLibrary.app.info();
       const before = await window.filmLibrary.sources.list();
       const created = await window.filmLibrary.sources.create({ name: 'Smoke Source', rootPath: ${sourcePath} });
-      const started = created.ok ? await window.filmLibrary.scan.start({ sourceIds: [created.data.id] }) : { ok: false };
+      const previewEnabled = created.ok ? await window.filmLibrary.sources.update({ id: created.data.id, allowOriginalPreview: true }) : { ok: false };
+      const started = previewEnabled.ok ? await window.filmLibrary.scan.start({ sourceIds: [created.data.id] }) : { ok: false };
       let scanStatus = null;
       for (let index = 0; index < 300 && started.ok; index += 1) {
         scanStatus = await window.filmLibrary.scan.status();
@@ -79,6 +80,10 @@ try {
       }
       const page = await window.filmLibrary.films.page({ page: 1, pageSize: 20 });
       const detail = page.ok && page.data.items[0] ? await window.filmLibrary.films.detail(page.data.items[0].id) : { ok: false };
+      const previewProbe = detail.ok ? await (async () => {
+        const response = await fetch('film-media://preview/' + detail.data.id, { headers: { Range: 'bytes=0-9' } });
+        return { status: response.status, body: await response.text() };
+      })() : null;
       const directoryRescan = detail.ok ? await window.filmLibrary.films.rescan(detail.data.id) : { ok: false };
       let directoryRescanStatus = null;
       for (let index = 0; index < 300 && directoryRescan.ok; index += 1) {
@@ -131,7 +136,7 @@ try {
       const allData = await window.filmLibrary.films.recordsPageAll({ page: 1, pageSize: 20 });
       const restored = created.ok ? await window.filmLibrary.sources.restore({ id: created.data.id }) : { ok: false };
       const after = await window.filmLibrary.sources.list();
-      return { health, info, before, created, started, scanStatus, page, detail, directoryRescan, directoryRescanStatus, actorList, actorFiltered, parts, unorganizedBefore, classic, mystery, categorized, favorited, patched, patchedDetail, organizedAfter, ui, setting, removed, allData, restored, after };
+      return { health, info, before, created, previewEnabled, started, scanStatus, page, detail, previewProbe, directoryRescan, directoryRescanStatus, actorList, actorFiltered, parts, unorganizedBefore, classic, mystery, categorized, favorited, patched, patchedDetail, organizedAfter, ui, setting, removed, allData, restored, after };
     })()`, true);
 
     if (evaluation?.exceptionDetails) throw new Error(`Renderer evaluation failed: ${JSON.stringify(evaluation.exceptionDetails)}`);
@@ -139,9 +144,11 @@ try {
     if (!result?.health?.ok || !result.health.data?.databaseReady || !result.health.data?.ipcReady) throw new Error(`Health check failed: ${JSON.stringify(result?.health)}`);
     if (!result.info?.ok || (expectedAppVersion && result.info.data.version !== expectedAppVersion)) throw new Error(`Application version failed: expected=${expectedAppVersion || '(any)'} actual=${JSON.stringify(result.info)}`);
     if (!result.created?.ok) throw new Error(`Source create failed: ${JSON.stringify(result.created)}`);
+    if (!result.previewEnabled?.ok || !result.previewEnabled.data.allowOriginalPreview) throw new Error(`Original preview source update failed: ${JSON.stringify(result.previewEnabled)}`);
     if (!result.started?.ok || result.scanStatus?.data?.status !== 'completed') throw new Error(`Scan failed: ${JSON.stringify(result.scanStatus)}`);
     if (!result.page?.ok || result.page.data.total !== 1) throw new Error(`Multi-part page failed: ${JSON.stringify(result.page)}`);
-    if (!result.detail?.ok || result.detail.data.parts.length !== 3 || result.detail.data.images.length !== 3) throw new Error(`Multi-part detail failed: ${JSON.stringify(result.detail)}`);
+    if (!result.detail?.ok || result.detail.data.parts.length !== 3 || result.detail.data.images.length !== 3 || !result.detail.data.allowOriginalPreview) throw new Error(`Multi-part detail failed: ${JSON.stringify(result.detail)}`);
+    if (result.previewProbe?.status !== 206 || result.previewProbe.body !== 'Smoke Movi') throw new Error(`Original preview protocol failed: ${JSON.stringify(result.previewProbe)}`);
     if (!result.directoryRescan?.ok || result.directoryRescanStatus?.data?.status !== 'completed') throw new Error(`Directory rescan failed: ${JSON.stringify({ directoryRescan: result.directoryRescan, status: result.directoryRescanStatus })}`);
     if (!result.actorList?.ok || result.actorList.data[0]?.name !== 'Smoke Actor' || result.actorList.data[0]?.filmCount !== 1 || !result.actorFiltered?.ok || result.actorFiltered.data.total !== 1) throw new Error(`Actor index failed: ${JSON.stringify({ actorList: result.actorList, actorFiltered: result.actorFiltered })}`);
     if (!result.parts?.ok || result.parts.data.length !== 3) throw new Error(`Part API failed: ${JSON.stringify(result.parts)}`);

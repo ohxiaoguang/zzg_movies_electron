@@ -13,6 +13,7 @@ export interface MediaSourceDto {
   rootPath: string;
   enabled: boolean;
   recursive: boolean;
+  allowOriginalPreview: boolean;
   archived: boolean;
   online: boolean;
   createdAt: string;
@@ -27,6 +28,7 @@ export interface CreateSourceInput {
   rootPath: string;
   enabled?: boolean;
   recursive?: boolean;
+  allowOriginalPreview?: boolean;
 }
 
 export interface UpdateSourceInput {
@@ -35,6 +37,7 @@ export interface UpdateSourceInput {
   rootPath?: string;
   enabled?: boolean;
   recursive?: boolean;
+  allowOriginalPreview?: boolean;
 }
 
 export interface RemoveSourceInput {
@@ -113,6 +116,7 @@ export interface FilmSummaryDto {
   missing: boolean;
   posterAssetId: string | null;
   previewAssetId: string | null;
+  allowOriginalPreview: boolean;
   previewImageAssetIds: string[];
   updatedAt: string;
   availability: FilmAvailability;

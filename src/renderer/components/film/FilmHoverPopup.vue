@@ -24,7 +24,8 @@ type PreviewMode = 'video' | 'slideshow' | 'empty';
 
 const popup = ref<HTMLElement | null>(null);
 const video = ref<HTMLVideoElement | null>(null);
-const mode = ref<PreviewMode>(props.film.previewAssetId ? 'video' : props.film.previewImageAssetIds.length ? 'slideshow' : 'empty');
+const hasVideoPreview = computed(() => Boolean(props.film.previewAssetId || props.film.allowOriginalPreview));
+const mode = ref<PreviewMode>(hasVideoPreview.value ? 'video' : props.film.previewImageAssetIds.length ? 'slideshow' : 'empty');
 const imageIndex = ref(0);
 const popupWidth = ref(520);
 const position = ref<PopupPosition>({ left: 12, top: 12 });
@@ -65,10 +66,10 @@ async function positionPopup(): Promise<void> {
 
 async function startPreview(): Promise<void> {
   await nextTick();
-  if (props.film.previewAssetId && video.value) {
+  if (hasVideoPreview.value && video.value) {
     mode.value = 'video';
     claimPreview(props.film.id, video.value);
-    video.value.src = mediaUrl('asset', props.film.previewAssetId);
+    video.value.src = mediaUrl('preview', props.film.id);
     video.value.load();
     try {
       await video.value.play();

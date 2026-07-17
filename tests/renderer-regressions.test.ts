@@ -95,6 +95,8 @@ describe('renderer regressions', () => {
     expect(popup).toContain('object-fit: contain');
     expect(popup).toContain('claimPreview');
     expect(popup).toContain('releasePreview');
+    expect(popup).toContain("mediaUrl('preview', props.film.id)");
+    expect(popup).toContain('props.film.allowOriginalPreview');
   });
 
   it('lists NFO actors and routes an actor click to the library filter', () => {
@@ -127,6 +129,9 @@ describe('renderer regressions', () => {
     expect(drawer).toContain('rescanJobId');
     expect(sources).toContain('重新扫描此来源');
     expect(sources).toContain('scan.start([source.id])');
+    expect(sources).toContain('原片预览');
+    expect(sources).toContain('allowOriginalPreview');
+    expect(sources).toContain('updateOriginalPreview');
   });
 
   it('exports the current organized-page filters through the CSV API', () => {
