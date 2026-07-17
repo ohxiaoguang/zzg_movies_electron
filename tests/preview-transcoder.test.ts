@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { AppLogger } from '../src/main/system/AppLogger';
 import {
   buildPreviewTranscodeArgs,
+  previewCacheKey,
   PreviewTranscoder,
   resolvePreviewToolPaths,
 } from '../src/main/media/PreviewTranscoder';
@@ -37,14 +38,15 @@ describe('MKV preview transcoder', () => {
   });
 
   it('remuxes browser-compatible H.264/AAC without re-encoding', () => {
-    const args = buildPreviewTranscodeArgs('clip.mkv', { video: 'h264', audio: 'aac' });
+    const args = buildPreviewTranscodeArgs('clip.mkv', { video: 'h264', audio: 'aac' }, 'cached.mp4.partial');
     expect(args).toContain('copy');
     expect(args).not.toContain('libx264');
-    expect(args.slice(-5)).toEqual(['-movflags', 'frag_keyframe+empty_moov+default_base_moof', '-f', 'mp4', 'pipe:1']);
+    expect(args.slice(-5)).toEqual(['-movflags', '+faststart', '-f', 'mp4', 'cached.mp4.partial']);
+    expect(args).not.toContain('pipe:1');
   });
 
   it('transcodes HEVC video and incompatible audio to H.264/AAC', () => {
-    const args = buildPreviewTranscodeArgs('clip.mkv', { video: 'hevc', audio: 'dts' });
+    const args = buildPreviewTranscodeArgs('clip.mkv', { video: 'hevc', audio: 'dts' }, 'cached.mp4.partial');
     expect(args).toContain('libx264');
     expect(args).toContain('yuv420p');
     expect(args).toContain('aac');
@@ -54,8 +56,15 @@ describe('MKV preview transcoder', () => {
   it('limits compatibility handling to MKV preview paths', () => {
     const logs = fs.mkdtempSync(path.join(os.tmpdir(), 'film-preview-logs-'));
     tempRoots.push(logs);
-    const transcoder = new PreviewTranscoder(new AppLogger(logs), () => '');
+    const transcoder = new PreviewTranscoder(new AppLogger(logs), () => '', path.join(logs, 'cache'));
     expect(transcoder.shouldTranscode('movie.MKV')).toBe(true);
     expect(transcoder.shouldTranscode('movie.mp4')).toBe(false);
+  });
+
+  it('invalidates cached previews when source size or modification time changes', () => {
+    const first = previewCacheKey('C:\\Movies\\clip.mkv', 100, 1_000);
+    expect(previewCacheKey('C:\\Movies\\clip.mkv', 100, 1_000)).toBe(first);
+    expect(previewCacheKey('C:\\Movies\\clip.mkv', 101, 1_000)).not.toBe(first);
+    expect(previewCacheKey('C:\\Movies\\clip.mkv', 100, 2_000)).not.toBe(first);
   });
 });

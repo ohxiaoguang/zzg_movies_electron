@@ -100,13 +100,19 @@ try {
         const response = await fetch('film-media://preview/' + detail.data.id, { headers: { Range: 'bytes=0-9' } });
         const buffer = await response.arrayBuffer();
         const body = new TextDecoder('latin1').decode(buffer);
+        const secondResponse = await fetch('film-media://preview/' + detail.data.id, { headers: { Range: 'bytes=100-199' } });
+        const secondBuffer = await secondResponse.arrayBuffer();
         return {
           status: response.status,
           contentType: response.headers.get('content-type'),
+          contentRange: response.headers.get('content-range'),
           byteLength: buffer.byteLength,
           hasFtyp: body.includes('ftyp'),
           hasMoof: body.includes('moof'),
           directBody: body,
+          secondStatus: secondResponse.status,
+          secondByteLength: secondBuffer.byteLength,
+          secondContentRange: secondResponse.headers.get('content-range'),
         };
       })() : null;
       const directoryRescan = detail.ok ? await window.filmLibrary.films.rescan(detail.data.id) : { ok: false };
@@ -174,7 +180,7 @@ try {
     if (!result.page?.ok || result.page.data.total !== 1) throw new Error(`Multi-part page failed: ${JSON.stringify(result.page)}`);
     if (!result.detail?.ok || result.detail.data.parts.length !== 3 || result.detail.data.images.length !== 3 || !result.detail.data.allowOriginalPreview) throw new Error(`Multi-part detail failed: ${JSON.stringify(result.detail)}`);
     if (expectedMkvCompatibility) {
-      if (result.previewProbe?.status !== 200 || result.previewProbe.contentType !== 'video/mp4' || !result.previewProbe.hasFtyp || !result.previewProbe.hasMoof || result.previewProbe.byteLength < 1000) throw new Error(`MKV compatibility preview failed: ${JSON.stringify(result.previewProbe)}`);
+      if (result.previewProbe?.status !== 206 || result.previewProbe.contentType !== 'video/mp4' || !result.previewProbe.hasFtyp || result.previewProbe.byteLength !== 10 || !result.previewProbe.contentRange?.startsWith('bytes 0-9/') || result.previewProbe.secondStatus !== 206 || result.previewProbe.secondByteLength !== 100 || !result.previewProbe.secondContentRange?.startsWith('bytes 100-199/')) throw new Error(`MKV compatibility preview failed: ${JSON.stringify(result.previewProbe)}`);
     } else if (result.previewProbe?.status !== 206 || result.previewProbe.directBody !== 'Smoke Movi') {
       throw new Error(`Original preview protocol failed: ${JSON.stringify(result.previewProbe)}`);
     }

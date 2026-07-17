@@ -97,6 +97,7 @@ describe('renderer regressions', () => {
     expect(popup).toContain('releasePreview');
     expect(popup).toContain("mediaUrl('preview', props.film.id)");
     expect(popup).toContain('props.film.allowOriginalPreview');
+    expect(popup).toContain('正在准备视频预览');
   });
 
   it('lists NFO actors and routes an actor click to the library filter', () => {

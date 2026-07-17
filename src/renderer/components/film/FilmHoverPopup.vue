@@ -31,6 +31,7 @@ const popupWidth = ref(520);
 const position = ref<PopupPosition>({ left: 12, top: 12 });
 const favorite = ref(props.film.favorite);
 const favoriteSaving = ref(false);
+const videoPreparing = ref(hasVideoPreview.value);
 let slideshowTimer: ReturnType<typeof setInterval> | null = null;
 
 const imageIds = computed(() => props.film.previewImageAssetIds);
@@ -68,6 +69,7 @@ async function startPreview(): Promise<void> {
   await nextTick();
   if (hasVideoPreview.value && video.value) {
     mode.value = 'video';
+    videoPreparing.value = true;
     claimPreview(props.film.id, video.value);
     video.value.src = mediaUrl('preview', props.film.id);
     video.value.load();
@@ -125,6 +127,7 @@ function stopVideo(): void {
 }
 
 function onVideoError(): void {
+  videoPreparing.value = false;
   console.error('[preview] video playback failed', {
     filmId: props.film.id,
     mediaErrorCode: video.value?.error?.code ?? null,
@@ -132,6 +135,14 @@ function onVideoError(): void {
     usesOriginal: !props.film.previewAssetId && props.film.allowOriginalPreview,
   });
   fallbackToImages();
+}
+
+function onVideoPlaying(): void {
+  videoPreparing.value = false;
+}
+
+function onVideoWaiting(): void {
+  videoPreparing.value = true;
 }
 
 async function openOriginal(): Promise<void> {
@@ -185,7 +196,8 @@ onBeforeUnmount(() => {
   <Teleport to="body">
     <section ref="popup" class="film-hover-popup" :style="popupStyle" @mouseenter="$emit('enter')" @mouseleave="$emit('leave')">
       <div class="popup-media">
-        <video v-if="mode === 'video'" ref="video" muted loop playsinline preload="metadata" @error="onVideoError" />
+        <video v-if="mode === 'video'" ref="video" muted loop playsinline preload="metadata" @playing="onVideoPlaying" @waiting="onVideoWaiting" @error="onVideoError" />
+        <div v-if="mode === 'video' && videoPreparing" class="preview-preparing"><span />正在准备视频预览…</div>
         <img v-else-if="mode === 'slideshow' && currentImageUrl" :src="currentImageUrl" :alt="film.title" />
         <div v-else class="popup-empty">暂无预览</div>
       </div>
@@ -206,8 +218,11 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .film-hover-popup { position: fixed; z-index: 3000; box-sizing: border-box; max-width: calc(100vw - 24px); overflow: hidden; border: 1px solid rgba(255, 255, 255, .12); border-radius: 14px; color: var(--ink); background: #151923; box-shadow: 0 24px 60px rgba(0, 0, 0, .48); pointer-events: auto; }
-.popup-media { width: 100%; aspect-ratio: 16 / 9; background: #000; }
+.popup-media { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000; }
 .popup-media video, .popup-media img { display: block; width: 100%; height: 100%; object-fit: contain; background: #000; }
+.preview-preparing { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 9px; color: #d8dee8; background: rgba(0, 0, 0, .72); font-size: 12px; pointer-events: none; }
+.preview-preparing span { width: 15px; height: 15px; border: 2px solid rgba(255,255,255,.28); border-top-color: var(--accent); border-radius: 50%; animation: preview-spin .8s linear infinite; }
+@keyframes preview-spin { to { transform: rotate(360deg); } }
 .popup-empty { display: grid; width: 100%; height: 100%; place-items: center; color: var(--muted); font-size: 13px; }
 .popup-content { padding: 12px 13px 13px; }
 .popup-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }

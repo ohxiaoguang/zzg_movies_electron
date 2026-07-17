@@ -65,7 +65,12 @@ void app.whenReady().then(() => {
     sourceCount: sources.list().length,
   });
 
-  const mediaProtocol = new MediaProtocol(films, logger, () => settings.get().ffprobePath);
+  const mediaProtocol = new MediaProtocol(
+    films,
+    logger,
+    () => settings.get().ffprobePath,
+    path.join(app.getPath('userData'), 'preview-cache'),
+  );
   mediaProtocol.registerHandler();
   logger.info('Media protocol registered', { scheme: 'film-media' });
 

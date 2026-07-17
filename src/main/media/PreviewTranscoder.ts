@@ -1,11 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
-import { Readable } from 'node:stream';
 import type { AppLogger } from '../system/AppLogger';
 
 const execFileAsync = promisify(execFile);
+const MAX_CACHE_BYTES = 2 * 1024 * 1024 * 1024;
+const MAX_CACHE_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 
 export interface PreviewCodecs {
   video: string | null;
@@ -22,16 +24,19 @@ export interface PreviewToolPaths {
 }
 
 export class PreviewTranscoder {
+  private readonly conversions = new Map<string, Promise<string | null>>();
+
   public constructor(
     private readonly logger: AppLogger,
     private readonly configuredFfprobePath: () => string,
+    private readonly cacheDirectory: string,
   ) {}
 
   public shouldTranscode(filePath: string): boolean {
     return path.extname(filePath).toLowerCase() === '.mkv';
   }
 
-  public async createResponse(filePath: string, request: Request): Promise<Response | null> {
+  public async prepareCachedFile(filePath: string, signal: AbortSignal): Promise<string | null> {
     const tools = resolvePreviewToolPaths(this.configuredFfprobePath());
     if (!tools.ffmpeg) {
       this.logger.warn('MKV compatibility preview unavailable', {
@@ -40,59 +45,58 @@ export class PreviewTranscoder {
       });
       return null;
     }
-    if (request.method === 'HEAD') return streamingHeadersOnly();
 
-    const codecs = tools.ffprobe ? await probeCodecs(tools.ffprobe, filePath, request.signal) : null;
-    if (request.signal.aborted) return new Response(null, { status: 204, headers: streamingHeaders() });
-    const args = buildPreviewTranscodeArgs(filePath, codecs);
-    const child = spawn(tools.ffmpeg, args, {
-      windowsHide: true,
-      shell: false,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let stderr = '';
-    let cancelled = false;
-    const terminate = (): void => {
-      if (child.exitCode !== null || child.killed) return;
-      cancelled = true;
-      child.kill();
-    };
-    const abort = (): void => terminate();
-    if (request.signal.aborted) terminate();
-    else request.signal.addEventListener('abort', abort, { once: true });
-    child.stderr.on('data', (chunk: Buffer) => {
-      if (stderr.length < 3000) stderr += chunk.toString('utf8').slice(0, 3000 - stderr.length);
-    });
-    child.on('error', (error) => {
-      this.logger.error('MKV compatibility preview failed to start', {
-        inputPath: filePath,
-        error: error.message,
-      });
-    });
-    child.on('close', (code) => {
-      request.signal.removeEventListener('abort', abort);
-      if (!cancelled && code !== 0) {
-        this.logger.warn('MKV compatibility preview ended with an error', {
-          inputPath: filePath,
-          exitCode: code,
-          error: stderr.trim() || 'FFMPEG_TRANSCODE_FAILED',
-        });
-      }
-    });
-    child.stdout.once('close', terminate);
+    const sourceStat = await fs.promises.stat(filePath);
+    const key = previewCacheKey(filePath, sourceStat.size, sourceStat.mtimeMs);
+    const cachedPath = path.join(this.cacheDirectory, `${key}.mp4`);
+    if (await isUsableCacheFile(cachedPath)) {
+      void touchCacheFile(cachedPath);
+      return cachedPath;
+    }
 
-    const stream = Readable.toWeb(child.stdout) as unknown as ReadableStream;
-    this.logger.info('MKV compatibility preview started', {
+    await fs.promises.mkdir(this.cacheDirectory, { recursive: true });
+    let conversion = this.conversions.get(key);
+    if (!conversion) {
+      conversion = this.convertToCache(filePath, cachedPath, tools)
+        .finally(() => this.conversions.delete(key));
+      this.conversions.set(key, conversion);
+    }
+    return waitForConversion(conversion, signal);
+  }
+
+  private async convertToCache(filePath: string, cachedPath: string, tools: PreviewToolPaths): Promise<string | null> {
+    const partialPath = `${cachedPath}.${randomUUID()}.partial`;
+    const codecs = tools.ffprobe ? await probeCodecs(tools.ffprobe, filePath) : null;
+    const args = buildPreviewTranscodeArgs(filePath, codecs, partialPath);
+    this.logger.info('MKV compatibility cache generation started', {
       inputPath: filePath,
       videoCodec: codecs?.video ?? 'unknown',
       audioCodec: codecs?.audio ?? 'unknown',
       videoMode: shouldCopyVideo(codecs) ? 'remux' : 'transcode',
       audioMode: shouldCopyAudio(codecs) ? 'remux' : 'transcode',
     });
-    return new Response(stream, {
-      status: 200,
-      headers: streamingHeaders(),
-    });
+
+    try {
+      await runFfmpeg(tools.ffmpeg!, args);
+      const stat = await fs.promises.stat(partialPath);
+      if (!stat.isFile() || stat.size < 1024) throw new Error('FFMPEG_OUTPUT_EMPTY');
+      if (await isUsableCacheFile(cachedPath)) await fs.promises.rm(partialPath, { force: true });
+      else await fs.promises.rename(partialPath, cachedPath);
+      this.logger.info('MKV compatibility cache ready', {
+        inputPath: filePath,
+        cachePath: cachedPath,
+        cacheBytes: stat.size,
+      });
+      void prunePreviewCache(this.cacheDirectory, cachedPath, this.logger);
+      return cachedPath;
+    } catch (error) {
+      await fs.promises.rm(partialPath, { force: true }).catch(() => undefined);
+      this.logger.warn('MKV compatibility cache generation failed', {
+        inputPath: filePath,
+        error: error instanceof Error ? error.message : 'FFMPEG_TRANSCODE_FAILED',
+      });
+      return null;
+    }
   }
 }
 
@@ -115,7 +119,17 @@ export function resolvePreviewToolPaths(
   };
 }
 
-export function buildPreviewTranscodeArgs(filePath: string, codecs: PreviewCodecs | null): string[] {
+export function previewCacheKey(filePath: string, fileSize: number, modifiedAtMs: number): string {
+  return createHash('sha256')
+    .update(path.resolve(filePath).toLowerCase())
+    .update('\0')
+    .update(String(fileSize))
+    .update('\0')
+    .update(String(Math.trunc(modifiedAtMs)))
+    .digest('hex');
+}
+
+export function buildPreviewTranscodeArgs(filePath: string, codecs: PreviewCodecs | null, outputPath: string): string[] {
   const videoArgs = shouldCopyVideo(codecs)
     ? ['-c:v', 'copy']
     : [
@@ -131,6 +145,7 @@ export function buildPreviewTranscodeArgs(filePath: string, codecs: PreviewCodec
   return [
     '-hide_banner',
     '-loglevel', 'error',
+    '-y',
     '-fflags', '+genpts',
     '-i', filePath,
     '-map', '0:v:0',
@@ -138,20 +153,21 @@ export function buildPreviewTranscodeArgs(filePath: string, codecs: PreviewCodec
     '-sn',
     '-dn',
     '-map_metadata', '-1',
+    '-avoid_negative_ts', 'make_zero',
     ...videoArgs,
     ...audioArgs,
-    '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+    '-movflags', '+faststart',
     '-f', 'mp4',
-    'pipe:1',
+    outputPath,
   ];
 }
 
-async function probeCodecs(ffprobePath: string, filePath: string, signal: AbortSignal): Promise<PreviewCodecs | null> {
+async function probeCodecs(ffprobePath: string, filePath: string): Promise<PreviewCodecs | null> {
   try {
     const { stdout } = await execFileAsync(
       ffprobePath,
       ['-v', 'error', '-show_entries', 'stream=codec_type,codec_name', '-of', 'json', filePath],
-      { encoding: 'utf8', timeout: 5000, windowsHide: true, signal, maxBuffer: 1024 * 1024 },
+      { encoding: 'utf8', timeout: 5000, windowsHide: true, maxBuffer: 1024 * 1024 },
     );
     const parsed = JSON.parse(stdout) as ProbeOutput;
     return {
@@ -161,6 +177,33 @@ async function probeCodecs(ffprobePath: string, filePath: string, signal: AbortS
   } catch {
     return null;
   }
+}
+
+function runFfmpeg(ffmpegPath: string, args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(ffmpegPath, args, {
+      windowsHide: true,
+      shell: false,
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+    let stderr = '';
+    const timeout = setTimeout(() => {
+      child.kill();
+      reject(new Error('FFMPEG_TRANSCODE_TIMEOUT'));
+    }, 30 * 60 * 1000);
+    child.stderr.on('data', (chunk: Buffer) => {
+      if (stderr.length < 3000) stderr += chunk.toString('utf8').slice(0, 3000 - stderr.length);
+    });
+    child.once('error', (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.once('close', (code) => {
+      clearTimeout(timeout);
+      if (code === 0) resolve();
+      else reject(new Error(stderr.trim() || `FFMPEG_EXIT_${code ?? 'UNKNOWN'}`));
+    });
+  });
 }
 
 function shouldCopyVideo(codecs: PreviewCodecs | null): boolean {
@@ -179,14 +222,59 @@ function findOnPath(executable: string, environmentPath: string): string | null 
   return null;
 }
 
-function streamingHeaders(): Headers {
-  return new Headers({
-    'Content-Type': 'video/mp4',
-    'Cache-Control': 'no-store',
-    'Access-Control-Allow-Origin': '*',
+async function isUsableCacheFile(filePath: string): Promise<boolean> {
+  try {
+    const stat = await fs.promises.stat(filePath);
+    return stat.isFile() && stat.size >= 1024;
+  } catch {
+    return false;
+  }
+}
+
+function waitForConversion(conversion: Promise<string | null>, signal: AbortSignal): Promise<string | null> {
+  if (signal.aborted) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value: string | null): void => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener('abort', abort);
+      resolve(value);
+    };
+    const abort = (): void => finish(null);
+    signal.addEventListener('abort', abort, { once: true });
+    void conversion.then(finish, () => finish(null));
   });
 }
 
-function streamingHeadersOnly(): Response {
-  return new Response(null, { status: 200, headers: streamingHeaders() });
+async function touchCacheFile(filePath: string): Promise<void> {
+  const now = new Date();
+  await fs.promises.utimes(filePath, now, now).catch(() => undefined);
+}
+
+async function prunePreviewCache(cacheDirectory: string, keepPath: string, logger: AppLogger): Promise<void> {
+  try {
+    const names = await fs.promises.readdir(cacheDirectory);
+    const entries = (await Promise.all(names
+      .filter((name) => name.endsWith('.mp4'))
+      .map(async (name) => {
+        const filePath = path.join(cacheDirectory, name);
+        const stat = await fs.promises.stat(filePath);
+        return { filePath, size: stat.size, modifiedAt: stat.mtimeMs };
+      })))
+      .sort((left, right) => right.modifiedAt - left.modifiedAt);
+    let total = entries.reduce((sum, entry) => sum + entry.size, 0);
+    const cutoff = Date.now() - MAX_CACHE_AGE_MS;
+    for (const entry of entries.reverse()) {
+      if (entry.filePath === keepPath) continue;
+      if (entry.modifiedAt >= cutoff && total <= MAX_CACHE_BYTES) continue;
+      await fs.promises.rm(entry.filePath, { force: true });
+      total -= entry.size;
+    }
+  } catch (error) {
+    logger.warn('MKV compatibility cache cleanup failed', {
+      cachePath: cacheDirectory,
+      error: error instanceof Error ? error.message : 'CACHE_CLEANUP_FAILED',
+    });
+  }
 }

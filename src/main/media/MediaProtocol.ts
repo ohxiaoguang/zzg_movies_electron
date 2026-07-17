@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { Readable } from 'node:stream';
 import { protocol } from 'electron';
 import type { AppLogger } from '../system/AppLogger';
@@ -16,8 +17,9 @@ export class MediaProtocol {
     private readonly films: FilmRepository,
     private readonly logger: AppLogger,
     configuredFfprobePath: () => string = () => '',
+    previewCacheDirectory = path.join(process.cwd(), '.preview-cache'),
   ) {
-    this.previewTranscoder = new PreviewTranscoder(logger, configuredFfprobePath);
+    this.previewTranscoder = new PreviewTranscoder(logger, configuredFfprobePath, previewCacheDirectory);
   }
 
   public registerHandler(): void {
@@ -32,13 +34,17 @@ export class MediaProtocol {
       const location = this.resolveLocation(route.kind, route.id);
       if (!location) return new Response('Not Found', { status: 404 });
       if (!fs.existsSync(location.rootPath)) return new Response('Source Offline', { status: 409 });
-      const filePath = await resolveExistingSafeMediaPath(location.rootPath, location.relativePath);
-      const stat = await fs.promises.stat(filePath);
-      if (!stat.isFile()) return new Response('Not Found', { status: 404 });
-      if (route.kind === 'preview' && this.previewTranscoder.shouldTranscode(filePath)) {
-        const transcoded = await this.previewTranscoder.createResponse(filePath, request);
-        if (transcoded) return transcoded;
+      const sourceFilePath = await resolveExistingSafeMediaPath(location.rootPath, location.relativePath);
+      const sourceStat = await fs.promises.stat(sourceFilePath);
+      if (!sourceStat.isFile()) return new Response('Not Found', { status: 404 });
+      let filePath = sourceFilePath;
+      if (route.kind === 'preview' && this.previewTranscoder.shouldTranscode(sourceFilePath)) {
+        const cachedPath = await this.previewTranscoder.prepareCachedFile(sourceFilePath, request.signal);
+        if (request.signal.aborted) return new Response(null, { status: 204 });
+        if (cachedPath) filePath = cachedPath;
       }
+      const stat = filePath === sourceFilePath ? sourceStat : await fs.promises.stat(filePath);
+      if (!stat.isFile()) return new Response('Not Found', { status: 404 });
       const rangeResult = parseRangeHeader(request.headers.get('range'), stat.size);
       if (!rangeResult.ok) {
         return new Response(null, {
