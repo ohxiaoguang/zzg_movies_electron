@@ -125,6 +125,12 @@ function stopVideo(): void {
 }
 
 function onVideoError(): void {
+  console.error('[preview] video playback failed', {
+    filmId: props.film.id,
+    mediaErrorCode: video.value?.error?.code ?? null,
+    mediaErrorMessage: video.value?.error?.message ?? null,
+    usesOriginal: !props.film.previewAssetId && props.film.allowOriginalPreview,
+  });
   fallbackToImages();
 }
 

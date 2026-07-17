@@ -8,7 +8,7 @@ const MIME_TYPES: Record<string, string> = {
   '.mp4': 'video/mp4',
   '.m4v': 'video/mp4',
   '.webm': 'video/webm',
-  '.mkv': 'video/x-matroska',
+  '.mkv': 'video/matroska',
   '.mov': 'video/quicktime',
   '.avi': 'video/x-msvideo',
   '.ts': 'video/mp2t',

@@ -7,9 +7,18 @@ import { resolveExistingSafeMediaPath } from './MediaPathResolver';
 import { resolveMimeType } from './MimeTypeResolver';
 import { parseRangeHeader } from './RangeResponse';
 import { isUuid } from '../../shared/validation';
+import { PreviewTranscoder } from './PreviewTranscoder';
 
 export class MediaProtocol {
-  public constructor(private readonly films: FilmRepository, private readonly logger: AppLogger) {}
+  private readonly previewTranscoder: PreviewTranscoder;
+
+  public constructor(
+    private readonly films: FilmRepository,
+    private readonly logger: AppLogger,
+    configuredFfprobePath: () => string = () => '',
+  ) {
+    this.previewTranscoder = new PreviewTranscoder(logger, configuredFfprobePath);
+  }
 
   public registerHandler(): void {
     protocol.handle('film-media', async (request) => this.handle(request));
@@ -26,6 +35,10 @@ export class MediaProtocol {
       const filePath = await resolveExistingSafeMediaPath(location.rootPath, location.relativePath);
       const stat = await fs.promises.stat(filePath);
       if (!stat.isFile()) return new Response('Not Found', { status: 404 });
+      if (route.kind === 'preview' && this.previewTranscoder.shouldTranscode(filePath)) {
+        const transcoded = await this.previewTranscoder.createResponse(filePath, request);
+        if (transcoded) return transcoded;
+      }
       const rangeResult = parseRangeHeader(request.headers.get('range'), stat.size);
       if (!rangeResult.ok) {
         return new Response(null, {
