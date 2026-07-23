@@ -65,6 +65,11 @@ describe('multi-part films and availability', () => {
       { absolutePath: 'b', relativePath: 'two/Movie-cd2.mp4', name: 'Movie-cd2.mp4' },
       { absolutePath: 'c', relativePath: 'Movie Part 1.mp4', name: 'Movie Part 1.mp4' },
     ])).toHaveLength(3);
+    expect(groupVideoFiles([
+      { absolutePath: 'a', relativePath: 'Twin-A.mp4', name: 'Twin-A.mp4' },
+      { absolutePath: 'b', relativePath: 'Twin_A.mp4', name: 'Twin_A.mp4' },
+      { absolutePath: 'c', relativePath: 'Twin-A.mkv', name: 'Twin-A.mkv' },
+    ])).toHaveLength(3);
     context.scan.start({});
     await waitForScan(context.scan);
     const first = context.films.page({ page: 1, pageSize: 20 });

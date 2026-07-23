@@ -27,7 +27,7 @@ export interface FilmFileCandidate {
   isPrimary: boolean;
   fileSize: number;
   fileModifiedAt: string;
-  fingerprint: string;
+  fingerprint: string | null;
 }
 
 export interface FilmCandidate extends MappedNfoFields {
@@ -38,7 +38,7 @@ export interface FilmCandidate extends MappedNfoFields {
   filename: string;
   fileSize: number;
   fileModifiedAt: string;
-  fingerprint: string;
+  fingerprint: string | null;
   nfoRelativePath: string | null;
   nfoModifiedAt: string | null;
   nfoHash: string | null;

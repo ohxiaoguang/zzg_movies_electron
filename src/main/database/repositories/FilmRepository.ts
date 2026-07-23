@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import type {
@@ -18,7 +17,7 @@ import type {
 import type { FilmCsvRow } from '../../export/FilmCsvExporter';
 import type { AssetType } from '../../../shared/enums';
 import type { FilmCandidate, FilmFileCandidate } from '../../scanner/ScanCandidate';
-import { logicalFilmKey, normalizeRelativePath, physicalFileKey } from '../../scanner/PartNaming';
+import { normalizeRelativePath, physicalFileKey } from '../../scanner/PartNaming';
 import { FilmFileOwnershipRepairService } from '../FilmFileOwnershipRepairService';
 
 interface FilmSummaryRow {
@@ -312,7 +311,7 @@ export class FilmRepository {
     if (input.title !== undefined) {
       const title = input.title.trim();
       if (!title) throw new Error('TITLE_REQUIRED');
-      fields.push('title = ?');
+      fields.push('title = ?', 'title_user_edited = 1');
       values.push(title.slice(0, 500));
     }
     if (input.originalTitle !== undefined) {
@@ -454,20 +453,6 @@ export class FilmRepository {
       .prepare('SELECT film_id AS id, relative_path, fingerprint FROM film_file WHERE source_id = ? ORDER BY created_at, id')
       .all(sourceId) as ExistingFilmRow[];
     return rows.find((row) => normalizeRelativePath(row.relative_path) === normalized) ?? null;
-  }
-
-  public findByFingerprint(sourceId: string, fingerprint: string): ExistingFilmRow[] {
-    return this.db
-      .prepare('SELECT DISTINCT film_id AS id, relative_path, fingerprint FROM film_file WHERE source_id = ? AND fingerprint = ?')
-      .all(sourceId, fingerprint) as ExistingFilmRow[];
-  }
-
-  public findByLogicalKey(sourceId: string, key: string): ExistingFilmRow | null {
-    const rows = this.db
-      .prepare('SELECT film_id AS id, relative_path, filename, fingerprint FROM film_file WHERE source_id = ?')
-      .all(sourceId) as Array<ExistingFilmRow & { filename: string }>;
-    const row = rows.find((candidate) => logicalFilmKey(path.dirname(candidate.relative_path), candidate.filename) === key);
-    return row ? { id: row.id, relative_path: row.relative_path, fingerprint: row.fingerprint } : null;
   }
 
   public parts(filmId: string): FilmPartDto[] { return this.partsForFilm(filmId); }
@@ -650,20 +635,14 @@ export class FilmRepository {
 
   private findCandidateFilmIds(candidate: FilmCandidate): string[] {
     const pathKeys = new Set(candidate.files.map((file) => physicalFileKey(candidate.sourceId, file.relativePath)));
-    const fingerprints = new Set(candidate.files.map((file) => file.fingerprint).filter(Boolean));
-    const rows = this.db.prepare('SELECT film_id, source_id, relative_path, filename, fingerprint FROM film_file WHERE source_id = ?').all(candidate.sourceId) as Array<{ film_id: string; source_id: string; relative_path: string; filename: string; fingerprint: string | null }>;
-    const fingerprintCounts = new Map<string, number>();
-    for (const row of rows) if (row.fingerprint) fingerprintCounts.set(row.fingerprint, (fingerprintCounts.get(row.fingerprint) ?? 0) + 1);
+    const rows = this.db.prepare('SELECT film_id, source_id, relative_path FROM film_file WHERE source_id = ?').all(candidate.sourceId) as Array<{ film_id: string; source_id: string; relative_path: string }>;
     const ids = new Set<string>();
     for (const row of rows) {
-      const matchesPath = pathKeys.has(physicalFileKey(row.source_id, row.relative_path));
-      const matchesFingerprint = Boolean(row.fingerprint && fingerprints.has(row.fingerprint) && fingerprintCounts.get(row.fingerprint) === 1);
-      const matchesLogicalKey = logicalFilmKey(path.dirname(row.relative_path), row.filename) === candidate.logicalKey;
-      if (matchesPath || matchesFingerprint || matchesLogicalKey) ids.add(row.film_id);
+      if (pathKeys.has(physicalFileKey(row.source_id, row.relative_path))) ids.add(row.film_id);
     }
-    const legacyRows = this.db.prepare('SELECT id, source_id, relative_path, filename FROM film WHERE source_id = ?').all(candidate.sourceId) as Array<{ id: string; source_id: string; relative_path: string; filename: string }>;
+    const legacyRows = this.db.prepare('SELECT id, source_id, relative_path FROM film WHERE source_id = ?').all(candidate.sourceId) as Array<{ id: string; source_id: string; relative_path: string }>;
     for (const row of legacyRows) {
-      if (pathKeys.has(physicalFileKey(row.source_id, row.relative_path)) || logicalFilmKey(path.dirname(row.relative_path), row.filename) === candidate.logicalKey) ids.add(row.id);
+      if (pathKeys.has(physicalFileKey(row.source_id, row.relative_path))) ids.add(row.id);
     }
     return [...ids].sort();
   }
@@ -676,6 +655,7 @@ export class FilmRepository {
       .prepare(
         `UPDATE film SET
           relative_path = ?, filename = ?, file_size = ?, file_modified_at = ?, fingerprint = ?,
+          title = CASE WHEN title_user_edited = 0 THEN ? ELSE title END,
           original_title = ?, sort_title = ?, year = ?, release_date = ?, runtime_seconds = ?,
           plot = ?, outline = ?, tagline = ?, content_rating = ?, studio = ?, country_json = ?,
           director_json = ?, actors_json = ?, width = ?, height = ?, video_codec = ?, audio_codec = ?,
@@ -690,6 +670,7 @@ export class FilmRepository {
         candidate.fileSize,
         candidate.fileModifiedAt,
         candidate.fingerprint,
+        fields.title,
         fields.originalTitle,
         fields.sortTitle,
         fields.year,
@@ -907,9 +888,7 @@ export class FilmRepository {
       const key = physicalFileKey(sourceId, file.relativePath);
       const byPath = rows.find((row) => physicalFileKey(row.source_id, row.relative_path) === key);
       if (byPath) return byPath;
-      if (!file.fingerprint) return undefined;
-      const byFingerprint = rows.filter((row) => row.fingerprint === file.fingerprint);
-      return byFingerprint.length === 1 ? byFingerprint[0] : undefined;
+      return undefined;
     };
 
     for (const candidate of candidates) {

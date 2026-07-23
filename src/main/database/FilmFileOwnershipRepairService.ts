@@ -52,6 +52,7 @@ interface FilmRow {
   nfo_status: string;
   nfo_error: string | null;
   imported_at: string;
+  title_user_edited?: number;
   tags_user_edited?: number;
 }
 
@@ -89,9 +90,11 @@ interface SurvivorScore {
 }
 
 export class FilmFileOwnershipRepairService {
+  private readonly hasTitleUserEditColumn: boolean;
   private readonly hasTagUserEditColumn: boolean;
 
   public constructor(private readonly db: Database.Database) {
+    this.hasTitleUserEditColumn = this.hasColumn('title_user_edited');
     this.hasTagUserEditColumn = this.hasColumn('tags_user_edited');
   }
 
@@ -186,6 +189,12 @@ export class FilmFileOwnershipRepairService {
     if (this.hasTagUserEditColumn) {
       this.db.prepare('UPDATE film SET tags_user_edited = ? WHERE id = ?').run(
         mergedFields.tags_user_edited ?? 0,
+        survivorFilmId,
+      );
+    }
+    if (this.hasTitleUserEditColumn) {
+      this.db.prepare('UPDATE film SET title_user_edited = ? WHERE id = ?').run(
+        mergedFields.title_user_edited ?? 0,
         survivorFilmId,
       );
     }
@@ -414,6 +423,7 @@ function mergeFilmFields(survivor: FilmRow, merged: FilmRow): FilmRow & { notesC
     nfo_hash: firstNonEmpty(survivor.nfo_hash, merged.nfo_hash),
     nfo_status: survivor.nfo_status !== 'missing' ? survivor.nfo_status : merged.nfo_status,
     nfo_error: firstNonEmpty(survivor.nfo_error, merged.nfo_error),
+    title_user_edited: survivor.title_user_edited || merged.title_user_edited ? 1 : 0,
     tags_user_edited: survivor.tags_user_edited || merged.tags_user_edited ? 1 : 0,
     notesConflict,
   };

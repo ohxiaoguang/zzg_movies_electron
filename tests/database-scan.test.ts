@@ -59,7 +59,7 @@ describe('SQLite migrations and scanning', () => {
   it('creates migrated tables, scans NFO/assets, and supports paging', async () => {
     const root = fixtureRoot();
     const context = createContext(root);
-    expect(context.database.db.pragma('user_version', { simple: true })).toBe(7);
+    expect(context.database.db.pragma('user_version', { simple: true })).toBe(8);
     expect(context.database.db.prepare('SELECT name FROM sqlite_master WHERE type = \'table\' AND name = \'film_file\'').get()).toBeTruthy();
     const start = context.scan.start({});
     expect(start.jobId).toMatch(/[0-9a-f-]{36}/);
@@ -76,7 +76,7 @@ describe('SQLite migrations and scanning', () => {
     expect(context.database.db.prepare('SELECT COUNT(*) AS count FROM film_genre').get()).toEqual({ count: 0 });
   });
 
-  it('is idempotent, preserves user fields, and detects a moved film by fingerprint', async () => {
+  it('is idempotent, preserves user fields, and treats a renamed file as a new film', async () => {
     const root = fixtureRoot();
     const context = createContext(root);
     context.scan.start({});
@@ -93,9 +93,57 @@ describe('SQLite migrations and scanning', () => {
     expect(context.films.detail(film.id)?.favorite).toBe(true);
     fs.renameSync(path.join(root, 'Movie A.mkv'), path.join(root, 'Renamed Movie.mkv'));
     context.scan.start({});
-    const movedStatus = await waitForScan(context.scan);
-    expect(movedStatus.moved).toBe(1);
-    expect(context.films.page({ page: 1, pageSize: 60 }).items[0].filename).toBe('Renamed Movie.mkv');
+    const renamedStatus = await waitForScan(context.scan);
+    expect(renamedStatus.moved).toBe(0);
+    expect(renamedStatus.created).toBe(1);
+    const available = context.films.page({ page: 1, pageSize: 60 });
+    expect(available.items[0].filename).toBe('Renamed Movie.mkv');
+    expect(available.items[0].title).toBe('Renamed Movie');
+    expect(available.items[0].id).not.toBe(film.id);
+    const allRecords = context.films.page({ page: 1, pageSize: 60, allData: true });
+    expect(allRecords.total).toBe(2);
+    expect(allRecords.items.find((item) => item.id === film.id)?.availability).toBe('missing');
+    expect(context.films.detail(film.id)?.title).toBe('用户标题');
+  });
+
+  it('keeps identical videos with different filenames as separate films', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'film-library-identical-videos-'));
+    tempRoots.push(root);
+    const identicalContent = Buffer.alloc(180_000, 7);
+    fs.writeFileSync(path.join(root, 'Twin-A.mp4'), identicalContent);
+    fs.writeFileSync(path.join(root, 'Twin_A.mp4'), identicalContent);
+    const context = createContext(root);
+
+    context.scan.start({});
+    expect((await waitForScan(context.scan)).status).toBe('completed');
+
+    const page = context.films.page({ page: 1, pageSize: 20, sort: 'file' });
+    expect(page.total).toBe(2);
+    expect(page.items.map((film) => film.filename).sort()).toEqual(['Twin-A.mp4', 'Twin_A.mp4'].sort());
+    expect(page.items.every((film) => context.films.detail(film.id)?.parts.length === 1)).toBe(true);
+    expect(context.database.db.prepare('SELECT COUNT(*) AS count FROM film_file WHERE fingerprint IS NOT NULL').get()).toEqual({ count: 0 });
+  });
+
+  it('repairs an automatic no-NFO title on rescan but preserves a manually edited title', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'film-library-title-repair-'));
+    tempRoots.push(root);
+    fs.writeFileSync(path.join(root, 'Current Filename.mp4'), 'media');
+    const context = createContext(root);
+    context.scan.start({});
+    await waitForScan(context.scan);
+    const film = context.films.page({ page: 1, pageSize: 20 }).items[0]!;
+
+    context.database.db.prepare('UPDATE film SET title = ?, sort_title = ?, title_user_edited = 0 WHERE id = ?')
+      .run('Previously Misassociated Name', 'Previously Misassociated Name', film.id);
+    context.scan.start({});
+    await waitForScan(context.scan);
+    expect(context.films.detail(film.id)?.title).toBe('Current Filename');
+
+    context.films.update({ id: film.id, title: 'My Local Title' });
+    expect(context.database.db.prepare('SELECT title_user_edited FROM film WHERE id = ?').get(film.id)).toEqual({ title_user_edited: 1 });
+    context.scan.start({});
+    await waitForScan(context.scan);
+    expect(context.films.detail(film.id)?.title).toBe('My Local Title');
   });
 
   it('scans MPG by default and keeps newly added films first in recent order', async () => {

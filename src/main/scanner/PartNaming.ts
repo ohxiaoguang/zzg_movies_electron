@@ -26,9 +26,10 @@ export function parseFilmPartName(filename: string): ParsedFilmPartName | null {
 
 export function logicalFilmKey(relativeDirectory: string, filename: string): string {
   const parsed = parseFilmPartName(filename);
-  const stem = parsed?.baseName ?? path.parse(filename).name;
-  const kind = parsed ? 'parts' : 'single';
-  return `${kind}:${normalizeRelativeDirectory(relativeDirectory)}:${normalizeFilmName(stem)}`;
+  const identity = parsed
+    ? normalizeFilmName(parsed.baseName)
+    : filename.normalize('NFKC').toLocaleLowerCase();
+  return `${parsed ? 'parts' : 'single'}:${normalizeRelativeDirectory(relativeDirectory)}:${identity}`;
 }
 
 export function normalizeFilmName(value: string): string {

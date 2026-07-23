@@ -8,6 +8,7 @@ import { userEditedTaxonomyMigration } from './migrations/004_user_edited_taxono
 import { protectLegacyTaxonomyMigration } from './migrations/005_protect_legacy_taxonomy';
 import { customCategoriesMigration } from './migrations/006_custom_categories';
 import { sourceOriginalPreviewMigration } from './migrations/007_source_original_preview';
+import { titleUserEditedMigration } from './migrations/008_title_user_edited';
 import type { AppLogger } from '../system/AppLogger';
 
 export class DatabaseManager {
@@ -47,7 +48,7 @@ export class DatabaseManager {
   private runMigrations(): void {
     const currentVersion = this.schemaVersion;
     this.logger?.info('Database schema inspected', { version: currentVersion });
-    const migrations = [initialMigration, filmFilesMigration, groupedFilmFilesRepairMigration, userEditedTaxonomyMigration, protectLegacyTaxonomyMigration, customCategoriesMigration, sourceOriginalPreviewMigration];
+    const migrations = [initialMigration, filmFilesMigration, groupedFilmFilesRepairMigration, userEditedTaxonomyMigration, protectLegacyTaxonomyMigration, customCategoriesMigration, sourceOriginalPreviewMigration, titleUserEditedMigration];
     if (currentVersion >= migrations[migrations.length - 1].version) {
       this.logger?.info('Database schema ready', { version: currentVersion });
       return;

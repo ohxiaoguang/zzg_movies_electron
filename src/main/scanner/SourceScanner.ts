@@ -6,7 +6,6 @@ import { DEFAULT_IGNORED_DIRECTORIES, DEFAULT_IMAGE_EXTENSIONS, DEFAULT_VIDEO_EX
 import { mapNfoMetadata } from '../metadata/NfoMapper';
 import { parseNfo } from '../metadata/NfoParser';
 import { resolveSafeMediaPath } from '../media/MediaPathResolver';
-import { calculateQuickFingerprint } from './FilmFingerprint';
 import { ScanCancellation } from './ScanCancellation';
 import type { FilmCandidate, FilmFileCandidate, ScanFileEntry } from './ScanCandidate';
 import { logicalFilmKey, parseFilmPartName } from './PartNaming';
@@ -159,7 +158,7 @@ export class SourceScanner {
               isPrimary: file.absolutePath === primary.absolutePath,
               fileSize: fileStat.size,
               fileModifiedAt: fileStat.mtime.toISOString(),
-              fingerprint: await calculateQuickFingerprint(file.absolutePath, fileStat.size),
+              fingerprint: null,
             });
           }
           const primaryFile = fileEntries.find((file) => file.isPrimary)!;
