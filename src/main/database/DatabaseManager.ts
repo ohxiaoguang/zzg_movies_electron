@@ -19,6 +19,9 @@ export class DatabaseManager {
     fs.mkdirSync(path.dirname(databasePath), { recursive: true });
     this.logger?.info('better-sqlite3 loaded', { module: 'better-sqlite3' });
     this.db = new Database(databasePath);
+    this.db.function('filename_stem', { deterministic: true }, (filename: unknown) => (
+      typeof filename === 'string' ? path.parse(filename).name : ''
+    ));
     this.logger?.info('Database opened', { databasePath, open: this.db.open });
     this.db.pragma('foreign_keys = ON');
     this.db.pragma('journal_mode = WAL');

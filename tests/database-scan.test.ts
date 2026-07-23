@@ -135,12 +135,17 @@ describe('SQLite migrations and scanning', () => {
 
     context.database.db.prepare('UPDATE film SET title = ?, sort_title = ?, title_user_edited = 0 WHERE id = ?')
       .run('Previously Misassociated Name', 'Previously Misassociated Name', film.id);
+    const mismatches = context.films.page({ page: 1, pageSize: 20, allData: true, titleMismatchOnly: true });
+    expect(mismatches.total).toBe(1);
+    expect(mismatches.items[0]?.id).toBe(film.id);
     context.scan.start({});
     await waitForScan(context.scan);
     expect(context.films.detail(film.id)?.title).toBe('Current Filename');
+    expect(context.films.page({ page: 1, pageSize: 20, allData: true, titleMismatchOnly: true }).total).toBe(0);
 
     context.films.update({ id: film.id, title: 'My Local Title' });
     expect(context.database.db.prepare('SELECT title_user_edited FROM film WHERE id = ?').get(film.id)).toEqual({ title_user_edited: 1 });
+    expect(context.films.page({ page: 1, pageSize: 20, allData: true, titleMismatchOnly: true }).total).toBe(0);
     context.scan.start({});
     await waitForScan(context.scan);
     expect(context.films.detail(film.id)?.title).toBe('My Local Title');

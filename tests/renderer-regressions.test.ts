@@ -144,4 +144,11 @@ describe('renderer regressions', () => {
     expect(library).toContain('window.filmLibrary.films.exportCsv(query)');
     expect(preload).toContain('invoke(IPC_CHANNELS.filmsExportCsv, query)');
   });
+
+  it('filters automatic single-file title mismatches on the all-data page', () => {
+    const library = fs.readFileSync(libraryPath, 'utf8');
+    expect(library).toContain('library.filters.titleMismatchOnly');
+    expect(library).toContain('自动标题与单文件名不一致');
+    expect(library).toContain(':value="true"');
+  });
 });

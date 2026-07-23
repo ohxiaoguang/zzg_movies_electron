@@ -18,7 +18,7 @@ export const useLibraryStore = defineStore('library', () => {
     autoScanOnStartup: DEFAULT_SETTINGS.autoScanOnStartup,
     ffprobePath: '',
   });
-  const filters = reactive<FilmPageQuery>({ page: 1, pageSize: DEFAULT_SETTINGS.pageSize, sort: 'recent', organizationState: 'all', categoryIds: [], categoryMatch: 'any', nfoTagIds: [], nfoTagMatch: 'any', allData: false, availability: 'all' });
+  const filters = reactive<FilmPageQuery>({ page: 1, pageSize: DEFAULT_SETTINGS.pageSize, sort: 'recent', organizationState: 'all', categoryIds: [], categoryMatch: 'any', nfoTagIds: [], nfoTagMatch: 'any', titleMismatchOnly: false, allData: false, availability: 'all' });
   const viewMode = ref<'grid' | 'table'>('grid');
 
   const items = computed(() => pageData.value.items);
@@ -59,7 +59,7 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   function resetFilters(): void {
-    Object.assign(filters, { page: 1, pageSize: settings.value.pageSize, search: '', sourceId: '', actor: '', organizationState: 'all', categoryIds: [], categoryMatch: 'any', nfoTagIds: [], nfoTagMatch: 'any', minRating: undefined, favoriteOnly: false, missingOnly: false, allData: false, availability: 'all', sort: 'recent' });
+    Object.assign(filters, { page: 1, pageSize: settings.value.pageSize, search: '', sourceId: '', actor: '', organizationState: 'all', categoryIds: [], categoryMatch: 'any', nfoTagIds: [], nfoTagMatch: 'any', minRating: undefined, favoriteOnly: false, missingOnly: false, titleMismatchOnly: false, allData: false, availability: 'all', sort: 'recent' });
   }
 
   return { pageData, items, loading, error, settings, filters, viewMode, loadSettings, fetchPage, setFilter, resetFilters };

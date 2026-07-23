@@ -1125,6 +1125,17 @@ export class FilmRepository {
     }
     if (query.favoriteOnly) clauses.push('f.favorite = 1');
     if (query.missingOnly) clauses.push('f.missing = 1');
+    if (query.titleMismatchOnly) {
+      clauses.push(`f.nfo_status = 'missing'
+        AND f.title_user_edited = 0
+        AND (SELECT COUNT(*) FROM film_file mismatch_count WHERE mismatch_count.film_id = f.id) = 1
+        AND EXISTS (
+          SELECT 1 FROM film_file mismatch_file
+          WHERE mismatch_file.film_id = f.id
+            AND TRIM(mismatch_file.filename) <> ''
+            AND TRIM(f.title) <> TRIM(filename_stem(mismatch_file.filename)) COLLATE NOCASE
+        )`);
+    }
     return { where: `WHERE ${clauses.join(' AND ')}`, params };
   }
 

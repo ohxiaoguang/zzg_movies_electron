@@ -171,6 +171,7 @@ export interface FilmPageQuery {
   minRating?: number;
   favoriteOnly?: boolean;
   missingOnly?: boolean;
+  titleMismatchOnly?: boolean;
   allData?: boolean;
   availability?: FilmAvailability | 'all';
   sort?: 'recent' | 'title' | 'year' | 'rating' | 'file';
