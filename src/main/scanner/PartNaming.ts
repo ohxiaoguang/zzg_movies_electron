@@ -8,18 +8,18 @@ export interface ParsedFilmPartName {
   partNumber: number;
 }
 
-const partPattern = /^(.*?)[ ._-](cd|disc)[ ._-]?(\d+)$/i;
+const partPattern = /^(.*?)-cd(\d+)$/i;
 
 export function parseFilmPartName(filename: string): ParsedFilmPartName | null {
   const stem = path.parse(filename).name;
   const match = partPattern.exec(stem);
   if (!match) return null;
   const baseName = match[1].trim();
-  const partNumber = Number(match[3]);
+  const partNumber = Number(match[2]);
   if (!baseName || !Number.isInteger(partNumber) || partNumber < 1) return null;
   return {
     baseName,
-    partType: match[2].toLowerCase() as Exclude<FilmPartType, 'single'>,
+    partType: 'cd',
     partNumber,
   };
 }
@@ -27,18 +27,9 @@ export function parseFilmPartName(filename: string): ParsedFilmPartName | null {
 export function logicalFilmKey(relativeDirectory: string, filename: string): string {
   const parsed = parseFilmPartName(filename);
   const identity = parsed
-    ? normalizeFilmName(parsed.baseName)
+    ? parsed.baseName.normalize('NFKC').toLocaleLowerCase()
     : filename.normalize('NFKC').toLocaleLowerCase();
   return `${parsed ? 'parts' : 'single'}:${normalizeRelativeDirectory(relativeDirectory)}:${identity}`;
-}
-
-export function normalizeFilmName(value: string): string {
-  return value
-    .normalize('NFKC')
-    .toLocaleLowerCase()
-    .replace(/[._-]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
 }
 
 /**

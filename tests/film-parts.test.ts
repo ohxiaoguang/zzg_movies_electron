@@ -35,7 +35,7 @@ function makeRoot(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'film-library-parts-'));
   roots.push(root);
   fs.mkdirSync(path.join(root, 'extrafanart'));
-  for (const filename of ['Movie-cd1.mp4', 'Movie_cd2.mp4', 'Movie.disc3.mp4']) fs.writeFileSync(path.join(root, filename), filename);
+  for (const filename of ['Movie-cd1.mp4', 'Movie-cd2.mp4', 'Movie-cd3.mp4']) fs.writeFileSync(path.join(root, filename), filename);
   fs.writeFileSync(path.join(root, 'Movie.nfo'), '<movie><title>分段电影</title><tag>科幻</tag></movie>');
   fs.writeFileSync(path.join(root, 'Movie-poster.jpg'), 'poster');
   fs.writeFileSync(path.join(root, 'Movie-fanart.jpg'), 'fanart');
@@ -53,13 +53,17 @@ async function waitForScan(scan: ScanCoordinator): Promise<void> {
 }
 
 describe('multi-part films and availability', () => {
-  it('groups CD/disc files, keeps one film id, and is idempotent', async () => {
+  it('groups only exact -cdN files, keeps one film id, and is idempotent', async () => {
     const root = makeRoot();
     const context = createContext(root);
     expect(groupVideoFiles([
       { absolutePath: 'a', relativePath: 'Movie-cd1.mp4', name: 'Movie-cd1.mp4' },
-      { absolutePath: 'b', relativePath: 'Movie_cd2.mp4', name: 'Movie_cd2.mp4' },
+      { absolutePath: 'b', relativePath: 'Movie-cd2.mp4', name: 'Movie-cd2.mp4' },
     ])).toHaveLength(1);
+    expect(groupVideoFiles([
+      { absolutePath: 'a', relativePath: 'Movie_cd1.mp4', name: 'Movie_cd1.mp4' },
+      { absolutePath: 'b', relativePath: 'Movie.disc2.mp4', name: 'Movie.disc2.mp4' },
+    ])).toHaveLength(2);
     expect(groupVideoFiles([
       { absolutePath: 'a', relativePath: 'one/Movie-cd1.mp4', name: 'Movie-cd1.mp4' },
       { absolutePath: 'b', relativePath: 'two/Movie-cd2.mp4', name: 'Movie-cd2.mp4' },
@@ -76,7 +80,7 @@ describe('multi-part films and availability', () => {
     expect(first.total).toBe(1);
     const detail = context.films.detail(first.items[0].id)!;
     expect(detail.parts.map((part) => part.partNumber)).toEqual([1, 2, 3]);
-    expect(detail.parts.map((part) => part.partType)).toEqual(['cd', 'cd', 'disc']);
+    expect(detail.parts.map((part) => part.partType)).toEqual(['cd', 'cd', 'cd']);
     expect(detail.title).toBe('分段电影');
     expect(detail.images).toHaveLength(4);
     expect(detail.nfoTags[0]?.name).toBe('科幻');
@@ -84,6 +88,36 @@ describe('multi-part films and availability', () => {
     await waitForScan(context.scan);
     expect(context.films.page({ page: 1, pageSize: 20 }).total).toBe(1);
     expect(context.films.detail(first.items[0].id)?.parts).toHaveLength(3);
+    expect(context.films.page({ page: 1, pageSize: 20, allData: true, recordIssue: 'invalid-multipart' }).total).toBe(0);
+  });
+
+  it('keeps same-stem TS and MP4 files separate and finds a simulated legacy bad merge', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'film-library-extension-collision-'));
+    roots.push(root);
+    fs.writeFileSync(path.join(root, '1 (3).ts'), 'same title ts');
+    fs.writeFileSync(path.join(root, '1 (3).mp4'), 'same title mp4');
+    const context = createContext(root);
+    context.scan.start({});
+    await waitForScan(context.scan);
+
+    const separate = context.films.page({ page: 1, pageSize: 20, sort: 'file' });
+    expect(separate.total).toBe(2);
+    expect(separate.items.map((film) => film.filename).sort()).toEqual(['1 (3).mp4', '1 (3).ts']);
+    expect(context.films.page({ page: 1, pageSize: 20, allData: true, recordIssue: 'invalid-multipart' }).total).toBe(0);
+
+    const [survivor, merged] = separate.items;
+    context.database.transaction(() => {
+      context.database.db.prepare('UPDATE film_file SET film_id = ? WHERE film_id = ?').run(survivor.id, merged.id);
+      context.database.db.prepare('DELETE FROM film WHERE id = ?').run(merged.id);
+    });
+    const invalid = context.films.page({ page: 1, pageSize: 20, allData: true, recordIssue: 'invalid-multipart' });
+    expect(invalid.total).toBe(1);
+    expect(invalid.items[0]?.id).toBe(survivor.id);
+
+    context.films.deleteRecords([survivor.id]);
+    context.scan.start({});
+    await waitForScan(context.scan);
+    expect(context.films.page({ page: 1, pageSize: 20 }).total).toBe(2);
   });
 
   it('keeps partial films visible and hides fully missing films from normal pages', async () => {
@@ -92,13 +126,13 @@ describe('multi-part films and availability', () => {
     context.scan.start({});
     await waitForScan(context.scan);
     const film = context.films.page({ page: 1, pageSize: 20 }).items[0];
-    fs.unlinkSync(path.join(root, 'Movie_cd2.mp4'));
+    fs.unlinkSync(path.join(root, 'Movie-cd2.mp4'));
     context.scan.start({});
     await waitForScan(context.scan);
     expect(context.films.page({ page: 1, pageSize: 20 }).total).toBe(1);
     expect(context.films.detail(film.id)?.availability).toBe('partial_missing');
     fs.unlinkSync(path.join(root, 'Movie-cd1.mp4'));
-    fs.unlinkSync(path.join(root, 'Movie.disc3.mp4'));
+    fs.unlinkSync(path.join(root, 'Movie-cd3.mp4'));
     context.scan.start({});
     await waitForScan(context.scan);
     expect(context.films.page({ page: 1, pageSize: 20 }).total).toBe(0);

@@ -406,7 +406,10 @@ function validateFilmPageQuery(payload: unknown, defaultPageSize: number): FilmP
   if (payload.minRating !== undefined) query.minRating = numberInRange(payload.minRating, 0, 10, 0);
   if (payload.favoriteOnly !== undefined) query.favoriteOnly = Boolean(payload.favoriteOnly);
   if (payload.missingOnly !== undefined) query.missingOnly = Boolean(payload.missingOnly);
-  if (payload.titleMismatchOnly !== undefined) query.titleMismatchOnly = Boolean(payload.titleMismatchOnly);
+  if (payload.recordIssue !== undefined) {
+    if (!['all', 'title-mismatch', 'invalid-multipart'].includes(String(payload.recordIssue))) throw new Error('INVALID_PAGE_QUERY');
+    query.recordIssue = payload.recordIssue as FilmPageQuery['recordIssue'];
+  }
   if (payload.allData !== undefined) query.allData = Boolean(payload.allData);
   if (payload.availability !== undefined) {
     if (!['all', 'available', 'partial_missing', 'missing', 'source_offline', 'source_removed', 'archived'].includes(String(payload.availability))) throw new Error('INVALID_PAGE_QUERY');

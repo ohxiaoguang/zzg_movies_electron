@@ -1125,7 +1125,7 @@ export class FilmRepository {
     }
     if (query.favoriteOnly) clauses.push('f.favorite = 1');
     if (query.missingOnly) clauses.push('f.missing = 1');
-    if (query.titleMismatchOnly) {
+    if (query.recordIssue === 'title-mismatch') {
       clauses.push(`f.nfo_status = 'missing'
         AND f.title_user_edited = 0
         AND (SELECT COUNT(*) FROM film_file mismatch_count WHERE mismatch_count.film_id = f.id) = 1
@@ -1134,6 +1134,21 @@ export class FilmRepository {
           WHERE mismatch_file.film_id = f.id
             AND TRIM(mismatch_file.filename) <> ''
             AND TRIM(f.title) <> TRIM(filename_stem(mismatch_file.filename)) COLLATE NOCASE
+        )`);
+    }
+    if (query.recordIssue === 'invalid-multipart') {
+      clauses.push(`(SELECT COUNT(*) FROM film_file multipart_count WHERE multipart_count.film_id = f.id) > 1
+        AND (
+          EXISTS (
+            SELECT 1 FROM film_file multipart_invalid
+            WHERE multipart_invalid.film_id = f.id
+              AND cd_group_key(multipart_invalid.filename) IS NULL
+          )
+          OR (SELECT COUNT(DISTINCT cd_group_key(multipart_base.filename))
+              FROM film_file multipart_base WHERE multipart_base.film_id = f.id) <> 1
+          OR (SELECT COUNT(DISTINCT cd_part_number(multipart_part.filename))
+              FROM film_file multipart_part WHERE multipart_part.film_id = f.id)
+             <> (SELECT COUNT(*) FROM film_file multipart_total WHERE multipart_total.film_id = f.id)
         )`);
     }
     return { where: `WHERE ${clauses.join(' AND ')}`, params };

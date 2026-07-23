@@ -147,8 +147,9 @@ describe('renderer regressions', () => {
 
   it('filters automatic single-file title mismatches on the all-data page', () => {
     const library = fs.readFileSync(libraryPath, 'utf8');
-    expect(library).toContain('library.filters.titleMismatchOnly');
+    expect(library).toContain('library.filters.recordIssue');
     expect(library).toContain('自动标题与单文件名不一致');
-    expect(library).toContain(':value="true"');
+    expect(library).toContain('非 CD 多文件错误合并');
+    expect(library).toContain('value="invalid-multipart"');
   });
 });

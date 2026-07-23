@@ -9,6 +9,7 @@ import { protectLegacyTaxonomyMigration } from './migrations/005_protect_legacy_
 import { customCategoriesMigration } from './migrations/006_custom_categories';
 import { sourceOriginalPreviewMigration } from './migrations/007_source_original_preview';
 import { titleUserEditedMigration } from './migrations/008_title_user_edited';
+import { parseFilmPartName } from '../scanner/PartNaming';
 import type { AppLogger } from '../system/AppLogger';
 
 export class DatabaseManager {
@@ -22,6 +23,14 @@ export class DatabaseManager {
     this.db.function('filename_stem', { deterministic: true }, (filename: unknown) => (
       typeof filename === 'string' ? path.parse(filename).name : ''
     ));
+    this.db.function('cd_group_key', { deterministic: true }, (filename: unknown) => {
+      if (typeof filename !== 'string') return null;
+      return parseFilmPartName(filename)?.baseName.normalize('NFKC').toLocaleLowerCase() ?? null;
+    });
+    this.db.function('cd_part_number', { deterministic: true }, (filename: unknown) => {
+      if (typeof filename !== 'string') return null;
+      return parseFilmPartName(filename)?.partNumber ?? null;
+    });
     this.logger?.info('Database opened', { databasePath, open: this.db.open });
     this.db.pragma('foreign_keys = ON');
     this.db.pragma('journal_mode = WAL');
