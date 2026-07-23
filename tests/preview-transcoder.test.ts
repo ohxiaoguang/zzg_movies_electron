@@ -24,7 +24,7 @@ function toolDirectory(): string {
   return root;
 }
 
-describe('MKV preview transcoder', () => {
+describe('compatibility preview transcoder', () => {
   it('finds ffmpeg next to configured ffprobe and on PATH', () => {
     const root = toolDirectory();
     expect(resolvePreviewToolPaths(path.join(root, 'ffprobe.exe'), '', 'win32')).toEqual({
@@ -53,12 +53,15 @@ describe('MKV preview transcoder', () => {
     expect(args).toContain("scale=w='min(1280,iw)':h=-2");
   });
 
-  it('limits compatibility handling to MKV preview paths', () => {
+  it('handles legacy containers through the compatibility cache', () => {
     const logs = fs.mkdtempSync(path.join(os.tmpdir(), 'film-preview-logs-'));
     tempRoots.push(logs);
     const transcoder = new PreviewTranscoder(new AppLogger(logs), () => '', path.join(logs, 'cache'));
-    expect(transcoder.shouldTranscode('movie.MKV')).toBe(true);
+    for (const extension of ['MKV', 'mpg', 'mpeg', 'avi', 'ts', 'flv', 'wmv']) {
+      expect(transcoder.shouldTranscode(`movie.${extension}`)).toBe(true);
+    }
     expect(transcoder.shouldTranscode('movie.mp4')).toBe(false);
+    expect(transcoder.shouldTranscode('movie.webm')).toBe(false);
   });
 
   it('invalidates cached previews when source size or modification time changes', () => {

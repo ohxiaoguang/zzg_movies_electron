@@ -11,6 +11,8 @@ const MIME_TYPES: Record<string, string> = {
   '.mkv': 'video/matroska',
   '.mov': 'video/quicktime',
   '.avi': 'video/x-msvideo',
+  '.mpg': 'video/mpeg',
+  '.mpeg': 'video/mpeg',
   '.ts': 'video/mp2t',
   '.flv': 'video/x-flv',
   '.wmv': 'video/x-ms-wmv',

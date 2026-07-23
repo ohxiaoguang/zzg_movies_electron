@@ -26,15 +26,15 @@ try {
   const ffmpegAvailable = spawnSync('ffmpeg', ['-version'], { windowsHide: true, stdio: 'ignore' }).status === 0;
   if (ffmpegAvailable) {
     for (const [index, color] of ['red', 'green', 'blue'].entries()) {
-      const output = path.join(mediaRoot, `Smoke Movie-cd${index + 1}.mkv`);
+      const output = path.join(mediaRoot, `Smoke Movie-cd${index + 1}.mpg`);
       const generated = spawnSync('ffmpeg', [
         '-hide_banner', '-loglevel', 'error', '-y',
         '-f', 'lavfi', '-i', `color=c=${color}:s=320x180:r=24`,
         '-f', 'lavfi', '-i', `sine=frequency=${440 + index * 110}:sample_rate=44100`,
-        '-t', '1', '-shortest', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac',
-        '-f', 'mpegts', output,
+        '-t', '1', '-shortest', '-c:v', 'mpeg2video', '-q:v', '8', '-c:a', 'mp2', '-b:a', '128k',
+        '-f', 'mpeg', output,
       ], { windowsHide: true, stdio: 'pipe' });
-      if (generated.status !== 0) throw new Error(`Could not generate MKV compatibility fixture: ${String(generated.stderr)}`);
+      if (generated.status !== 0) throw new Error(`Could not generate MPG compatibility fixture: ${String(generated.stderr)}`);
     }
   } else {
     for (const filename of ['Smoke Movie-cd1.mp4', 'Smoke Movie-cd2.mp4', 'Smoke Movie-cd3.mp4']) fs.writeFileSync(path.join(mediaRoot, filename), filename);
@@ -80,7 +80,7 @@ try {
       throw new Error(`CDP probe failed page=${JSON.stringify(page)} state=${socket.readyState}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
     }
     const sourcePath = JSON.stringify(mediaRoot);
-    const expectedMkvCompatibility = ffmpegAvailable;
+    const expectedCompatibilityPreview = ffmpegAvailable;
     const evaluation = await cdpEvaluate(socket, `(async () => {
       const health = await window.filmLibrary.app.health();
       const info = await window.filmLibrary.app.info();
@@ -179,8 +179,8 @@ try {
     if (!result.started?.ok || result.scanStatus?.data?.status !== 'completed') throw new Error(`Scan failed: ${JSON.stringify(result.scanStatus)}`);
     if (!result.page?.ok || result.page.data.total !== 1) throw new Error(`Multi-part page failed: ${JSON.stringify(result.page)}`);
     if (!result.detail?.ok || result.detail.data.parts.length !== 3 || result.detail.data.images.length !== 3 || !result.detail.data.allowOriginalPreview) throw new Error(`Multi-part detail failed: ${JSON.stringify(result.detail)}`);
-    if (expectedMkvCompatibility) {
-      if (result.previewProbe?.status !== 206 || result.previewProbe.contentType !== 'video/mp4' || !result.previewProbe.hasFtyp || result.previewProbe.byteLength !== 10 || !result.previewProbe.contentRange?.startsWith('bytes 0-9/') || result.previewProbe.secondStatus !== 206 || result.previewProbe.secondByteLength !== 100 || !result.previewProbe.secondContentRange?.startsWith('bytes 100-199/')) throw new Error(`MKV compatibility preview failed: ${JSON.stringify(result.previewProbe)}`);
+    if (expectedCompatibilityPreview) {
+      if (result.previewProbe?.status !== 206 || result.previewProbe.contentType !== 'video/mp4' || !result.previewProbe.hasFtyp || result.previewProbe.byteLength !== 10 || !result.previewProbe.contentRange?.startsWith('bytes 0-9/') || result.previewProbe.secondStatus !== 206 || result.previewProbe.secondByteLength !== 100 || !result.previewProbe.secondContentRange?.startsWith('bytes 100-199/')) throw new Error(`Compatibility preview failed: ${JSON.stringify(result.previewProbe)}`);
     } else if (result.previewProbe?.status !== 206 || result.previewProbe.directBody !== 'Smoke Movi') {
       throw new Error(`Original preview protocol failed: ${JSON.stringify(result.previewProbe)}`);
     }

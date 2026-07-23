@@ -98,6 +98,35 @@ describe('SQLite migrations and scanning', () => {
     expect(context.films.page({ page: 1, pageSize: 60 }).items[0].filename).toBe('Renamed Movie.mkv');
   });
 
+  it('scans MPG by default and keeps newly added films first in recent order', async () => {
+    const root = fixtureRoot();
+    const context = createContext(root);
+    context.scan.start({});
+    await waitForScan(context.scan);
+    const original = context.films.page({ page: 1, pageSize: 60, sort: 'recent' }).items[0]!;
+    const originalUpdatedAt = original.updatedAt;
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    fs.writeFileSync(path.join(root, 'Newest Movie.mpg'), 'legacy MPEG media fixture');
+    context.scan.start({});
+    expect((await waitForScan(context.scan)).status).toBe('completed');
+
+    const recent = context.films.page({ page: 1, pageSize: 60, sort: 'recent' });
+    expect(recent.items.map((film) => film.filename)).toEqual(['Newest Movie.mpg', 'Movie A.mkv']);
+    expect(recent.items.find((film) => film.id === original.id)?.updatedAt).toBe(originalUpdatedAt);
+  });
+
+  it('adds MPG and MPEG to an unchanged legacy default extension setting', () => {
+    const root = fixtureRoot();
+    const context = createContext(root);
+    context.database.db.prepare("UPDATE app_setting SET value_json = ? WHERE key = 'videoExtensions'")
+      .run(JSON.stringify(['mp4', 'mkv', 'mov', 'avi', 'webm', 'm4v', 'ts', 'flv', 'wmv']));
+
+    const upgraded = new SettingsRepository(context.database.db).get().videoExtensions;
+    expect(upgraded).toContain('mpg');
+    expect(upgraded).toContain('mpeg');
+  });
+
   it('does not mark films missing when the source is offline', async () => {
     const root = fixtureRoot();
     const context = createContext(root);

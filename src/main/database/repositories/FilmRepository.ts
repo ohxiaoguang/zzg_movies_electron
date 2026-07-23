@@ -671,6 +671,7 @@ export class FilmRepository {
   public updateFromCandidate(id: string, candidate: FilmCandidate, now: string): void {
     const fields = mappedCandidateValues(candidate);
     const editFlags = this.userEditFlags(id);
+    const scanContentChanged = this.scanContentChanged(id, candidate);
     this.db
       .prepare(
         `UPDATE film SET
@@ -679,7 +680,8 @@ export class FilmRepository {
           plot = ?, outline = ?, tagline = ?, content_rating = ?, studio = ?, country_json = ?,
           director_json = ?, actors_json = ?, width = ?, height = ?, video_codec = ?, audio_codec = ?,
           container_format = ?, nfo_relative_path = ?, nfo_modified_at = ?, nfo_hash = ?,
-          nfo_status = ?, nfo_error = ?, missing = 0, updated_at = ?, last_seen_at = ?
+          nfo_status = ?, nfo_error = ?, missing = 0,
+          updated_at = CASE WHEN ? = 1 THEN ? ELSE updated_at END, last_seen_at = ?
          WHERE id = ?`,
       )
       .run(
@@ -711,6 +713,7 @@ export class FilmRepository {
         candidate.nfoHash,
         candidate.nfoStatus,
         candidate.nfoError,
+        scanContentChanged ? 1 : 0,
         now,
         now,
         id,
@@ -718,11 +721,11 @@ export class FilmRepository {
     if (!editFlags.tagsUserEdited) this.replaceTags(id, fields.tags);
     this.replaceAssets(id, candidate);
     this.syncFiles(id, candidate.sourceId, candidate.files, now);
-    this.syncLegacyMissing(id, now);
+    this.syncLegacyMissing(id);
   }
 
   public markSourceMissing(sourceId: string, now: string): number {
-    const result = this.db.prepare('UPDATE film SET missing = 1, updated_at = ? WHERE source_id = ? AND archived = 0 AND missing = 0').run(now, sourceId);
+    const result = this.db.prepare('UPDATE film SET missing = 1 WHERE source_id = ? AND archived = 0 AND missing = 0').run(sourceId);
     this.db.prepare('UPDATE film_file SET missing = 1, updated_at = ? WHERE source_id = ?').run(now, sourceId);
     this.db.prepare('UPDATE film_asset SET missing = 1 WHERE film_id IN (SELECT id FROM film WHERE source_id = ?)').run(sourceId);
     return Number(result.changes);
@@ -733,11 +736,11 @@ export class FilmRepository {
     const rows = this.db.prepare('SELECT DISTINCT film_id, relative_path FROM film_file WHERE source_id = ?').all(sourceId) as Array<{ film_id: string; relative_path: string }>;
     const filmIds = [...new Set(rows.filter((row) => isRelativePathInDirectory(row.relative_path, scope)).map((row) => row.film_id))];
     let changed = 0;
-    const markFilm = this.db.prepare('UPDATE film SET missing = 1, updated_at = ? WHERE id = ? AND archived = 0 AND missing = 0');
+    const markFilm = this.db.prepare('UPDATE film SET missing = 1 WHERE id = ? AND archived = 0 AND missing = 0');
     const markFiles = this.db.prepare('UPDATE film_file SET missing = 1, updated_at = ? WHERE film_id = ?');
     const markAssets = this.db.prepare('UPDATE film_asset SET missing = 1 WHERE film_id = ?');
     for (const filmId of filmIds) {
-      changed += Number(markFilm.run(now, filmId).changes);
+      changed += Number(markFilm.run(filmId).changes);
       markFiles.run(now, filmId);
       markAssets.run(filmId);
     }
@@ -836,6 +839,36 @@ export class FilmRepository {
     };
   }
 
+  private scanContentChanged(id: string, candidate: FilmCandidate): boolean {
+    const row = this.db.prepare(
+      `SELECT relative_path, filename, file_size, file_modified_at, fingerprint,
+              nfo_relative_path, nfo_modified_at, nfo_hash, nfo_status, nfo_error
+       FROM film WHERE id = ?`,
+    ).get(id) as {
+      relative_path: string;
+      filename: string;
+      file_size: number;
+      file_modified_at: string | null;
+      fingerprint: string | null;
+      nfo_relative_path: string | null;
+      nfo_modified_at: string | null;
+      nfo_hash: string | null;
+      nfo_status: string;
+      nfo_error: string | null;
+    } | undefined;
+    if (!row) return true;
+    return row.relative_path !== candidate.relativePath
+      || row.filename !== candidate.filename
+      || Number(row.file_size) !== candidate.fileSize
+      || row.file_modified_at !== candidate.fileModifiedAt
+      || row.fingerprint !== candidate.fingerprint
+      || row.nfo_relative_path !== candidate.nfoRelativePath
+      || row.nfo_modified_at !== candidate.nfoModifiedAt
+      || row.nfo_hash !== candidate.nfoHash
+      || row.nfo_status !== candidate.nfoStatus
+      || row.nfo_error !== candidate.nfoError;
+  }
+
   private partsForFilm(filmId: string): FilmPartDto[] {
     const rows = this.db
       .prepare('SELECT id, part_type, part_number, filename, relative_path, file_size, file_modified_at, missing FROM film_file WHERE film_id = ? ORDER BY part_number ASC, filename COLLATE NOCASE ASC')
@@ -904,14 +937,14 @@ export class FilmRepository {
     }
     const markMissing = this.db.prepare('UPDATE film_file SET missing = 1, updated_at = ? WHERE film_id = ? AND id = ?');
     for (const row of existing) if (!touched.has(row.id) && !candidateKeys.has(physicalFileKey(sourceId, row.relative_path))) markMissing.run(now, filmId, row.id);
-    this.syncLegacyMissing(filmId, now);
+    this.syncLegacyMissing(filmId);
   }
 
-  private syncLegacyMissing(filmId: string, now: string): void {
+  private syncLegacyMissing(filmId: string): void {
     const row = this.db
       .prepare('SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN missing = 0 THEN 1 ELSE 0 END), 0) AS existing FROM film_file WHERE film_id = ?')
       .get(filmId) as { total: number; existing: number };
-    this.db.prepare('UPDATE film SET missing = ?, updated_at = ? WHERE id = ?').run(Number(row.existing) === 0 ? 1 : 0, now, filmId);
+    this.db.prepare('UPDATE film SET missing = ? WHERE id = ?').run(Number(row.existing) === 0 ? 1 : 0, filmId);
   }
 
   private replaceAssets(filmId: string, candidate: FilmCandidate): void {
@@ -1135,7 +1168,7 @@ export class FilmRepository {
       case 'file':
         return 'f.filename COLLATE NOCASE ASC, f.id ASC';
       default:
-        return 'f.updated_at DESC, f.id ASC';
+        return 'f.updated_at DESC, f.imported_at DESC, f.id ASC';
     }
   }
 }

@@ -2,9 +2,12 @@ import type Database from 'better-sqlite3';
 import { DEFAULT_SETTINGS } from '../../../shared/enums';
 import type { SettingsDto, SettingsUpdateInput } from '../../../shared/contracts';
 
+const LEGACY_DEFAULT_VIDEO_EXTENSIONS = ['mp4', 'mkv', 'mov', 'avi', 'webm', 'm4v', 'ts', 'flv', 'wmv'];
+
 export class SettingsRepository {
   public constructor(private readonly db: Database.Database) {
     this.ensureDefaults();
+    this.upgradeLegacyDefaultVideoExtensions();
   }
 
   public get(): SettingsDto {
@@ -69,6 +72,19 @@ export class SettingsRepository {
     const statement = this.db.prepare('INSERT OR IGNORE INTO app_setting (key, value_json) VALUES (?, ?)');
     for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) statement.run(key, JSON.stringify(value));
   }
+
+  private upgradeLegacyDefaultVideoExtensions(): void {
+    const row = this.db.prepare("SELECT value_json FROM app_setting WHERE key = 'videoExtensions'").get() as { value_json: string } | undefined;
+    if (!row) return;
+    try {
+      const value = JSON.parse(row.value_json) as unknown;
+      if (!Array.isArray(value) || !sameExtensionSet(value, LEGACY_DEFAULT_VIDEO_EXTENSIONS)) return;
+      this.db.prepare("UPDATE app_setting SET value_json = ? WHERE key = 'videoExtensions'")
+        .run(JSON.stringify(DEFAULT_SETTINGS.videoExtensions));
+    } catch {
+      // get() will fall back to the current defaults for corrupted settings.
+    }
+  }
 }
 
 function clamp(value: number, min: number, max: number, fallback: number): number {
@@ -82,4 +98,14 @@ function normalizeList(value: unknown, fallback: readonly string[]): string[] {
     .map((item) => item.trim().replace(/^\./, '').slice(0, 100))
     .filter(Boolean);
   return list.length ? [...new Set(list)] : [...fallback];
+}
+
+function sameExtensionSet(value: unknown[], expected: readonly string[]): boolean {
+  const normalized = value
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim().replace(/^\./, '').toLowerCase())
+    .filter(Boolean);
+  return normalized.length === expected.length
+    && new Set(normalized).size === expected.length
+    && expected.every((extension) => normalized.includes(extension));
 }

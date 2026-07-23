@@ -4,7 +4,7 @@ export type AssetType = (typeof ASSET_TYPES)[number];
 export const SCAN_STATUSES = ['running', 'completed', 'failed', 'database_failed', 'cancelled'] as const;
 export type ScanStatus = (typeof SCAN_STATUSES)[number];
 
-export const DEFAULT_VIDEO_EXTENSIONS = ['mp4', 'mkv', 'mov', 'avi', 'webm', 'm4v', 'ts', 'flv', 'wmv'];
+export const DEFAULT_VIDEO_EXTENSIONS = ['mp4', 'mkv', 'mov', 'avi', 'webm', 'm4v', 'mpg', 'mpeg', 'ts', 'flv', 'wmv'];
 export const DEFAULT_IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp'];
 export const DEFAULT_IGNORED_DIRECTORIES = [
   '.git',

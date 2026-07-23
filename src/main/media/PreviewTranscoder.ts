@@ -8,6 +8,7 @@ import type { AppLogger } from '../system/AppLogger';
 const execFileAsync = promisify(execFile);
 const MAX_CACHE_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_CACHE_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+const COMPATIBILITY_PREVIEW_EXTENSIONS = new Set(['.mkv', '.mpg', '.mpeg', '.avi', '.ts', '.flv', '.wmv']);
 
 export interface PreviewCodecs {
   video: string | null;
@@ -33,13 +34,13 @@ export class PreviewTranscoder {
   ) {}
 
   public shouldTranscode(filePath: string): boolean {
-    return path.extname(filePath).toLowerCase() === '.mkv';
+    return COMPATIBILITY_PREVIEW_EXTENSIONS.has(path.extname(filePath).toLowerCase());
   }
 
   public async prepareCachedFile(filePath: string, signal: AbortSignal): Promise<string | null> {
     const tools = resolvePreviewToolPaths(this.configuredFfprobePath());
     if (!tools.ffmpeg) {
-      this.logger.warn('MKV compatibility preview unavailable', {
+      this.logger.warn('Compatibility preview unavailable', {
         inputPath: filePath,
         reason: 'FFMPEG_NOT_FOUND',
       });
@@ -68,7 +69,7 @@ export class PreviewTranscoder {
     const partialPath = `${cachedPath}.${randomUUID()}.partial`;
     const codecs = tools.ffprobe ? await probeCodecs(tools.ffprobe, filePath) : null;
     const args = buildPreviewTranscodeArgs(filePath, codecs, partialPath);
-    this.logger.info('MKV compatibility cache generation started', {
+    this.logger.info('Compatibility preview cache generation started', {
       inputPath: filePath,
       videoCodec: codecs?.video ?? 'unknown',
       audioCodec: codecs?.audio ?? 'unknown',
@@ -82,7 +83,7 @@ export class PreviewTranscoder {
       if (!stat.isFile() || stat.size < 1024) throw new Error('FFMPEG_OUTPUT_EMPTY');
       if (await isUsableCacheFile(cachedPath)) await fs.promises.rm(partialPath, { force: true });
       else await fs.promises.rename(partialPath, cachedPath);
-      this.logger.info('MKV compatibility cache ready', {
+      this.logger.info('Compatibility preview cache ready', {
         inputPath: filePath,
         cachePath: cachedPath,
         cacheBytes: stat.size,
@@ -91,7 +92,7 @@ export class PreviewTranscoder {
       return cachedPath;
     } catch (error) {
       await fs.promises.rm(partialPath, { force: true }).catch(() => undefined);
-      this.logger.warn('MKV compatibility cache generation failed', {
+      this.logger.warn('Compatibility preview cache generation failed', {
         inputPath: filePath,
         error: error instanceof Error ? error.message : 'FFMPEG_TRANSCODE_FAILED',
       });
@@ -272,7 +273,7 @@ async function prunePreviewCache(cacheDirectory: string, keepPath: string, logge
       total -= entry.size;
     }
   } catch (error) {
-    logger.warn('MKV compatibility cache cleanup failed', {
+    logger.warn('Compatibility preview cache cleanup failed', {
       cachePath: cacheDirectory,
       error: error instanceof Error ? error.message : 'CACHE_CLEANUP_FAILED',
     });
