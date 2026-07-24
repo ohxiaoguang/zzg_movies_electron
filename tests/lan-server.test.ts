@@ -211,6 +211,16 @@ describe('localhost read-only web server', () => {
     expect(script).not.toContain("'player-toggle'");
     expect(script).toContain('applyPlaybackPosition');
     expect(script).toContain('configureSubtitlePicker');
+    expect(script).toContain("actionButton('后退'");
+    expect(script).toContain("actionButton('前进'");
+    expect(script).toContain('createDetailMediaNavigation');
+    expect(script).toContain("backTitle: '上一张'");
+    expect(script).toContain("forwardTitle: '下一张'");
+    expect(script).toContain("activeThumbnail.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' })");
+    expect(script).toContain('preview.seek(-10)');
+    expect(script).toContain('original.seek(10)');
+    expect(script).toContain('function seekVideoBy(video, deltaSeconds)');
+    expect(script).toContain('video.currentTime = target');
     expect(script).toContain('NVIDIA 全硬件转码（CUDA 解码与缩放）');
     expect(script).toContain('NVIDIA 硬件编码（CPU 解码）');
     expect(script).toContain('仅转换音频（视频直拷）');
@@ -235,6 +245,12 @@ describe('localhost read-only web server', () => {
     expect(styles).toContain('.app-sidebar.is-open');
     expect(styles).toContain('.web-playback video::cue');
     expect(styles).toContain('font-size: 70%');
+    expect(styles).toContain('#film-detail { width: min(1040px');
+    expect(styles).toContain('.detail-header-controls');
+    expect(styles).toContain('.detail-media-navigation');
+    expect(styles).toContain('.detail-navigation-button');
+    expect(styles).toContain('height: clamp(210px, 46dvh, 420px)');
+    expect(styles).toContain('max-height: 100%');
     expect(styles).toContain('@media (max-width: 760px)');
   });
 

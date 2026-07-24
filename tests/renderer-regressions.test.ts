@@ -16,6 +16,7 @@ const mainPath = path.resolve(process.cwd(), 'src/main/index.ts');
 const mainWindowPath = path.resolve(process.cwd(), 'src/main/window/createMainWindow.ts');
 const settingsPath = path.resolve(process.cwd(), 'src/renderer/views/SettingsView.vue');
 const desktopIntegrationPath = path.resolve(process.cwd(), 'src/main/system/DesktopIntegrationService.ts');
+const themePath = path.resolve(process.cwd(), 'src/renderer/styles/theme.css');
 
 describe('renderer regressions', () => {
   const drawer = fs.readFileSync(drawerPath, 'utf8');
@@ -193,9 +194,34 @@ describe('renderer regressions', () => {
     expect(desktopIntegration).toContain('app.setLoginItemSettings');
     expect(desktopIntegration).toContain("argumentsList.includes('--hidden')");
     expect(desktopIntegration).toContain("window.on('minimize'");
+    expect(desktopIntegration).toContain('window.setSkipTaskbar(true)');
+    expect(desktopIntegration).toContain('window.setSkipTaskbar(false)');
+    expect(desktopIntegration).toContain('window.setEnabled(true)');
+    expect(desktopIntegration).toContain('window.setIgnoreMouseEvents(false)');
+    expect(desktopIntegration).toContain('window.setFocusable(true)');
+    expect(desktopIntegration).toContain('window.moveTop()');
+    expect(desktopIntegration).toContain('window.webContents.focus()');
+    expect(desktopIntegration).toContain('TRAY_ICON_PNG_BASE64');
+    expect(desktopIntegration).toContain('nativeImage.createFromBuffer');
+    expect(desktopIntegration).toContain('sourceIcon.isEmpty() || icon.isEmpty()');
+    expect(desktopIntegration).not.toContain('data:image/svg+xml');
     expect(desktopIntegration).toContain('new Tray(icon)');
     expect(main).toContain('app.requestSingleInstanceLock()');
     expect(main).toContain('desktopIntegration.shouldStartHidden()');
     expect(mainWindow).toContain('options.showOnReady !== false');
+  });
+
+  it('keeps the desktop sidebar fixed while only the main area scrolls', () => {
+    const theme = fs.readFileSync(themePath, 'utf8');
+    expect(theme).toContain('.app-shell { height: 100vh; min-height: 0; overflow: hidden;');
+    expect(theme).toContain('.app-sidebar { position: relative; display: flex; height: 100vh;');
+    expect(theme).toContain('.app-main { height: 100vh; min-width: 0; padding: 0; overflow-x: hidden; overflow-y: auto;');
+  });
+
+  it('does not render or bundle a QR code in LAN web access settings', () => {
+    const settings = fs.readFileSync(settingsPath, 'utf8');
+    expect(settings).not.toContain("from 'qrcode'");
+    expect(settings).not.toContain('qrDataUrl');
+    expect(settings).not.toContain('lan-qr');
   });
 });

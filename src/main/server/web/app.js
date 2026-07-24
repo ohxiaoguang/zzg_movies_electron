@@ -486,12 +486,13 @@ async function showDetail(id) {
 
 function renderDetail(film) {
   releaseActivePlayback();
+  const mediaNavigation = createDetailMediaNavigation();
   const preview = createPreviewPlayer(film);
   const original = createOriginalPlayback(film);
   const partsSection = createPartsSection(film, original);
   const content = [
-    createDetailHeader(film),
-    createMediaSection(film, preview, original),
+    createDetailHeader(film, mediaNavigation.element),
+    createMediaSection(film, preview, original, mediaNavigation),
   ];
   if (partsSection) content.push(partsSection);
   content.push(
@@ -503,7 +504,7 @@ function renderDetail(film) {
   elements.detailContent.replaceChildren(...content);
 }
 
-function createDetailHeader(film) {
+function createDetailHeader(film, mediaNavigation) {
   const header = createElement('header', 'detail-header');
   const poster = createElement('div', 'detail-poster');
   if (film.posterAssetId) {
@@ -522,15 +523,17 @@ function createDetailHeader(film) {
     createElement('h2', '', film.title),
     createElement('p', 'muted', film.originalTitle || ' '),
   );
-  titleRow.append(titleBlock);
+  const controls = createElement('div', 'detail-header-controls');
   if (state.auth?.canManage) {
     const favorite = actionButton(film.favorite ? '★ 已收藏' : '☆ 收藏', () => updateDetail(
       film.id,
       () => client.updateFavorite(film.id, !film.favorite),
       film.favorite ? '已取消收藏' : '已加入收藏',
     ), `favorite-button${film.favorite ? ' active' : ''}`);
-    titleRow.append(favorite);
+    controls.append(favorite);
   }
+  controls.append(mediaNavigation);
+  titleRow.append(titleBlock, controls);
   const availability = film.availability && film.availability !== 'available'
     ? createElement('span', 'availability-warning', availabilityLabel(film.availability))
     : null;
@@ -540,6 +543,25 @@ function createDetailHeader(film) {
   main.append(categories);
   header.append(poster, main);
   return header;
+}
+
+function createDetailMediaNavigation() {
+  const element = createElement('div', 'detail-media-navigation');
+  let backward = null;
+  let forward = null;
+  const backButton = actionButton('后退', () => backward?.(), 'detail-navigation-button');
+  const forwardButton = actionButton('前进', () => forward?.(), 'detail-navigation-button');
+  element.append(backButton, forwardButton);
+  const setMode = (options = {}) => {
+    backward = options.backward || null;
+    forward = options.forward || null;
+    backButton.disabled = !backward;
+    forwardButton.disabled = !forward;
+    backButton.title = options.backTitle || '后退';
+    forwardButton.title = options.forwardTitle || '前进';
+  };
+  setMode();
+  return { element, setMode };
 }
 
 function createCategoryEditor(film) {
@@ -607,7 +629,7 @@ function createCategoryEditor(film) {
   return section;
 }
 
-function createMediaSection(film, preview, original) {
+function createMediaSection(film, preview, original, navigation) {
   const section = createElement('section', 'detail-section media-section');
   const tabs = createElement('div', 'detail-tabs');
   const previewButton = actionButton('预览视频', () => activate('preview'), 'detail-tab active');
@@ -620,7 +642,8 @@ function createMediaSection(film, preview, original) {
   const imagePanel = createElement('div', 'detail-tab-panel');
   imagePanel.dataset.tab = 'images';
   imagePanel.hidden = true;
-  imagePanel.append(film.images.length ? createGallery(film) : createElement('p', 'media-empty', '暂无图片'));
+  const gallery = film.images.length ? createGallery(film) : null;
+  imagePanel.append(gallery?.section || createElement('p', 'media-empty', '暂无图片'));
   const originalPanel = createElement('div', 'detail-tab-panel');
   originalPanel.dataset.tab = 'original';
   originalPanel.hidden = true;
@@ -631,12 +654,35 @@ function createMediaSection(film, preview, original) {
     imageButton.classList.toggle('active', name === 'images');
     originalButton.classList.toggle('active', name === 'original');
     for (const panel of panels) panel.hidden = panel.dataset.tab !== name;
-    if (name === 'preview') preview.activate();
-    else if (name === 'original') original.activate();
-    else releaseActivePlayback();
+    if (name === 'preview') {
+      preview.activate();
+      navigation.setMode(preview.canSeek ? {
+        backward: () => preview.seek(-10),
+        forward: () => preview.seek(10),
+        backTitle: '后退 10 秒',
+        forwardTitle: '前进 10 秒',
+      } : {});
+    } else if (name === 'original') {
+      original.activate();
+      navigation.setMode(original.canSeek ? {
+        backward: () => original.seek(-10),
+        forward: () => original.seek(10),
+        backTitle: '后退 10 秒',
+        forwardTitle: '前进 10 秒',
+      } : {});
+    } else {
+      releaseActivePlayback();
+      navigation.setMode(gallery?.canStep ? {
+        backward: () => gallery.step(-1),
+        forward: () => gallery.step(1),
+        backTitle: '上一张',
+        forwardTitle: '下一张',
+      } : {});
+    }
   }
   section.addEventListener('playback:reveal', () => activate('original'));
   section.append(tabs, ...panels);
+  activate('preview');
   return section;
 }
 
@@ -652,7 +698,13 @@ function createGallery(film) {
     index = (next + film.images.length) % film.images.length;
     image.src = client.media('assets', film.images[index].id);
     count.textContent = `${index + 1} / ${film.images.length}`;
-    [...thumbnails.children].forEach((item, itemIndex) => item.classList.toggle('active', itemIndex === index));
+    const items = [...thumbnails.children];
+    items.forEach((item, itemIndex) => item.classList.toggle('active', itemIndex === index));
+    const activeThumbnail = items[index];
+    window.requestAnimationFrame(() => {
+      if (!activeThumbnail?.isConnected) return;
+      activeThumbnail.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    });
   };
   main.append(image);
   if (film.images.length > 1) {
@@ -672,7 +724,13 @@ function createGallery(film) {
   });
   gallery.append(main, thumbnails);
   show(0);
-  return gallery;
+  return {
+    section: gallery,
+    canStep: film.images.length > 1,
+    step(delta) {
+      show(index + delta);
+    },
+  };
 }
 
 function createPartsSection(film, playback) {
@@ -831,10 +889,14 @@ function createPreviewPlayer(film) {
   }
   return {
     section,
+    canSeek: hasPreview,
     activate() {
       if (!hasPreview || state.playback?.video === video) return;
       releaseActivePlayback();
       attachPreview(video, status, film.id);
+    },
+    seek(deltaSeconds) {
+      seekVideoBy(video, deltaSeconds);
     },
   };
 }
@@ -905,6 +967,7 @@ function createOriginalPlayback(film) {
   };
   return {
     section,
+    canSeek: parts.length > 0,
     activate() {
       if (!parts.length || state.playback?.video === video) return;
       if (parts.length === 1) {
@@ -919,6 +982,9 @@ function createOriginalPlayback(film) {
     playPart(partId) {
       reveal();
       void startAdaptivePlayback(video, status, { partId }, subtitleSelect);
+    },
+    seek(deltaSeconds) {
+      seekVideoBy(video, deltaSeconds);
     },
   };
 }
@@ -1079,6 +1145,21 @@ function configureSubtitlePicker(select, tracks = []) {
 function selectSubtitleTrack(video, streamIndex) {
   for (const track of video.querySelectorAll('track')) {
     track.track.mode = track.dataset.streamIndex === streamIndex ? 'showing' : 'disabled';
+  }
+}
+
+function seekVideoBy(video, deltaSeconds) {
+  if (!Number.isFinite(video.currentTime)) return;
+  let target = Math.max(0, video.currentTime + deltaSeconds);
+  if (Number.isFinite(video.duration)) {
+    target = Math.min(video.duration, target);
+  } else if (video.seekable.length) {
+    target = Math.min(video.seekable.end(video.seekable.length - 1), target);
+  }
+  try {
+    video.currentTime = target;
+  } catch {
+    // The media element remains authoritative while an HLS stream is preparing.
   }
 }
 

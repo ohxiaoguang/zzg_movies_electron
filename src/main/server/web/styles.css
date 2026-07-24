@@ -114,6 +114,7 @@ button.index-card { width: 100%; }
 footer { padding: 10px 38px 30px; color: #596071; font-size: 10px; text-align: center; }
 
 dialog { width: min(720px, calc(100vw - 30px)); max-height: min(860px, calc(100vh - 30px)); padding: 0; overflow: auto; border: 1px solid #394252; border-radius: 16px; color: var(--ink); background: #12151d; box-shadow: 0 35px 120px rgba(0,0,0,.75); }
+#film-detail { width: min(1040px, calc(100vw - 30px)); max-height: min(920px, calc(100vh - 24px)); }
 dialog::backdrop { background: rgba(4,6,10,.78); backdrop-filter: blur(7px); }
 .dialog-close { position: sticky; z-index: 4; top: 13px; float: right; width: 38px; height: 38px; margin: 13px 13px -51px 0; padding: 0; border-radius: 50%; color: #fff; background: rgba(13,16,22,.9); font-size: 19px; }
 #detail-content { padding: 0 26px 26px; }
@@ -123,6 +124,10 @@ dialog::backdrop { background: rgba(4,6,10,.78); backdrop-filter: blur(7px); }
 .detail-header-main { display: grid; min-width: 0; gap: 10px; }
 .detail-title-row { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .detail-title-copy { min-width: 0; }
+.detail-header-controls { display: grid; flex: 0 0 auto; justify-items: stretch; gap: 7px; }
+.detail-media-navigation { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+.detail-navigation-button { min-width: 48px; padding: 6px 8px; border-color: rgba(152,227,194,.3); color: var(--accent); background: rgba(152,227,194,.06); font-size: 9px; }
+.detail-navigation-button:disabled { color: var(--subtle); background: transparent; opacity: .55; }
 .detail-header h2 { margin: 5px 0; overflow-wrap: anywhere; font-size: 22px; line-height: 1.18; }
 .detail-header .eyebrow { margin-bottom: 3px; font-size: 9px; }
 .detail-title-copy .muted { min-height: 15px; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
@@ -144,19 +149,19 @@ dialog::backdrop { background: rgba(4,6,10,.78); backdrop-filter: blur(7px); }
 .detail-tab.active { border-bottom-color: var(--accent); color: var(--accent); }
 .detail-tab-panel { padding-top: 14px; }
 .detail-gallery { display: grid; gap: 10px; }
-.gallery-main { position: relative; display: grid; height: min(420px, 52vh); place-items: center; overflow: hidden; border-radius: 10px; background: #090b0f; }
-.gallery-main > img { width: 100%; height: 100%; object-fit: contain; }
+.gallery-main { position: relative; display: grid; height: clamp(210px, 46dvh, 420px); padding: 8px; place-items: center; overflow: hidden; border-radius: 10px; background: #090b0f; }
+.gallery-main > img { display: block; width: auto; height: auto; max-width: 100%; max-height: 100%; object-fit: contain; }
 .gallery-arrow { position: absolute; top: 50%; width: 36px; height: 52px; padding: 0; border: 0; color: #fff; background: rgba(0,0,0,.55); font-size: 30px; transform: translateY(-50%); }
 .gallery-arrow.left { left: 12px; }
 .gallery-arrow.right { right: 12px; }
 .gallery-count { position: absolute; right: 12px; bottom: 10px; padding: 4px 8px; border-radius: 5px; color: #fff; background: rgba(0,0,0,.55); font-size: 10px; }
-.gallery-thumbs { display: flex; gap: 8px; overflow-x: auto; }
+.gallery-thumbs { display: flex; gap: 8px; padding-bottom: 3px; overflow-x: auto; }
 .gallery-thumbs button { width: 64px; height: 48px; padding: 2px; flex: 0 0 auto; border: 2px solid transparent; border-radius: 6px; background: #141820; }
 .gallery-thumbs button.active { border-color: var(--accent); }
 .gallery-thumbs img { width: 100%; height: 100%; object-fit: cover; }
 .web-playback { padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: #0b0e14; }
 .playback-status { display: block; margin-bottom: 11px; font-size: 10px; }
-.web-playback video { display: block; width: 100%; max-height: 480px; aspect-ratio: 16 / 9; background: #000; object-fit: contain; }
+.web-playback video { display: block; width: 100%; max-height: min(620px, 62vh); aspect-ratio: 16 / 9; background: #000; object-fit: contain; }
 .web-playback video::cue { color: #fff; background: rgba(0, 0, 0, .72); font-size: 70%; line-height: 1.25; }
 .subtitle-picker { display: flex; align-items: center; gap: 9px; width: fit-content; margin-top: 11px; color: var(--muted); font-size: 10px; }
 .subtitle-picker select { min-width: 150px; }

@@ -2,7 +2,6 @@
 import { onMounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { FolderOpened, Setting, VideoCamera } from '@element-plus/icons-vue';
-import QRCode from 'qrcode';
 import type {
   AppInfoDto,
   LanPairedDeviceDto,
@@ -42,7 +41,6 @@ const lanStatus = ref<LanServerStatusDto | null>(null);
 const lanChanging = ref(false);
 const pairingCode = ref<LanPairingCodeDto | null>(null);
 const pairedDevices = ref<LanPairedDeviceDto[]>([]);
-const qrDataUrl = ref<string | null>(null);
 const playbackCache = ref<PlaybackCacheInfoDto | null>(null);
 const cacheChanging = ref(false);
 
@@ -58,7 +56,6 @@ onMounted(async () => {
     if (appInfo.ok) info.value = appInfo.data;
     if (localWeb.ok) {
       lanStatus.value = localWeb.data;
-      await updateQrCode();
     }
     if (cache.ok) playbackCache.value = cache.data;
     await loadDevices();
@@ -131,7 +128,6 @@ async function changeLanServer(action: 'start' | 'stop'): Promise<void> {
     if (result.ok) {
       lanStatus.value = result.data;
       form.lanServerEnabled = result.data.enabled;
-      await updateQrCode();
       ElMessage.success(action === 'start' ? '本机网页服务已启动' : '本机网页服务已停止');
     } else {
       const refreshed = await window.filmLibrary.lanServer.status();
@@ -147,7 +143,6 @@ async function refreshLanStatus(): Promise<void> {
   if (result.ok) {
     lanStatus.value = result.data;
     form.lanServerEnabled = result.data.enabled;
-    await updateQrCode();
   }
 }
 async function createPairingCode(role: 'viewer' | 'admin'): Promise<void> {
@@ -165,22 +160,6 @@ async function revokeDevice(device: LanPairedDeviceDto): Promise<void> {
   else {
     ElMessage.success(`已撤销“${device.name}”`);
     await Promise.all([loadDevices(), refreshLanStatus()]);
-  }
-}
-async function updateQrCode(): Promise<void> {
-  const url = lanStatus.value?.baseUrl;
-  if (!url) {
-    qrDataUrl.value = null;
-    return;
-  }
-  try {
-    qrDataUrl.value = await QRCode.toDataURL(url, {
-      width: 180,
-      margin: 1,
-      color: { dark: '#101820', light: '#ffffff' },
-    });
-  } catch {
-    qrDataUrl.value = null;
   }
 }
 async function openFolder(kind: 'data' | 'logs'): Promise<void> { const result = kind === 'data' ? await window.filmLibrary.app.openDataFolder() : await window.filmLibrary.app.openLogsFolder(); if (!result.ok) ElMessage.error(result.error.message); }
@@ -304,7 +283,6 @@ function updateIgnoredDirectories(value: string): void { form.ignoredDirectories
             <div class="data-row"><span>服务状态</span><strong>{{ lanStatus?.state === 'running' ? '运行中' : lanStatus?.state === 'error' ? '启动失败' : lanStatus?.state === 'starting' ? '正在启动' : '已停止' }}</strong></div>
             <div class="data-row"><span>监听地址</span><code>{{ lanStatus?.bindAddress || '—' }}:{{ lanStatus?.port || form.lanServerPort }}</code></div>
             <div v-for="url in lanStatus?.baseUrls || []" :key="url" class="data-row"><span>访问地址</span><code>{{ url }}</code></div>
-            <img v-if="qrDataUrl" class="lan-qr" :src="qrDataUrl" alt="局域网访问地址二维码" />
           </div>
         </div>
         <p class="lan-warning">只允许受信任的私有局域网使用。不要在路由器中做端口转发，也不要把该端口暴露到公网。首次连接需要在桌面端生成短时配对码。</p>
@@ -324,6 +302,6 @@ function updateIgnoredDirectories(value: string): void { form.ignoredDirectories
 .cache-directory { grid-template-columns: 76px minmax(0, 1fr); }.cache-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 16px 0 12px; }.cache-metrics > div { padding: 12px; border: 1px solid var(--line); border-radius: 9px; background: rgba(12,15,21,.45); }.cache-metrics span, .cache-metrics strong { display: block; }.cache-metrics span { color: var(--muted); font-size: 11px; }.cache-metrics strong { margin-top: 7px; color: var(--ink); font-size: 18px; }.cache-limit { display: flex; align-items: center; gap: 7px; margin-top: 6px; }.cache-limit span { display: inline; }.cache-note { margin: 10px 0 0; font-size: 11px; line-height: 1.6; }
 .startup-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }.startup-option { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px; border: 1px solid var(--line); border-radius: 9px; background: rgba(12,15,21,.45); }.startup-option strong, .startup-option small { display: block; }.startup-option strong { color: var(--ink); font-size: 12px; }.startup-option small { margin-top: 5px; color: var(--muted); font-size: 10px; line-height: 1.5; }
 .lan-error { margin: 12px 0 0; color: #ffadad; font-size: 12px; }
-.lan-config-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, .8fr); gap: 24px; }.lan-settings-card .el-select { width: 180px; }.lan-settings-card .setting-row .el-input { width: min(360px, 100%); }.lan-diagnostics { position: relative; min-height: 170px; padding: 12px 200px 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: rgba(12,15,21,.55); }.lan-diagnostics .data-row { grid-template-columns: 72px minmax(0, 1fr); }.lan-qr { position: absolute; top: 12px; right: 12px; width: 150px; height: 150px; padding: 5px; border-radius: 7px; background: #fff; }.lan-warning { padding: 11px 13px; border: 1px solid rgba(255,193,94,.24); border-radius: 8px; color: #e8c582; background: rgba(255,193,94,.06); font-size: 12px; line-height: 1.6; }.pairing-code { display: flex; align-items: center; gap: 14px; margin-top: 16px; padding: 14px; border: 1px solid rgba(152,227,194,.3); border-radius: 10px; background: rgba(152,227,194,.07); }.pairing-code span, .pairing-code small { color: var(--muted); font-size: 11px; }.pairing-code strong { color: var(--accent); font: 700 28px/1 ui-monospace, monospace; letter-spacing: .22em; }.paired-devices { margin-top: 20px; }.section-label { margin-bottom: 9px; color: var(--ink); font-size: 12px; font-weight: 700; }.device-list { display: grid; gap: 7px; }.device-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; }.device-row strong, .device-row small { display: block; }.device-row strong { color: var(--ink); font-size: 12px; }.device-row small { margin-top: 3px; color: var(--muted); font-size: 10px; }
-@media (max-width: 760px) { .settings-grid { grid-template-columns: 1fr; }.settings-card.wide { grid-column: auto; }.startup-options, .cache-metrics { grid-template-columns: 1fr; }.settings-actions { flex-wrap: wrap; }.lan-config-grid { grid-template-columns: 1fr; }.lan-diagnostics { padding-right: 14px; padding-bottom: 180px; }.lan-qr { top: auto; right: 50%; bottom: 12px; transform: translateX(50%); } }
+.lan-config-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, .8fr); gap: 24px; }.lan-settings-card .el-select { width: 180px; }.lan-settings-card .setting-row .el-input { width: min(360px, 100%); }.lan-diagnostics { min-height: 170px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: rgba(12,15,21,.55); }.lan-diagnostics .data-row { grid-template-columns: 72px minmax(0, 1fr); }.lan-warning { padding: 11px 13px; border: 1px solid rgba(255,193,94,.24); border-radius: 8px; color: #e8c582; background: rgba(255,193,94,.06); font-size: 12px; line-height: 1.6; }.pairing-code { display: flex; align-items: center; gap: 14px; margin-top: 16px; padding: 14px; border: 1px solid rgba(152,227,194,.3); border-radius: 10px; background: rgba(152,227,194,.07); }.pairing-code span, .pairing-code small { color: var(--muted); font-size: 11px; }.pairing-code strong { color: var(--accent); font: 700 28px/1 ui-monospace, monospace; letter-spacing: .22em; }.paired-devices { margin-top: 20px; }.section-label { margin-bottom: 9px; color: var(--ink); font-size: 12px; font-weight: 700; }.device-list { display: grid; gap: 7px; }.device-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; }.device-row strong, .device-row small { display: block; }.device-row strong { color: var(--ink); font-size: 12px; }.device-row small { margin-top: 3px; color: var(--muted); font-size: 10px; }
+@media (max-width: 760px) { .settings-grid { grid-template-columns: 1fr; }.settings-card.wide { grid-column: auto; }.startup-options, .cache-metrics { grid-template-columns: 1fr; }.settings-actions { flex-wrap: wrap; }.lan-config-grid { grid-template-columns: 1fr; } }
 </style>
