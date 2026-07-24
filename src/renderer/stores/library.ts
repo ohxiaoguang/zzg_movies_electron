@@ -2,6 +2,7 @@ import { computed, reactive, ref } from 'vue';
 import { defineStore } from 'pinia';
 import type { FilmPageDto, FilmPageQuery, SettingsDto } from '../../shared/contracts';
 import { DEFAULT_SETTINGS } from '../../shared/enums';
+import { filmLibraryClient } from '../api';
 
 export const useLibraryStore = defineStore('library', () => {
   const pageData = ref<FilmPageDto>({ items: [], page: 1, pageSize: DEFAULT_SETTINGS.pageSize, total: 0, totalPages: 1 });
@@ -16,9 +17,19 @@ export const useLibraryStore = defineStore('library', () => {
     imageExtensions: [...DEFAULT_SETTINGS.imageExtensions],
     ignoredDirectories: [...DEFAULT_SETTINGS.ignoredDirectories],
     autoScanOnStartup: DEFAULT_SETTINGS.autoScanOnStartup,
+    autoLaunchOnStartup: DEFAULT_SETTINGS.autoLaunchOnStartup,
+    launchToTray: DEFAULT_SETTINGS.launchToTray,
+    minimizeToTray: DEFAULT_SETTINGS.minimizeToTray,
     ffprobePath: '',
+    playbackCacheDirectory: DEFAULT_SETTINGS.playbackCacheDirectory,
+    playbackCacheLimitGb: DEFAULT_SETTINGS.playbackCacheLimitGb,
+    lanServerEnabled: DEFAULT_SETTINGS.lanServerEnabled,
+    lanServerPort: DEFAULT_SETTINGS.lanServerPort,
+    lanServerBindMode: DEFAULT_SETTINGS.lanServerBindMode,
+    lanServerHost: DEFAULT_SETTINGS.lanServerHost,
+    lanRequireAuthentication: DEFAULT_SETTINGS.lanRequireAuthentication,
   });
-  const filters = reactive<FilmPageQuery>({ page: 1, pageSize: DEFAULT_SETTINGS.pageSize, sort: 'recent', organizationState: 'all', categoryIds: [], categoryMatch: 'any', nfoTagIds: [], nfoTagMatch: 'any', recordIssue: 'all', allData: false, availability: 'all' });
+  const filters = reactive<FilmPageQuery>({ page: 1, pageSize: DEFAULT_SETTINGS.pageSize, sort: 'added', organizationState: 'all', categoryIds: [], categoryMatch: 'any', nfoTagIds: [], nfoTagMatch: 'any', recordIssue: 'all', allData: false, availability: 'all' });
   const viewMode = ref<'grid' | 'table'>('grid');
 
   const items = computed(() => pageData.value.items);
@@ -42,7 +53,7 @@ export const useLibraryStore = defineStore('library', () => {
       };
       const result = query.allData
         ? await window.filmLibrary.films.recordsPageAll(query)
-        : await window.filmLibrary.films.page(query);
+        : await filmLibraryClient.page(query);
       if (result.ok) pageData.value = result.data;
       else error.value = result.error.message;
     } catch (reason) {
@@ -59,7 +70,7 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   function resetFilters(): void {
-    Object.assign(filters, { page: 1, pageSize: settings.value.pageSize, search: '', sourceId: '', actor: '', organizationState: 'all', categoryIds: [], categoryMatch: 'any', nfoTagIds: [], nfoTagMatch: 'any', minRating: undefined, favoriteOnly: false, missingOnly: false, recordIssue: 'all', allData: false, availability: 'all', sort: 'recent' });
+    Object.assign(filters, { page: 1, pageSize: settings.value.pageSize, search: '', sourceId: '', actor: '', organizationState: 'all', categoryIds: [], categoryMatch: 'any', nfoTagIds: [], nfoTagMatch: 'any', minRating: undefined, favoriteOnly: false, missingOnly: false, recordIssue: 'all', allData: false, availability: 'all', sort: 'added' });
   }
 
   return { pageData, items, loading, error, settings, filters, viewMode, loadSettings, fetchPage, setFilter, resetFilters };

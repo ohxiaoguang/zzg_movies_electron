@@ -45,6 +45,7 @@ describe('HTTP Range parsing', () => {
   it('clamps an oversized end and rejects invalid ranges', () => {
     expect(parseRangeHeader('bytes=90-999', 100)).toEqual({ ok: true, range: { start: 90, end: 99 } });
     expect(parseRangeHeader('bytes=100-101', 100)).toEqual({ ok: false, contentRange: 'bytes */100' });
+    expect(parseRangeHeader('bytes=0-1,5-6', 100)).toEqual({ ok: false, contentRange: 'bytes */100' });
   });
 });
 

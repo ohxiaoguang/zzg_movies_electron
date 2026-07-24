@@ -28,6 +28,8 @@ let searchTimer: ReturnType<typeof setTimeout> | null = null;
 
 const allData = computed(() => route.query.all === '1');
 const organizedPage = computed(() => route.query.organization === 'organized');
+const favoritePage = computed(() => route.query.favorite === '1');
+const exportPage = computed(() => organizedPage.value || favoritePage.value);
 
 watch(() => route.query, () => { closeAllHoverPopups(); syncRouteFilter(); void library.fetchPage(); }, { deep: true, immediate: true });
 onMounted(async () => {
@@ -81,7 +83,8 @@ async function exportCsv(): Promise<void> {
       page: 1,
       categoryIds: [...(library.filters.categoryIds ?? [])],
       nfoTagIds: [...(library.filters.nfoTagIds ?? [])],
-      organizationState: 'organized' as const,
+      organizationState: favoritePage.value ? 'all' as const : 'organized' as const,
+      favoriteOnly: favoritePage.value,
     };
     const result = await window.filmLibrary.films.exportCsv(query);
     if (!result.ok) ElMessage.error(result.error.message);
@@ -123,7 +126,7 @@ function changePage(page: number): void { library.filters.page = page; void libr
   <div class="page-wrap library-page">
     <div class="page-heading">
       <div><div class="eyebrow">YOUR OFFLINE CINEMA</div><h1 class="page-title">{{ allData ? '所有数据' : library.filters.organizationState === 'unorganized' ? '未整理' : library.filters.organizationState === 'organized' ? '已整理' : library.filters.favoriteOnly ? '收藏' : '全部影片' }}</h1><p class="page-caption">{{ library.pageData.total }} 条记录 · 所有资料只保存在本机</p></div>
-      <div class="heading-actions"><el-button v-if="organizedPage" :loading="exportingCsv" @click="exportCsv"><Download />导出 CSV</el-button><el-button v-if="allData" type="danger" :disabled="!selectedRecordIds.length" :loading="deletingRecords" @click="deleteRecords(selectedRecordIds)">删除选中</el-button><el-button v-else type="primary" @click="startScan"><Operation />扫描来源</el-button></div>
+      <div class="heading-actions"><el-button v-if="exportPage" :loading="exportingCsv" @click="exportCsv"><Download />导出 CSV</el-button><el-button v-if="allData" type="danger" :disabled="!selectedRecordIds.length" :loading="deletingRecords" @click="deleteRecords(selectedRecordIds)">删除选中</el-button><el-button v-else type="primary" @click="startScan"><Operation />扫描来源</el-button></div>
     </div>
     <div class="toolbar library-toolbar">
       <el-input v-model="library.filters.search" clearable placeholder="搜索标题、文件名…" @input="queueSearch"><template #prefix><Search /></template></el-input>
@@ -133,7 +136,7 @@ function changePage(page: number): void { library.filters.page = page; void libr
       <el-select v-model="library.filters.nfoTagIds" multiple filterable clearable placeholder="NFO 标签" @change="filterChanged"><el-option v-for="tag in nfoTags" :key="tag.id" :label="tag.name" :value="tag.id" /></el-select>
       <el-select v-model="library.filters.actor" filterable clearable placeholder="NFO 演员" @change="filterChanged"><el-option v-for="actor in actors" :key="actor.name" :label="`${actor.name} (${actor.filmCount})`" :value="actor.name" /></el-select>
       <el-select :model-value="library.filters.favoriteOnly ? 'favorite' : 'all'" placeholder="收藏" @change="favoriteFilterChanged"><el-option label="全部影片" value="all" /><el-option label="仅收藏" value="favorite" /></el-select>
-      <el-select v-model="library.filters.sort" placeholder="排序" @change="filterChanged"><el-option label="最近更新" value="recent" /><el-option label="标题" value="title" /><el-option label="年份" value="year" /><el-option label="评分" value="rating" /><el-option label="文件名" value="file" /></el-select>
+      <el-select v-model="library.filters.sort" placeholder="排序" @change="filterChanged"><el-option label="最近新增" value="added" /><el-option label="最近观看" value="played" /><el-option label="最近更新" value="recent" /><el-option label="标题" value="title" /><el-option label="年份" value="year" /><el-option label="评分" value="rating" /><el-option label="文件名" value="file" /></el-select>
       <el-select v-if="allData" v-model="library.filters.recordIssue" class="mismatch-filter" placeholder="记录类型" @change="filterChanged"><el-option label="全部记录" value="all" /><el-option label="自动标题与单文件名不一致" value="title-mismatch" /><el-option label="非 CD 多文件错误合并" value="invalid-multipart" /></el-select>
       <el-select v-if="allData" v-model="library.filters.availability" placeholder="数据状态" @change="filterChanged"><el-option label="全部状态" value="all" /><el-option label="正常" value="available" /><el-option label="部分缺失" value="partial_missing" /><el-option label="完全缺失" value="missing" /><el-option label="来源离线" value="source_offline" /><el-option label="来源已删除" value="source_removed" /><el-option label="已归档" value="archived" /></el-select>
       <el-select v-if="!allData" v-model="library.settings.cardSize" placeholder="卡片大小" @change="cardSizeChanged"><el-option label="小卡片" :value="160" /><el-option label="标准" :value="200" /><el-option label="大卡片" :value="240" /><el-option label="超大" :value="280" /></el-select>

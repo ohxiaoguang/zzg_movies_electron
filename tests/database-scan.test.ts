@@ -59,7 +59,12 @@ describe('SQLite migrations and scanning', () => {
   it('creates migrated tables, scans NFO/assets, and supports paging', async () => {
     const root = fixtureRoot();
     const context = createContext(root);
-    expect(context.database.db.pragma('user_version', { simple: true })).toBe(8);
+    expect(context.database.db.pragma('user_version', { simple: true })).toBe(11);
+    expect(context.database.hasTable('film_playback_state')).toBe(true);
+    expect(context.database.hasTable('lan_device')).toBe(true);
+    expect(context.database.db.pragma('table_info(lan_device)')).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'role', dflt_value: "'viewer'" })]),
+    );
     expect(context.database.db.prepare('SELECT name FROM sqlite_master WHERE type = \'table\' AND name = \'film_file\'').get()).toBeTruthy();
     const start = context.scan.start({});
     expect(start.jobId).toMatch(/[0-9a-f-]{36}/);
@@ -151,7 +156,7 @@ describe('SQLite migrations and scanning', () => {
     expect(context.films.detail(film.id)?.title).toBe('My Local Title');
   });
 
-  it('scans MPG by default and keeps newly added films first in recent order', async () => {
+  it('keeps newly added, recently updated, and recently played orders distinct', async () => {
     const root = fixtureRoot();
     const context = createContext(root);
     context.scan.start({});
@@ -164,9 +169,50 @@ describe('SQLite migrations and scanning', () => {
     context.scan.start({});
     expect((await waitForScan(context.scan)).status).toBe('completed');
 
-    const recent = context.films.page({ page: 1, pageSize: 60, sort: 'recent' });
-    expect(recent.items.map((film) => film.filename)).toEqual(['Newest Movie.mpg', 'Movie A.mkv']);
-    expect(recent.items.find((film) => film.id === original.id)?.updatedAt).toBe(originalUpdatedAt);
+    const added = context.films.page({ page: 1, pageSize: 60, sort: 'added' });
+    expect(added.items.map((film) => film.filename)).toEqual(['Newest Movie.mpg', 'Movie A.mkv']);
+    expect(context.films.page({ page: 1, pageSize: 60 }).items.map((film) => film.filename))
+      .toEqual(['Newest Movie.mpg', 'Movie A.mkv']);
+    expect(added.items.find((film) => film.id === original.id)?.updatedAt).toBe(originalUpdatedAt);
+
+    context.films.update({ id: original.id, notes: 'updated after the new import' });
+    expect(context.films.page({ page: 1, pageSize: 60, sort: 'recent' }).items[0]?.id).toBe(original.id);
+    expect(context.films.page({ page: 1, pageSize: 60, sort: 'added' }).items[0]?.filename).toBe('Newest Movie.mpg');
+
+    context.films.markPlayed(original.id, '2030-01-01T00:00:00.000Z');
+    expect(context.films.page({ page: 1, pageSize: 60, sort: 'played' }).items[0]?.id).toBe(original.id);
+  });
+
+  it('persists exact playback progress and isolates it between film and part playback', async () => {
+    const root = fixtureRoot();
+    const context = createContext(root);
+    context.scan.start({});
+    await waitForScan(context.scan);
+    const film = context.films.page({ page: 1, pageSize: 20 }).items[0]!;
+    const partId = context.films.detail(film.id)?.parts[0]?.id;
+    expect(partId).toBeTruthy();
+
+    context.films.updatePlaybackProgress(film.id, partId!, 42.5, 100, '2030-01-02T03:04:05.000Z');
+    expect(context.films.playbackState(film.id, partId!)).toMatchObject({
+      lastPartId: partId,
+      positionSeconds: 42.5,
+      durationSeconds: 100,
+      lastPlayedAt: '2030-01-02T03:04:05.000Z',
+    });
+    expect(context.films.playbackState(film.id, null)).toMatchObject({
+      positionSeconds: 0,
+      durationSeconds: null,
+    });
+
+    const databasePath = context.database.databasePath;
+    context.database.close();
+    databases.splice(databases.indexOf(context.database), 1);
+    const reopened = new DatabaseManager(databasePath);
+    databases.push(reopened);
+    expect(new FilmRepository(reopened.db).playbackState(film.id, partId!)).toMatchObject({
+      positionSeconds: 42.5,
+      durationSeconds: 100,
+    });
   });
 
   it('adds MPG and MPEG to an unchanged legacy default extension setting', () => {

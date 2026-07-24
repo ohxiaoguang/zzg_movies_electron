@@ -37,7 +37,7 @@ function filmByTitle(context: Awaited<ReturnType<typeof scannedContext>>, title:
 describe('custom categories', () => {
   it('normalizes names, rejects empty/case duplicates, and persists ordering', async () => {
     const context = await scannedContext();
-    expect(context.database.schemaVersion).toBe(8);
+    expect(context.database.schemaVersion).toBe(11);
     expect(context.database.hasTable('genre')).toBe(true);
     expect(context.database.hasTable('film_genre')).toBe(true);
     expect((context.database.db.prepare("SELECT 1 AS present FROM pragma_table_info('film') WHERE name = 'status'").get() as { present: number }).present).toBe(1);
@@ -53,7 +53,7 @@ describe('custom categories', () => {
     databases.splice(databases.indexOf(context.database), 1);
     const reopened = new DatabaseManager(databasePath);
     databases.push(reopened);
-    expect(reopened.schemaVersion).toBe(8);
+    expect(reopened.schemaVersion).toBe(11);
     expect(new FilmRepository(reopened.db).listCategories().map((item) => item.name)).toEqual(['悬疑', 'Classic Films']);
   });
 
@@ -132,7 +132,7 @@ describe('custom categories', () => {
       { name: 'Actor Shared', filmCount: 2 },
       { name: 'Actor Two', filmCount: 1 },
     ]);
-    expect(context.films.page({ page: 1, pageSize: 20, actor: 'actor shared' }).items.map((item) => item.title)).toEqual(['Alpha', 'Beta']);
+    expect(context.films.page({ page: 1, pageSize: 20, actor: 'actor shared', sort: 'title' }).items.map((item) => item.title)).toEqual(['Alpha', 'Beta']);
     expect(context.films.page({ page: 1, pageSize: 20, actor: 'Actor One' }).items.map((item) => item.title)).toEqual(['Alpha']);
 
     expect(context.films.csvRows({ page: 1, pageSize: 1, actor: 'Actor Shared' })).toEqual([

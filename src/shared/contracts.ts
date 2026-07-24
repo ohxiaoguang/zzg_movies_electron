@@ -23,6 +23,8 @@ export interface MediaSourceDto {
   deletedAt: string | null;
 }
 
+export type PublicMediaSourceDto = Omit<MediaSourceDto, 'rootPath'>;
+
 export interface CreateSourceInput {
   name: string;
   rootPath: string;
@@ -139,6 +141,7 @@ export interface FilmDetailDto extends FilmSummaryDto {
   directors: string[];
   actors: string[];
   nfoTags: TagDto[];
+  genres: GenreDto[];
   notes: string;
   width: number | null;
   height: number | null;
@@ -168,13 +171,15 @@ export interface FilmPageQuery {
   categoryMatch?: 'any' | 'all';
   nfoTagIds?: string[];
   nfoTagMatch?: 'any' | 'all';
+  genreIds?: string[];
+  genreMatch?: 'any' | 'all';
   minRating?: number;
   favoriteOnly?: boolean;
   missingOnly?: boolean;
   recordIssue?: 'all' | 'title-mismatch' | 'invalid-multipart';
   allData?: boolean;
   availability?: FilmAvailability | 'all';
-  sort?: 'recent' | 'title' | 'year' | 'rating' | 'file';
+  sort?: 'added' | 'played' | 'recent' | 'title' | 'year' | 'rating' | 'file';
 }
 
 export interface FilmPageDto {
@@ -231,6 +236,21 @@ export interface TagDto {
   id: string;
   name: string;
   filmCount: number;
+}
+
+export interface GenreDto {
+  id: string;
+  name: string;
+  filmCount: number;
+}
+
+export interface FilmFilterDataDto {
+  navigation: FilmNavigationCountsDto;
+  categories: CustomCategoryDto[];
+  tags: TagDto[];
+  genres: GenreDto[];
+  actors: ActorDto[];
+  sources: PublicMediaSourceDto[];
 }
 
 export interface CustomCategoryCreateInput { name: string; }
@@ -293,6 +313,168 @@ export interface AppHealthDto {
   ipcReady: boolean;
 }
 
+export interface WebHealthDto {
+  ok: true;
+  service: 'local-film-library';
+  version: string;
+  databaseReady: boolean;
+  readOnly: boolean;
+}
+
+export interface LanServerInfoDto {
+  service: 'local-film-library';
+  version: string;
+  apiVersion: 'v1';
+  bindAddress: string;
+  port: number;
+  baseUrl: string;
+  baseUrls: string[];
+  readOnly: boolean;
+  managementAvailable: boolean;
+  networkScope: 'localhost' | 'lan';
+  authenticationRequired: boolean;
+}
+
+export type LanServerState = 'stopped' | 'starting' | 'running' | 'error';
+export type LanServerBindMode = 'localhost' | 'lan';
+
+export interface LanServerStatusDto {
+  state: LanServerState;
+  enabled: boolean;
+  bindMode: LanServerBindMode;
+  bindAddress: string;
+  port: number;
+  baseUrl: string | null;
+  baseUrls: string[];
+  authenticationRequired: boolean;
+  pairedDeviceCount: number;
+  lastErrorCode: string | null;
+}
+
+export interface LanPairingCodeDto {
+  code: string;
+  expiresAt: string;
+  role: LanDeviceRole;
+}
+
+export type LanDeviceRole = 'viewer' | 'admin';
+
+export interface LanPairedDeviceDto {
+  id: string;
+  name: string;
+  role: LanDeviceRole;
+  createdAt: string;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+}
+
+export interface LanPairInput {
+  code: string;
+  deviceName: string;
+}
+
+export interface LanPairResultDto {
+  token: string;
+  device: LanPairedDeviceDto;
+}
+
+export interface LanAuthStatusDto {
+  authenticated: boolean;
+  device: LanPairedDeviceDto | null;
+  canManage: boolean;
+}
+
+export interface FilmTaxonomyUpdateInput {
+  id: string;
+  tagNames?: string[];
+  genreNames?: string[];
+  categoryIds?: string[];
+  newCategoryNames?: string[];
+}
+
+export interface FilmBatchUpdateInput {
+  ids: string[];
+  favorite?: boolean;
+  tagNames?: string[];
+  genreNames?: string[];
+  categoryIds?: string[];
+  newCategoryNames?: string[];
+}
+
+export interface FilmRecordDeleteConfirmedInput {
+  ids: string[];
+  confirmation: 'DELETE_RECORDS';
+}
+
+export interface FilmNfoImportInput {
+  id: string;
+  mode: FilmNfoImportMode;
+  confirmation?: 'IMPORT_NFO_REPLACE';
+}
+
+export interface WebCsvExportDto {
+  filename: string;
+  content: string;
+  rowCount: number;
+}
+
+export type WebPlaybackMode = 'direct' | 'remux' | 'transcode';
+export type WebPlaybackState = 'preparing' | 'ready' | 'complete' | 'error' | 'cancelled';
+
+export interface WebPlaybackSessionCreateInput {
+  filmId?: string;
+  partId?: string;
+}
+
+export interface WebPlaybackProgressInput {
+  positionSeconds: number;
+  durationSeconds?: number;
+}
+
+export interface WebPlaybackSessionDto {
+  id: string;
+  mode: WebPlaybackMode;
+  transport: 'direct' | 'hls';
+  state: WebPlaybackState;
+  url: string;
+  reason: string;
+  videoCodec: string | null;
+  audioCodec: string | null;
+  videoMode: 'copy' | 'transcode';
+  audioMode: 'none' | 'copy' | 'transcode';
+  videoEncoder: 'copy' | 'cached' | 'libx264' | 'h264_nvenc';
+  videoDecoder: 'copy' | 'cached' | 'software' | 'cuda';
+  container: string | null;
+  durationSeconds: number | null;
+  processPercent: number | null;
+  playbackPositionSeconds: number;
+  subtitleTracks: Array<{
+    index: number;
+    codec: string | null;
+    language: string | null;
+    title: string | null;
+    source: 'embedded' | 'sidecar';
+    url: string;
+    supported: boolean;
+  }>;
+  errorCode: string | null;
+  expiresAt: string;
+}
+
+export interface WebPlaybackCapabilityDto {
+  ffmpegAvailable: boolean;
+  ffprobeAvailable: boolean;
+  maxConcurrentJobs: number;
+  activeJobs: number;
+}
+
+export interface PlaybackCacheInfoDto {
+  directory: string;
+  sizeBytes: number;
+  limitBytes: number;
+  activeJobs: number;
+}
+
 export interface SettingsDto {
   cardSize: number;
   hoverDelayMs: number;
@@ -302,7 +484,17 @@ export interface SettingsDto {
   imageExtensions: string[];
   ignoredDirectories: string[];
   autoScanOnStartup: boolean;
+  autoLaunchOnStartup: boolean;
+  launchToTray: boolean;
+  minimizeToTray: boolean;
   ffprobePath: string;
+  playbackCacheDirectory: string;
+  playbackCacheLimitGb: number;
+  lanServerEnabled: boolean;
+  lanServerPort: number;
+  lanServerBindMode: LanServerBindMode;
+  lanServerHost: string;
+  lanRequireAuthentication: boolean;
 }
 
 export type SettingsUpdateInput = Partial<SettingsDto>;

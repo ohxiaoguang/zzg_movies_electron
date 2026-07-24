@@ -12,6 +12,7 @@ import type {
   FilmPageQuery,
   FilmSummaryDto,
   FilmUpdateInput,
+  GenreDto,
   TagDto,
 } from '../../../shared/contracts';
 import type { FilmCsvRow } from '../../export/FilmCsvExporter';
@@ -137,6 +138,14 @@ export interface MediaLocation {
   relativePath: string;
 }
 
+export interface FilmPlaybackState {
+  filmId: string;
+  lastPartId: string | null;
+  positionSeconds: number;
+  durationSeconds: number | null;
+  lastPlayedAt: string;
+}
+
 export type NfoForceImportMode = 'merge' | 'replace';
 
 export class FilmRepository {
@@ -247,7 +256,8 @@ export class FilmRepository {
                 COALESCE(SUM(CASE WHEN ff.missing = 1 THEN 1 ELSE 0 END), 0) AS missing_file_count
          FROM film f JOIN media_source s ON s.id = f.source_id
          LEFT JOIN film_file ff ON ff.film_id = f.id
-         WHERE f.id = ?`,
+         WHERE f.id = ?
+         GROUP BY f.id`,
       )
       .get(id) as (FilmRow & { source_name: string }) | undefined;
     if (!row) return null;
@@ -261,6 +271,15 @@ export class FilmRepository {
          LEFT JOIN film_tag all_ft ON all_ft.tag_id = t.id
          WHERE ft.film_id = ?
          GROUP BY t.id ORDER BY t.name COLLATE NOCASE`,
+      )
+      .all(id) as Array<{ id: string; name: string; film_count: number }>;
+    const genres = this.db
+      .prepare(
+        `SELECT g.id, g.name, COUNT(all_fg.film_id) AS film_count
+         FROM genre g JOIN film_genre fg ON fg.genre_id = g.id
+         LEFT JOIN film_genre all_fg ON all_fg.genre_id = g.id
+         WHERE fg.film_id = ?
+         GROUP BY g.id ORDER BY g.name COLLATE NOCASE`,
       )
       .all(id) as Array<{ id: string; name: string; film_count: number }>;
     const categories = this.categoriesForFilms([id]).get(id) ?? [];
@@ -284,6 +303,7 @@ export class FilmRepository {
       directors: jsonArray(row.director_json),
       actors: jsonArray(row.actors_json),
       nfoTags: tags.map((tag) => ({ id: tag.id, name: tag.name, filmCount: Number(tag.film_count) })),
+      genres: genres.map((genre) => ({ id: genre.id, name: genre.name, filmCount: Number(genre.film_count) })),
       notes: row.notes,
       width: row.width,
       height: row.height,
@@ -345,6 +365,20 @@ export class FilmRepository {
         `SELECT t.id, t.name, COUNT(ft.film_id) AS film_count
          FROM tag t LEFT JOIN film_tag ft ON ft.tag_id = t.id
          GROUP BY t.id ORDER BY t.name COLLATE NOCASE`,
+      )
+      .all()
+      .map((row) => {
+        const typed = row as { id: string; name: string; film_count: number };
+        return { id: typed.id, name: typed.name, filmCount: Number(typed.film_count) };
+      });
+  }
+
+  public listGenres(): GenreDto[] {
+    return this.db
+      .prepare(
+        `SELECT g.id, g.name, COUNT(fg.film_id) AS film_count
+         FROM genre g LEFT JOIN film_genre fg ON fg.genre_id = g.id
+         GROUP BY g.id ORDER BY g.name COLLATE NOCASE`,
       )
       .all()
       .map((row) => {
@@ -437,6 +471,33 @@ export class FilmRepository {
     })();
   }
 
+  public updateTaxonomy(
+    id: string,
+    input: {
+      tagNames?: string[];
+      genreNames?: string[];
+      categoryIds?: string[];
+      newCategoryNames?: string[];
+    },
+  ): FilmDetailDto {
+    return this.db.transaction(() => {
+      if (!this.db.prepare('SELECT 1 FROM film WHERE id = ?').get(id)) throw new Error('FILM_NOT_FOUND');
+      if (input.tagNames !== undefined) {
+        this.replaceNamedRelations(id, 'tag', 'film_tag', 'tag_id', input.tagNames);
+        this.db.prepare('UPDATE film SET tags_user_edited = 1 WHERE id = ?').run(id);
+      }
+      if (input.genreNames !== undefined) {
+        this.replaceNamedRelations(id, 'genre', 'film_genre', 'genre_id', input.genreNames);
+        this.db.prepare('UPDATE film SET genres_user_edited = 1 WHERE id = ?').run(id);
+      }
+      if (input.categoryIds !== undefined || input.newCategoryNames !== undefined) {
+        this.updateCategories(id, input.categoryIds ?? [], input.newCategoryNames ?? []);
+      }
+      this.db.prepare('UPDATE film SET updated_at = ? WHERE id = ?').run(new Date().toISOString(), id);
+      return this.detail(id)!;
+    })();
+  }
+
   public deleteRecords(ids: string[]): void {
     const uniqueIds = [...new Set(ids)];
     if (!uniqueIds.length) return;
@@ -513,6 +574,71 @@ export class FilmRepository {
     return row ? { rootPath: row.root_path, relativePath: row.relative_path } : null;
   }
 
+  public playbackState(filmId: string, partId: string | null = null): FilmPlaybackState | null {
+    const row = this.db
+      .prepare(
+        `SELECT film_id, last_part_id, position_seconds, duration_seconds, last_played_at
+         FROM film_playback_state
+         WHERE film_id = ?`,
+      )
+      .get(filmId) as {
+        film_id: string;
+        last_part_id: string | null;
+        position_seconds: number;
+        duration_seconds: number | null;
+        last_played_at: string;
+      } | undefined;
+    if (!row) return null;
+    const sameSource = row.last_part_id === partId;
+    return {
+      filmId: row.film_id,
+      lastPartId: row.last_part_id,
+      positionSeconds: sameSource ? Number(row.position_seconds) : 0,
+      durationSeconds: sameSource && row.duration_seconds !== null ? Number(row.duration_seconds) : null,
+      lastPlayedAt: row.last_played_at,
+    };
+  }
+
+  public markPlayed(filmId: string, at = new Date().toISOString()): void {
+    this.db
+      .prepare(
+        `INSERT INTO film_playback_state (
+           film_id, last_part_id, position_seconds, duration_seconds, last_played_at, updated_at
+         ) VALUES (?, NULL, 0, NULL, ?, ?)
+         ON CONFLICT(film_id) DO UPDATE SET
+           last_played_at = excluded.last_played_at,
+           updated_at = excluded.updated_at`,
+      )
+      .run(filmId, at, at);
+  }
+
+  public updatePlaybackProgress(
+    filmId: string,
+    partId: string | null,
+    positionSeconds: number,
+    durationSeconds?: number,
+    at = new Date().toISOString(),
+  ): FilmPlaybackState {
+    this.db
+      .prepare(
+        `INSERT INTO film_playback_state (
+           film_id, last_part_id, position_seconds, duration_seconds, last_played_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(film_id) DO UPDATE SET
+           last_part_id = excluded.last_part_id,
+           position_seconds = excluded.position_seconds,
+           duration_seconds = CASE
+             WHEN film_playback_state.last_part_id IS excluded.last_part_id
+               THEN COALESCE(excluded.duration_seconds, film_playback_state.duration_seconds)
+             ELSE excluded.duration_seconds
+           END,
+           last_played_at = excluded.last_played_at,
+           updated_at = excluded.updated_at`,
+      )
+      .run(filmId, partId, positionSeconds, durationSeconds ?? null, at, at);
+    return this.playbackState(filmId, partId)!;
+  }
+
   public upsertCandidate(candidate: FilmCandidate, now: string): { id: string; created: boolean; moved: boolean; merged: number } {
     const existingIds = this.findCandidateFilmIds(candidate);
     const newFilmId = randomUUID();
@@ -551,6 +677,18 @@ export class FilmRepository {
       )
       .get(partId) as { relative_path: string; root_path: string } | undefined;
     return row ? { rootPath: row.root_path, relativePath: row.relative_path } : null;
+  }
+
+  public filmIdForPart(partId: string): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT ff.film_id
+         FROM film_file ff
+         JOIN film f ON f.id = ff.film_id
+         WHERE ff.id = ? AND ff.missing = 0 AND f.archived = 0`,
+      )
+      .get(partId) as { film_id: string } | undefined;
+    return row?.film_id ?? null;
   }
 
   public insertCandidate(candidate: FilmCandidate, now: string, id = randomUUID()): string {
@@ -963,6 +1101,32 @@ export class FilmRepository {
     }
   }
 
+  private replaceNamedRelations(
+    filmId: string,
+    entityTable: 'tag' | 'genre',
+    relationTable: 'film_tag' | 'film_genre',
+    relationColumn: 'tag_id' | 'genre_id',
+    names: string[],
+  ): void {
+    this.db.prepare(`DELETE FROM ${relationTable} WHERE film_id = ?`).run(filmId);
+    const find = this.db.prepare(`SELECT id FROM ${entityTable} WHERE name = ? COLLATE NOCASE`);
+    const insert = this.db.prepare(`INSERT OR IGNORE INTO ${entityTable} (id, name) VALUES (?, ?)`);
+    const link = this.db.prepare(`INSERT OR IGNORE INTO ${relationTable} (film_id, ${relationColumn}) VALUES (?, ?)`);
+    for (const name of uniqueNames(names)) {
+      const existing = find.get(name) as { id: string } | undefined;
+      const entityId = existing?.id ?? randomUUID();
+      if (!existing) insert.run(entityId, name);
+      link.run(filmId, entityId);
+    }
+    this.db.prepare(
+      `DELETE FROM ${entityTable}
+       WHERE NOT EXISTS (
+         SELECT 1 FROM ${relationTable}
+         WHERE ${relationTable}.${relationColumn} = ${entityTable}.id
+       )`,
+    ).run();
+  }
+
   private assetsForFilms(filmIds: string[]): Map<string, FilmAssetDto[]> {
     const result = new Map<string, FilmAssetDto[]>();
     if (!filmIds.length) return result;
@@ -1119,6 +1283,16 @@ export class FilmRepository {
         params.push(...ids);
       }
     }
+    if (query.genreIds?.length) {
+      const ids = [...new Set(query.genreIds)];
+      if (query.genreMatch === 'all') {
+        clauses.push(`(SELECT COUNT(DISTINCT fg_all.genre_id) FROM film_genre fg_all WHERE fg_all.film_id = f.id AND fg_all.genre_id IN (${ids.map(() => '?').join(',')})) = ?`);
+        params.push(...ids, ids.length);
+      } else {
+        clauses.push(`EXISTS (SELECT 1 FROM film_genre fg_any WHERE fg_any.film_id = f.id AND fg_any.genre_id IN (${ids.map(() => '?').join(',')}))`);
+        params.push(...ids);
+      }
+    }
     if (query.minRating !== undefined && Number.isFinite(query.minRating)) {
       clauses.push('f.rating >= ?');
       params.push(Math.max(0, Math.min(10, query.minRating)));
@@ -1164,6 +1338,13 @@ export class FilmRepository {
 
   private orderBy(sort: FilmPageQuery['sort']): string {
     switch (sort) {
+      case 'played':
+        return `(SELECT playback.last_played_at
+                 FROM film_playback_state playback
+                 WHERE playback.film_id = f.id) DESC NULLS LAST,
+                f.imported_at DESC, f.rowid DESC`;
+      case 'recent':
+        return 'f.updated_at DESC, f.imported_at DESC, f.rowid DESC';
       case 'title':
         return 'COALESCE(f.sort_title, f.title) COLLATE NOCASE ASC, f.id ASC';
       case 'year':
@@ -1172,8 +1353,9 @@ export class FilmRepository {
         return 'f.rating DESC, COALESCE(f.sort_title, f.title) COLLATE NOCASE ASC';
       case 'file':
         return 'f.filename COLLATE NOCASE ASC, f.id ASC';
+      case 'added':
       default:
-        return 'f.updated_at DESC, f.imported_at DESC, f.id ASC';
+        return 'f.imported_at DESC, f.rowid DESC';
     }
   }
 }

@@ -12,6 +12,7 @@ export class FileOpenService {
     const filePath = await resolveExistingSafeMediaPath(location.rootPath, location.relativePath);
     const result = await shell.openPath(filePath);
     if (result) throw new Error('FILE_OPEN_FAILED');
+    this.films.markPlayed(filmId);
     return filePath;
   }
 
@@ -26,9 +27,12 @@ export class FileOpenService {
   public async openPart(partId: string): Promise<string> {
     const location = this.films.partLocation(partId);
     if (!location) throw new Error('FILM_MISSING');
+    const filmId = this.films.filmIdForPart(partId);
+    if (!filmId) throw new Error('FILM_MISSING');
     const filePath = await resolveExistingSafeMediaPath(location.rootPath, location.relativePath);
     const result = await shell.openPath(filePath);
     if (result) throw new Error('FILE_OPEN_FAILED');
+    this.films.markPlayed(filmId);
     return filePath;
   }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildFilmCsv } from '../src/main/export/FilmCsvExporter';
+import { buildFilmCsv, buildFilmCsvFilename } from '../src/main/export/FilmCsvExporter';
 
 describe('film CSV exporter', () => {
   it('writes the requested Chinese columns with a UTF-8 BOM', () => {
@@ -26,5 +26,12 @@ describe('film CSV exporter', () => {
     expect(csv).toContain('"Movie, Part 1.mkv"');
     expect(csv).toContain('"A ""quoted"" title"');
     expect(csv).toContain(',"Line one\nLine two"\r\n');
+  });
+
+  it('uses the Chinese page name and a local timestamp in exported filenames', () => {
+    const exportedAt = new Date(2026, 6, 24, 12, 23, 45);
+
+    expect(buildFilmCsvFilename('favorite', exportedAt)).toBe('收藏_20260724_122345.csv');
+    expect(buildFilmCsvFilename('organized', exportedAt)).toBe('已整理_20260724_122345.csv');
   });
 });

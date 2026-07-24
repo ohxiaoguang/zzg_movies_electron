@@ -12,6 +12,10 @@ const actorsPath = path.resolve(process.cwd(), 'src/renderer/views/ActorsView.vu
 const libraryPath = path.resolve(process.cwd(), 'src/renderer/views/LibraryView.vue');
 const layoutPath = path.resolve(process.cwd(), 'src/renderer/layouts/AppLayout.vue');
 const sourcesPath = path.resolve(process.cwd(), 'src/renderer/views/SourcesView.vue');
+const mainPath = path.resolve(process.cwd(), 'src/main/index.ts');
+const mainWindowPath = path.resolve(process.cwd(), 'src/main/window/createMainWindow.ts');
+const settingsPath = path.resolve(process.cwd(), 'src/renderer/views/SettingsView.vue');
+const desktopIntegrationPath = path.resolve(process.cwd(), 'src/main/system/DesktopIntegrationService.ts');
 
 describe('renderer regressions', () => {
   const drawer = fs.readFileSync(drawerPath, 'utf8');
@@ -136,11 +140,14 @@ describe('renderer regressions', () => {
     expect(sources).toContain('updateOriginalPreview');
   });
 
-  it('exports the current organized-page filters through the CSV API', () => {
+  it('exports the current organized or favorite page through the desktop CSV API', () => {
     const library = fs.readFileSync(libraryPath, 'utf8');
     const preload = fs.readFileSync(preloadPath, 'utf8');
     expect(library).toContain('导出 CSV');
-    expect(library).toContain('organizationState: \'organized\'');
+    expect(library).toContain("const favoritePage = computed(() => route.query.favorite === '1')");
+    expect(library).toContain('const exportPage = computed(() => organizedPage.value || favoritePage.value)');
+    expect(library).toContain("organizationState: favoritePage.value ? 'all' as const : 'organized' as const");
+    expect(library).toContain('favoriteOnly: favoritePage.value');
     expect(library).toContain('window.filmLibrary.films.exportCsv(query)');
     expect(preload).toContain('invoke(IPC_CHANNELS.filmsExportCsv, query)');
   });
@@ -151,5 +158,44 @@ describe('renderer regressions', () => {
     expect(library).toContain('自动标题与单文件名不一致');
     expect(library).toContain('非 CD 多文件错误合并');
     expect(library).toContain('value="invalid-multipart"');
+  });
+
+  it('isolates development Chromium cache and uses the current console-message event shape', () => {
+    const main = fs.readFileSync(mainPath, 'utf8');
+    const mainWindow = fs.readFileSync(mainWindowPath, 'utf8');
+    expect(main).toContain("if (!app.isPackaged)");
+    expect(main).toContain("app.setPath('sessionData', developmentSessionDataPath)");
+    expect(mainWindow).toContain("window.webContents.on('console-message', (details) =>");
+    expect(mainWindow).toContain('details.lineNumber');
+    expect(mainWindow).not.toContain("console-message', (_event, level, message, line, sourceId)");
+  });
+
+  it('exposes playback cache usage, location, limit and safe cleanup in settings', () => {
+    const settings = fs.readFileSync(settingsPath, 'utf8');
+    const preload = fs.readFileSync(preloadPath, 'utf8');
+    expect(settings).toContain('网页播放缓存');
+    expect(settings).toContain('playbackCacheLimitGb');
+    expect(settings).toContain('choosePlaybackCacheDirectory');
+    expect(settings).toContain('clearPlaybackCache');
+    expect(settings).toContain('不会删除影片原文件');
+    expect(preload).toContain('IPC_CHANNELS.playbackCacheInfo');
+    expect(preload).toContain('IPC_CHANNELS.playbackCacheClear');
+  });
+
+  it('supports Windows login startup, tray-only startup and minimize-to-tray', () => {
+    const main = fs.readFileSync(mainPath, 'utf8');
+    const mainWindow = fs.readFileSync(mainWindowPath, 'utf8');
+    const settings = fs.readFileSync(settingsPath, 'utf8');
+    const desktopIntegration = fs.readFileSync(desktopIntegrationPath, 'utf8');
+    expect(settings).toContain('开机自启动');
+    expect(settings).toContain('开机时仅启动托盘');
+    expect(settings).toContain('最小化到托盘');
+    expect(desktopIntegration).toContain('app.setLoginItemSettings');
+    expect(desktopIntegration).toContain("argumentsList.includes('--hidden')");
+    expect(desktopIntegration).toContain("window.on('minimize'");
+    expect(desktopIntegration).toContain('new Tray(icon)');
+    expect(main).toContain('app.requestSingleInstanceLock()');
+    expect(main).toContain('desktopIntegration.shouldStartHidden()');
+    expect(mainWindow).toContain('options.showOnReady !== false');
   });
 });

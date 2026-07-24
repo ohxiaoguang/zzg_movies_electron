@@ -82,10 +82,22 @@ export const filmLibraryApi: FilmLibraryApi = {
     openDataFolder: () => invoke(IPC_CHANNELS.appOpenDataFolder),
     openLogsFolder: () => invoke(IPC_CHANNELS.appOpenLogsFolder),
   },
+  lanServer: {
+    status: () => invoke(IPC_CHANNELS.lanServerStatus),
+    start: () => invoke(IPC_CHANNELS.lanServerStart),
+    stop: () => invoke(IPC_CHANNELS.lanServerStop),
+    createPairingCode: (role: 'viewer' | 'admin' = 'viewer') => invoke(IPC_CHANNELS.lanServerCreatePairingCode, role),
+    listDevices: () => invoke(IPC_CHANNELS.lanDevicesList),
+    revokeDevice: (id: string) => invoke(IPC_CHANNELS.lanDevicesRevoke, id),
+  },
   settings: {
     get: () => invoke(IPC_CHANNELS.settingsGet),
     update: (input: SettingsUpdateInput) => invoke(IPC_CHANNELS.settingsUpdate, input),
     testFfprobe: (path: string) => invoke(IPC_CHANNELS.settingsTestFfprobe, path),
+    cacheInfo: () => invoke(IPC_CHANNELS.playbackCacheInfo),
+    chooseCacheDirectory: () => invoke(IPC_CHANNELS.playbackCacheChooseDirectory),
+    openCacheDirectory: () => invoke(IPC_CHANNELS.playbackCacheOpenDirectory),
+    clearCache: () => invoke(IPC_CHANNELS.playbackCacheClear),
   },
 };
 

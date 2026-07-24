@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const executable = path.resolve(process.argv[2] ?? path.join(projectRoot, 'out/local-film-library-win32-x64/local-film-library.exe'));
 const timeoutMs = Number(process.env.SMOKE_TIMEOUT_MS ?? 60_000);
+const browserHoldMs = Math.max(0, Number(process.env.SMOKE_BROWSER_HOLD_MS ?? 0));
 const expectedAppVersion = process.env.EXPECTED_APP_VERSION?.trim();
 let cdpMessageId = 0;
 
@@ -19,6 +20,7 @@ let logFile;
 try {
   if (!fs.existsSync(executable)) throw new Error(`Packaged executable not found: ${executable}`);
   const port = await findFreePort();
+  const lanPort = await findFreePort();
   smokeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'local-film-library-smoke-'));
   const userData = path.join(smokeRoot, 'user-data');
   const mediaRoot = path.join(smokeRoot, 'media-root');
@@ -40,6 +42,7 @@ try {
     for (const filename of ['Smoke Movie-cd1.mp4', 'Smoke Movie-cd2.mp4', 'Smoke Movie-cd3.mp4']) fs.writeFileSync(path.join(mediaRoot, filename), filename);
   }
   fs.writeFileSync(path.join(mediaRoot, 'Smoke Movie.nfo'), '<movie><title>Smoke Movie</title><tag>Smoke Tag</tag><actor>Smoke Actor</actor><plot>Smoke summary</plot></movie>');
+  fs.writeFileSync(path.join(mediaRoot, 'Smoke Movie.zh-Hans.srt'), '1\n00:00:00,000 --> 00:00:00,900\n烟雾测试字幕\n', 'utf8');
   fs.writeFileSync(path.join(mediaRoot, 'Smoke Movie-poster.jpg'), 'poster');
   fs.writeFileSync(path.join(mediaRoot, 'Smoke Movie-fanart.jpg'), 'fanart');
   fs.writeFileSync(path.join(mediaRoot, 'extrafanart', '1.jpg'), 'extra');
@@ -47,6 +50,7 @@ try {
   child = spawn(executable, [
     `--user-data-dir=${userData}`,
     '--disable-gpu',
+    '--disable-startup-integration',
     '--remote-debugging-address=127.0.0.1',
     `--remote-debugging-port=${port}`,
   ], {
@@ -96,6 +100,13 @@ try {
       }
       const page = await window.filmLibrary.films.page({ page: 1, pageSize: 20 });
       const detail = page.ok && page.data.items[0] ? await window.filmLibrary.films.detail(page.data.items[0].id) : { ok: false };
+      const localWebSettings = await window.filmLibrary.settings.update({
+        lanServerEnabled: true,
+        lanServerPort: ${lanPort},
+        lanServerBindMode: 'localhost',
+        lanRequireAuthentication: false,
+      });
+      const localWeb = await window.filmLibrary.lanServer.status();
       const previewProbe = detail.ok ? await (async () => {
         const response = await fetch('film-media://preview/' + detail.data.id, { headers: { Range: 'bytes=0-9' } });
         const buffer = await response.arrayBuffer();
@@ -167,7 +178,7 @@ try {
       const allData = await window.filmLibrary.films.recordsPageAll({ page: 1, pageSize: 20 });
       const restored = created.ok ? await window.filmLibrary.sources.restore({ id: created.data.id }) : { ok: false };
       const after = await window.filmLibrary.sources.list();
-      return { health, info, before, created, previewEnabled, started, scanStatus, page, detail, previewProbe, directoryRescan, directoryRescanStatus, actorList, actorFiltered, parts, unorganizedBefore, classic, mystery, categorized, favorited, patched, patchedDetail, organizedAfter, ui, setting, removed, allData, restored, after };
+      return { health, info, before, created, previewEnabled, started, scanStatus, page, detail, localWebSettings, localWeb, previewProbe, directoryRescan, directoryRescanStatus, actorList, actorFiltered, parts, unorganizedBefore, classic, mystery, categorized, favorited, patched, patchedDetail, organizedAfter, ui, setting, removed, allData, restored, after };
     })()`, true);
 
     if (evaluation?.exceptionDetails) throw new Error(`Renderer evaluation failed: ${JSON.stringify(evaluation.exceptionDetails)}`);
@@ -179,6 +190,7 @@ try {
     if (!result.started?.ok || result.scanStatus?.data?.status !== 'completed') throw new Error(`Scan failed: ${JSON.stringify(result.scanStatus)}`);
     if (!result.page?.ok || result.page.data.total !== 1) throw new Error(`Multi-part page failed: ${JSON.stringify(result.page)}`);
     if (!result.detail?.ok || result.detail.data.parts.length !== 3 || result.detail.data.images.length !== 3 || !result.detail.data.allowOriginalPreview) throw new Error(`Multi-part detail failed: ${JSON.stringify(result.detail)}`);
+    if (!result.localWebSettings?.ok || result.localWeb?.data?.state !== 'running' || !result.localWeb.data.baseUrl) throw new Error(`Local web startup failed: ${JSON.stringify({ settings: result.localWebSettings, status: result.localWeb })}`);
     if (expectedCompatibilityPreview) {
       if (result.previewProbe?.status !== 206 || result.previewProbe.contentType !== 'video/mp4' || !result.previewProbe.hasFtyp || result.previewProbe.byteLength !== 10 || !result.previewProbe.contentRange?.startsWith('bytes 0-9/') || result.previewProbe.secondStatus !== 206 || result.previewProbe.secondByteLength !== 100 || !result.previewProbe.secondContentRange?.startsWith('bytes 100-199/')) throw new Error(`Compatibility preview failed: ${JSON.stringify(result.previewProbe)}`);
     } else if (result.previewProbe?.status !== 206 || result.previewProbe.directBody !== 'Smoke Movi') {
@@ -197,6 +209,10 @@ try {
 
     if (fs.readFileSync(path.join(mediaRoot, 'Smoke Movie.nfo'), 'utf8') !== '<movie><title>Smoke Movie</title><tag>Smoke Tag</tag><actor>Smoke Actor</actor><plot>Smoke summary</plot></movie>') throw new Error('Packaged smoke unexpectedly modified NFO');
     console.log(`SMOKE_OK health=ok database=ready ipc=ready sourceCount=${result.after.data.length} categories=${result.patchedDetail.data.customCategories.length}`);
+    if (browserHoldMs > 0) {
+      console.log(`SMOKE_BROWSER_URL=${result.localWeb.data.baseUrl}`);
+      await new Promise((resolve) => setTimeout(resolve, browserHoldMs));
+    }
   } finally {
     socket.close();
   }

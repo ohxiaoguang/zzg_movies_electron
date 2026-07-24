@@ -9,6 +9,9 @@ import { protectLegacyTaxonomyMigration } from './migrations/005_protect_legacy_
 import { customCategoriesMigration } from './migrations/006_custom_categories';
 import { sourceOriginalPreviewMigration } from './migrations/007_source_original_preview';
 import { titleUserEditedMigration } from './migrations/008_title_user_edited';
+import { lanDevicesMigration } from './migrations/009_lan_devices';
+import { lanDeviceRolesMigration } from './migrations/010_lan_device_roles';
+import { filmPlaybackStateMigration } from './migrations/011_film_playback_state';
 import { parseFilmPartName } from '../scanner/PartNaming';
 import type { AppLogger } from '../system/AppLogger';
 
@@ -60,7 +63,7 @@ export class DatabaseManager {
   private runMigrations(): void {
     const currentVersion = this.schemaVersion;
     this.logger?.info('Database schema inspected', { version: currentVersion });
-    const migrations = [initialMigration, filmFilesMigration, groupedFilmFilesRepairMigration, userEditedTaxonomyMigration, protectLegacyTaxonomyMigration, customCategoriesMigration, sourceOriginalPreviewMigration, titleUserEditedMigration];
+    const migrations = [initialMigration, filmFilesMigration, groupedFilmFilesRepairMigration, userEditedTaxonomyMigration, protectLegacyTaxonomyMigration, customCategoriesMigration, sourceOriginalPreviewMigration, titleUserEditedMigration, lanDevicesMigration, lanDeviceRolesMigration, filmPlaybackStateMigration];
     if (currentVersion >= migrations[migrations.length - 1].version) {
       this.logger?.info('Database schema ready', { version: currentVersion });
       return;

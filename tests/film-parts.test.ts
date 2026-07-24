@@ -159,11 +159,35 @@ describe('multi-part films and availability', () => {
     expect(fs.existsSync(path.join(root, 'Movie-cd1.mp4'))).toBe(true);
   });
 
-  it('validates and persists the card width setting', () => {
+  it('validates and persists desktop and playback-cache settings', () => {
     const root = makeRoot();
     const context = createContext(root);
     expect(() => context.settings.update({ cardSize: 139 })).toThrow('INVALID_CARD_SIZE');
     expect(context.settings.update({ cardSize: 280 }).cardSize).toBe(280);
     expect(context.settings.get().cardSize).toBe(280);
+    const cacheDirectory = path.join(root, 'Local Film Library Playback Cache');
+    expect(context.settings.update({
+      playbackCacheDirectory: cacheDirectory,
+      playbackCacheLimitGb: 35,
+      autoLaunchOnStartup: true,
+      launchToTray: true,
+      minimizeToTray: true,
+    })).toMatchObject({
+      playbackCacheDirectory: cacheDirectory,
+      playbackCacheLimitGb: 35,
+      autoLaunchOnStartup: true,
+      launchToTray: true,
+      minimizeToTray: true,
+    });
+    expect(context.settings.get()).toMatchObject({
+      autoLaunchOnStartup: true,
+      launchToTray: true,
+      minimizeToTray: true,
+    });
+    expect(() => context.settings.update({ playbackCacheLimitGb: 0 })).toThrow('INVALID_PLAYBACK_CACHE_LIMIT');
+    expect(() => context.settings.update({ playbackCacheDirectory: 'relative-cache' }))
+      .toThrow('INVALID_PLAYBACK_CACHE_DIRECTORY');
+    expect(() => context.settings.update({ playbackCacheDirectory: path.join(root, 'unrelated-folder') }))
+      .toThrow('INVALID_PLAYBACK_CACHE_DIRECTORY');
   });
 });

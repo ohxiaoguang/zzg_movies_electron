@@ -94,5 +94,11 @@ jobs:
           if ($LASTEXITCODE -eq 0) {
             gh release upload $tag @assets --clobber
           } else {
-            gh release create $tag @assets --verify-tag --generate-notes --title "Local Film Library $env:RELEASE_VERSION"
+            $notesPath = ".github/release-notes/$tag.md"
+            if (Test-Path $notesPath) {
+              $introduction = Get-Content -Raw -Path $notesPath
+              gh release create $tag @assets --verify-tag --generate-notes --notes $introduction --title "Local Film Library $env:RELEASE_VERSION"
+            } else {
+              gh release create $tag @assets --verify-tag --generate-notes --title "Local Film Library $env:RELEASE_VERSION"
+            }
           }

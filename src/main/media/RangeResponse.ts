@@ -8,7 +8,9 @@ export type RangeParseResult = { ok: true; range: ByteRange } | { ok: false; con
 export function parseRangeHeader(header: string | null, size: number): RangeParseResult {
   if (!header) return { ok: true, range: { start: 0, end: Math.max(0, size - 1) } };
   if (size <= 0 || !header.toLowerCase().startsWith('bytes=')) return { ok: false, contentRange: `bytes */${size}` };
-  const value = header.slice(header.indexOf('=') + 1).split(',')[0].trim();
+  const rawValue = header.slice(header.indexOf('=') + 1);
+  if (rawValue.includes(',')) return { ok: false, contentRange: `bytes */${size}` };
+  const value = rawValue.trim();
   const separator = value.indexOf('-');
   if (separator < 0) return { ok: false, contentRange: `bytes */${size}` };
   const startValue = value.slice(0, separator).trim();

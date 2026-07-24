@@ -18,8 +18,10 @@ export class MediaProtocol {
     private readonly logger: AppLogger,
     configuredFfprobePath: () => string = () => '',
     previewCacheDirectory = path.join(process.cwd(), '.preview-cache'),
+    previewTranscoder?: PreviewTranscoder,
   ) {
-    this.previewTranscoder = new PreviewTranscoder(logger, configuredFfprobePath, previewCacheDirectory);
+    this.previewTranscoder = previewTranscoder
+      ?? new PreviewTranscoder(logger, configuredFfprobePath, previewCacheDirectory);
   }
 
   public registerHandler(): void {
@@ -38,10 +40,10 @@ export class MediaProtocol {
       const sourceStat = await fs.promises.stat(sourceFilePath);
       if (!sourceStat.isFile()) return new Response('Not Found', { status: 404 });
       let filePath = sourceFilePath;
-      if (route.kind === 'preview' && this.previewTranscoder.shouldTranscode(sourceFilePath)) {
-        const cachedPath = await this.previewTranscoder.prepareCachedFile(sourceFilePath, request.signal);
+      if (route.kind === 'preview') {
+        const cachedPath = await this.previewTranscoder.preparePlayableFile(sourceFilePath, request.signal);
         if (request.signal.aborted) return new Response(null, { status: 204 });
-        if (cachedPath) filePath = cachedPath;
+        filePath = cachedPath;
       }
       const stat = filePath === sourceFilePath ? sourceStat : await fs.promises.stat(filePath);
       if (!stat.isFile()) return new Response('Not Found', { status: 404 });

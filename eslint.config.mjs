@@ -68,7 +68,7 @@ export default [
     },
   },
   {
-    files: ['src/renderer/public/**/*.js'],
+    files: ['src/renderer/public/**/*.js', 'src/main/server/web/**/*.js'],
     languageOptions: {
       globals: globals.browser,
     },

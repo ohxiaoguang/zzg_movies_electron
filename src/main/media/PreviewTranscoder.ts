@@ -1,11 +1,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { execFile, spawn } from 'node:child_process';
-import { promisify } from 'node:util';
+import { spawn } from 'node:child_process';
 import type { AppLogger } from '../system/AppLogger';
+import {
+  MediaCapabilityService,
+  resolveMediaToolPaths,
+  type MediaProbeResult,
+  type MediaToolPaths,
+} from './MediaCapabilityService';
 
-const execFileAsync = promisify(execFile);
 const MAX_CACHE_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_CACHE_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 const COMPATIBILITY_PREVIEW_EXTENSIONS = new Set(['.mkv', '.mpg', '.mpeg', '.avi', '.ts', '.flv', '.wmv']);
@@ -15,30 +19,34 @@ export interface PreviewCodecs {
   audio: string | null;
 }
 
-interface ProbeOutput {
-  streams?: Array<{ codec_type?: string; codec_name?: string }>;
-}
-
-export interface PreviewToolPaths {
-  ffmpeg: string | null;
-  ffprobe: string | null;
-}
+export type PreviewToolPaths = MediaToolPaths;
 
 export class PreviewTranscoder {
   private readonly conversions = new Map<string, Promise<string | null>>();
+  private readonly capabilities: MediaCapabilityService;
 
   public constructor(
     private readonly logger: AppLogger,
-    private readonly configuredFfprobePath: () => string,
+    configuredFfprobePath: () => string,
     private readonly cacheDirectory: string,
-  ) {}
+    capabilities?: MediaCapabilityService,
+  ) {
+    this.capabilities = capabilities ?? new MediaCapabilityService(configuredFfprobePath);
+  }
 
   public shouldTranscode(filePath: string): boolean {
     return COMPATIBILITY_PREVIEW_EXTENSIONS.has(path.extname(filePath).toLowerCase());
   }
 
+  public async preparePlayableFile(filePath: string, signal: AbortSignal): Promise<string> {
+    const prepared = await this.prepareCachedFile(filePath, signal);
+    return prepared ?? filePath;
+  }
+
   public async prepareCachedFile(filePath: string, signal: AbortSignal): Promise<string | null> {
-    const tools = resolvePreviewToolPaths(this.configuredFfprobePath());
+    const { probe, plan } = await this.capabilities.playbackPlan(filePath);
+    if (plan.mode === 'direct') return filePath;
+    const tools = this.capabilities.toolPaths();
     if (!tools.ffmpeg) {
       this.logger.warn('Compatibility preview unavailable', {
         inputPath: filePath,
@@ -58,16 +66,21 @@ export class PreviewTranscoder {
     await fs.promises.mkdir(this.cacheDirectory, { recursive: true });
     let conversion = this.conversions.get(key);
     if (!conversion) {
-      conversion = this.convertToCache(filePath, cachedPath, tools)
+      conversion = this.convertToCache(filePath, cachedPath, tools, probe)
         .finally(() => this.conversions.delete(key));
       this.conversions.set(key, conversion);
     }
     return waitForConversion(conversion, signal);
   }
 
-  private async convertToCache(filePath: string, cachedPath: string, tools: PreviewToolPaths): Promise<string | null> {
+  private async convertToCache(
+    filePath: string,
+    cachedPath: string,
+    tools: PreviewToolPaths,
+    probe: MediaProbeResult | null,
+  ): Promise<string | null> {
     const partialPath = `${cachedPath}.${randomUUID()}.partial`;
-    const codecs = tools.ffprobe ? await probeCodecs(tools.ffprobe, filePath) : null;
+    const codecs = probe ? { video: probe.video?.codec ?? null, audio: probe.audio?.codec ?? null } : null;
     const args = buildPreviewTranscodeArgs(filePath, codecs, partialPath);
     this.logger.info('Compatibility preview cache generation started', {
       inputPath: filePath,
@@ -106,18 +119,7 @@ export function resolvePreviewToolPaths(
   environmentPath = process.env.PATH ?? '',
   platform = process.platform,
 ): PreviewToolPaths {
-  const executableSuffix = platform === 'win32' ? '.exe' : '';
-  const configured = configuredFfprobePath.trim();
-  const configuredProbe = configured && fs.existsSync(configured) ? path.resolve(configured) : null;
-  const configuredFfmpeg = configuredProbe
-    ? path.join(path.dirname(configuredProbe), `ffmpeg${executableSuffix}`)
-    : null;
-  return {
-    ffmpeg: configuredFfmpeg && fs.existsSync(configuredFfmpeg)
-      ? configuredFfmpeg
-      : findOnPath(`ffmpeg${executableSuffix}`, environmentPath),
-    ffprobe: configuredProbe ?? findOnPath(`ffprobe${executableSuffix}`, environmentPath),
-  };
+  return resolveMediaToolPaths(configuredFfprobePath, environmentPath, platform);
 }
 
 export function previewCacheKey(filePath: string, fileSize: number, modifiedAtMs: number): string {
@@ -163,23 +165,6 @@ export function buildPreviewTranscodeArgs(filePath: string, codecs: PreviewCodec
   ];
 }
 
-async function probeCodecs(ffprobePath: string, filePath: string): Promise<PreviewCodecs | null> {
-  try {
-    const { stdout } = await execFileAsync(
-      ffprobePath,
-      ['-v', 'error', '-show_entries', 'stream=codec_type,codec_name', '-of', 'json', filePath],
-      { encoding: 'utf8', timeout: 5000, windowsHide: true, maxBuffer: 1024 * 1024 },
-    );
-    const parsed = JSON.parse(stdout) as ProbeOutput;
-    return {
-      video: parsed.streams?.find((stream) => stream.codec_type === 'video')?.codec_name?.toLowerCase() ?? null,
-      audio: parsed.streams?.find((stream) => stream.codec_type === 'audio')?.codec_name?.toLowerCase() ?? null,
-    };
-  } catch {
-    return null;
-  }
-}
-
 function runFfmpeg(ffmpegPath: string, args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(ffmpegPath, args, {
@@ -213,14 +198,6 @@ function shouldCopyVideo(codecs: PreviewCodecs | null): boolean {
 
 function shouldCopyAudio(codecs: PreviewCodecs | null): boolean {
   return codecs?.audio === 'aac';
-}
-
-function findOnPath(executable: string, environmentPath: string): string | null {
-  for (const directory of environmentPath.split(path.delimiter).map((item) => item.trim().replace(/^"|"$/g, '')).filter(Boolean)) {
-    const candidate = path.join(directory, executable);
-    if (fs.existsSync(candidate)) return candidate;
-  }
-  return null;
 }
 
 async function isUsableCacheFile(filePath: string): Promise<boolean> {

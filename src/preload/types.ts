@@ -19,7 +19,11 @@ import type {
   CustomCategoryRemoveInput,
   CustomCategoryReorderInput,
   FfprobeTestResult,
+  LanServerStatusDto,
+  LanPairingCodeDto,
+  LanPairedDeviceDto,
   MediaSourceDto,
+  PlaybackCacheInfoDto,
   RemoveSourceInput,
   RestoreSourceInput,
   FindDeletedSourceInput,
@@ -90,10 +94,22 @@ export interface FilmLibraryApi {
     openDataFolder(): Promise<ApiResult<null>>;
     openLogsFolder(): Promise<ApiResult<null>>;
   };
+  lanServer: {
+    status(): Promise<ApiResult<LanServerStatusDto>>;
+    start(): Promise<ApiResult<LanServerStatusDto>>;
+    stop(): Promise<ApiResult<LanServerStatusDto>>;
+    createPairingCode(role?: 'viewer' | 'admin'): Promise<ApiResult<LanPairingCodeDto>>;
+    listDevices(): Promise<ApiResult<LanPairedDeviceDto[]>>;
+    revokeDevice(id: string): Promise<ApiResult<null>>;
+  };
   settings: {
     get(): Promise<ApiResult<SettingsDto>>;
     update(input: SettingsUpdateInput): Promise<ApiResult<SettingsDto>>;
     testFfprobe(path: string): Promise<ApiResult<FfprobeTestResult>>;
+    cacheInfo(): Promise<ApiResult<PlaybackCacheInfoDto>>;
+    chooseCacheDirectory(): Promise<ApiResult<string | null>>;
+    openCacheDirectory(): Promise<ApiResult<null>>;
+    clearCache(): Promise<ApiResult<PlaybackCacheInfoDto>>;
   };
 }
 

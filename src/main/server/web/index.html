@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>Local Film Library · 局域网影片库</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/vendor/hls.min.js" defer></script>
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <div class="mobile-topbar">
+      <button id="menu-toggle" class="icon-button" type="button" aria-label="打开菜单" aria-expanded="false">☰</button>
+      <div class="mobile-brand"><span class="brand-mark">▶</span><strong>LOCAL FILM</strong></div>
+      <span id="mobile-role-badge" class="role-badge">访客</span>
+    </div>
+    <div id="sidebar-backdrop" class="sidebar-backdrop" hidden></div>
+
+    <div class="app-shell">
+      <aside id="app-sidebar" class="app-sidebar" aria-label="主菜单">
+        <div class="brand-block">
+          <div class="brand-mark">▶</div>
+          <div>
+            <div class="brand-title">LOCAL FILM</div>
+            <div class="brand-subtitle">Library / 本地影库</div>
+          </div>
+        </div>
+
+        <div class="sidebar-label">LIBRARY</div>
+        <nav class="side-menu">
+          <button class="nav-item is-active" type="button" data-view="library" data-library-mode="all">
+            <span class="nav-icon">▦</span><span>全部影片</span><small id="count-all">0</small>
+          </button>
+          <button class="nav-item" type="button" data-view="library" data-library-mode="unorganized">
+            <span class="nav-icon">◷</span><span>未整理</span><small id="count-unorganized">0</small>
+          </button>
+          <button class="nav-item" type="button" data-view="library" data-library-mode="organized">
+            <span class="nav-icon">✓</span><span>已整理</span><small id="count-organized">0</small>
+          </button>
+          <button class="nav-item" type="button" data-view="library" data-library-mode="favorite">
+            <span class="nav-icon">★</span><span>收藏</span><small id="count-favorite">0</small>
+          </button>
+          <button class="nav-item" type="button" data-view="library" data-library-mode="all-data">
+            <span class="nav-icon">▤</span><span>所有数据</span><small id="count-all-data">0</small>
+          </button>
+        </nav>
+
+        <div class="sidebar-label secondary">MANAGE</div>
+        <nav class="side-menu">
+          <button class="nav-item" type="button" data-view="sources">
+            <span class="nav-icon">▰</span><span>来源管理</span>
+          </button>
+          <button class="nav-item" type="button" data-view="categories">
+            <span class="nav-icon">◇</span><span>我的分类</span>
+          </button>
+          <button class="nav-item" type="button" data-view="actors">
+            <span class="nav-icon">♙</span><span>演员</span>
+          </button>
+          <button class="nav-item" type="button" data-view="settings">
+            <span class="nav-icon">⚙</span><span>设置</span>
+          </button>
+        </nav>
+
+        <div class="sidebar-footer">
+          <span class="status-dot"></span>
+          <span id="sidebar-status">局域网连接正常</span>
+        </div>
+      </aside>
+
+      <main class="app-main">
+        <section id="library-view" class="page-view">
+          <header class="page-heading">
+            <div>
+              <div class="eyebrow">YOUR OFFLINE CINEMA</div>
+              <h1 id="library-title" class="page-title">全部影片</h1>
+              <p id="library-caption" class="page-caption">正在读取影片资料…</p>
+            </div>
+            <div class="heading-actions">
+              <span id="role-badge" class="role-badge">访客</span>
+              <button id="device-revoke" type="button" hidden>解除本设备</button>
+              <button id="refresh" class="primary-button" type="button">刷新</button>
+            </div>
+          </header>
+
+          <section class="filters toolbar" aria-label="影片筛选">
+            <label class="search-field">
+              <span>搜索</span>
+              <input id="search" type="search" placeholder="搜索标题、文件名…" autocomplete="off" />
+            </label>
+            <label><span>来源</span><select id="source"><option value="">全部来源</option></select></label>
+            <label><span>我的分类</span><select id="category"><option value="">全部分类</option></select></label>
+            <label><span>NFO 标签</span><select id="tag"><option value="">全部标签</option></select></label>
+            <label><span>类型</span><select id="genre"><option value="">全部类型</option></select></label>
+            <label><span>演员</span><select id="actor"><option value="">全部演员</option></select></label>
+            <label><span>排序</span><select id="sort"><option value="added">最近新增</option><option value="played">最近观看</option><option value="recent">最近更新</option><option value="title">标题</option><option value="year">年份</option><option value="rating">评分</option></select></label>
+          </section>
+
+          <div class="library-meta">
+            <p id="result-summary">正在读取影片…</p>
+            <p id="error" role="alert" hidden></p>
+          </div>
+          <section id="film-grid" class="film-grid" aria-live="polite"></section>
+          <nav class="pagination" aria-label="影片分页">
+            <button id="previous-page" type="button">上一页</button>
+            <span id="page-summary">第 1 页</span>
+            <button id="next-page" type="button">下一页</button>
+          </nav>
+        </section>
+
+        <section id="sources-view" class="page-view" hidden>
+          <header class="page-heading">
+            <div><div class="eyebrow">MEDIA LOCATIONS</div><h1 class="page-title">来源管理</h1><p id="sources-caption" class="page-caption">查看服务器电脑上已经登记的影片来源。</p></div>
+            <button id="sources-refresh" type="button">刷新</button>
+          </header>
+          <div id="source-grid" class="index-grid"></div>
+        </section>
+
+        <section id="categories-view" class="page-view" hidden>
+          <header class="page-heading">
+            <div><div class="eyebrow">YOUR COLLECTIONS</div><h1 class="page-title">我的分类</h1><p id="categories-caption" class="page-caption">使用与客户端相同的自定义分类整理影片。</p></div>
+            <button id="create-category" type="button" hidden>新建分类</button>
+          </header>
+          <div id="category-grid" class="index-grid"></div>
+        </section>
+
+        <section id="actors-view" class="page-view" hidden>
+          <header class="page-heading">
+            <div><div class="eyebrow">NFO CAST INDEX</div><h1 class="page-title">演员</h1><p id="actors-caption" class="page-caption">来自 NFO；点击演员查看其全部影片。</p></div>
+            <button id="actors-refresh" type="button">刷新</button>
+          </header>
+          <div class="index-toolbar"><input id="actor-search" type="search" placeholder="搜索演员…" /><span id="actor-count" class="muted"></span></div>
+          <div id="actor-grid" class="actor-grid"></div>
+        </section>
+
+        <section id="settings-view" class="page-view" hidden>
+          <header class="page-heading">
+            <div><div class="eyebrow">WEB CONNECTION</div><h1 class="page-title">设置</h1><p class="page-caption">网页端只显示连接与安全状态；监听设置请在 Electron 客户端修改。</p></div>
+          </header>
+          <div class="settings-grid">
+            <article class="settings-card"><h2>服务状态</h2><dl id="server-facts" class="settings-facts"></dl></article>
+            <article class="settings-card"><h2>当前设备</h2><dl id="device-facts" class="settings-facts"></dl><button id="settings-device-revoke" class="danger" type="button">解除本设备</button></article>
+            <article class="settings-card wide"><h2>安全边界</h2><p>仅限受信任私有局域网。管理员操作只修改服务器电脑上的 SQLite，不写回外部 NFO，也不会删除影片文件。不要将此端口转发到公网。</p></article>
+          </div>
+        </section>
+
+        <footer>Local Film Library · 与 Electron 客户端共用同一数据库和业务规则</footer>
+      </main>
+    </div>
+
+    <dialog id="film-detail">
+      <button id="close-detail" class="dialog-close" type="button" aria-label="关闭">×</button>
+      <div id="detail-content"></div>
+    </dialog>
+
+    <dialog id="pairing-dialog" class="pairing-dialog">
+      <div class="pairing-panel">
+        <p class="eyebrow">TRUSTED LAN PAIRING</p>
+        <h2>配对此设备</h2>
+        <p class="muted">请在服务器电脑的 Electron 设置页生成访客或管理员短时配对码。</p>
+        <form id="pairing-form">
+          <label><span>设备名称</span><input id="device-name" maxlength="100" required /></label>
+          <label><span>六位配对码</span><input id="pairing-code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required /></label>
+          <p id="pairing-error" class="error-panel" hidden></p>
+          <button type="submit">完成配对</button>
+        </form>
+      </div>
+    </dialog>
+  </body>
+</html>

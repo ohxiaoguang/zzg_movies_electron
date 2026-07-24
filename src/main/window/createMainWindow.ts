@@ -9,6 +9,7 @@ declare const MAIN_WINDOW_VITE_NAME: string;
 interface CreateMainWindowOptions {
   load?: boolean;
   failureReason?: string;
+  showOnReady?: boolean;
 }
 
 export function createMainWindow(logger: AppLogger, options: CreateMainWindowOptions = {}): BrowserWindow {
@@ -55,7 +56,7 @@ export function createMainWindow(logger: AppLogger, options: CreateMainWindowOpt
 
   window.once('ready-to-show', () => {
     logger.info('BrowserWindow ready to show');
-    if (!window.isDestroyed()) window.show();
+    if (!window.isDestroyed() && options.showOnReady !== false) window.show();
   });
   window.on('closed', () => logger.info('BrowserWindow closed'));
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -84,9 +85,18 @@ export function createMainWindow(logger: AppLogger, options: CreateMainWindowOpt
     showFailurePage(`render-process-gone:${details.reason}`, details.exitCode);
   });
   window.webContents.on('unresponsive', () => logger.error('Renderer unresponsive'));
-  window.webContents.on('console-message', (_event, level, message, line, sourceId) => {
-    const write = level >= 3 ? logger.error.bind(logger) : level >= 2 ? logger.warn.bind(logger) : logger.info.bind(logger);
-    write('Renderer console-message', { level, message, line, sourceId });
+  window.webContents.on('console-message', (details) => {
+    const write = details.level === 'error'
+      ? logger.error.bind(logger)
+      : details.level === 'warning'
+        ? logger.warn.bind(logger)
+        : logger.info.bind(logger);
+    write('Renderer console-message', {
+      level: details.level,
+      message: details.message,
+      line: details.lineNumber,
+      sourceId: details.sourceId,
+    });
   });
 
   logger.info('BrowserWindow created', {
