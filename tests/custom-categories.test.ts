@@ -37,7 +37,7 @@ function filmByTitle(context: Awaited<ReturnType<typeof scannedContext>>, title:
 describe('custom categories', () => {
   it('normalizes names, rejects empty/case duplicates, and persists ordering', async () => {
     const context = await scannedContext();
-    expect(context.database.schemaVersion).toBe(11);
+    expect(context.database.schemaVersion).toBe(12);
     expect(context.database.hasTable('genre')).toBe(true);
     expect(context.database.hasTable('film_genre')).toBe(true);
     expect((context.database.db.prepare("SELECT 1 AS present FROM pragma_table_info('film') WHERE name = 'status'").get() as { present: number }).present).toBe(1);
@@ -53,7 +53,7 @@ describe('custom categories', () => {
     databases.splice(databases.indexOf(context.database), 1);
     const reopened = new DatabaseManager(databasePath);
     databases.push(reopened);
-    expect(reopened.schemaVersion).toBe(11);
+    expect(reopened.schemaVersion).toBe(12);
     expect(new FilmRepository(reopened.db).listCategories().map((item) => item.name)).toEqual(['悬疑', 'Classic Films']);
   });
 
@@ -126,6 +126,7 @@ describe('custom categories', () => {
     const beta = filmByTitle(context, 'Beta');
     const category = context.films.createCategory('CSV Category');
     context.films.updateCategories(alpha.id, [category.id]);
+    context.films.updateFavorite(beta.id, true);
 
     expect(context.films.listActors()).toEqual([
       { name: 'Actor One', filmCount: 1 },
@@ -142,8 +143,19 @@ describe('custom categories', () => {
         customCategories: ['CSV Category'],
         actors: ['Actor One', 'Actor Shared'],
         nfoSummary: 'Alpha summary',
+        highlights: [],
       },
     ]);
     expect(context.films.detail(beta.id)?.organizationState).toBe('unorganized');
+    expect(context.films.csvRows({ page: 1, pageSize: 20, organizationState: 'all', favoriteOnly: true })).toEqual([
+      {
+        filename: 'Beta.mkv',
+        nfoTitle: 'Beta',
+        customCategories: [],
+        actors: ['Actor Two', 'Actor Shared'],
+        nfoSummary: 'Beta outline',
+        highlights: [],
+      },
+    ]);
   });
 });

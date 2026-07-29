@@ -45,6 +45,9 @@ interface PlaybackSession {
   jobKey: string | null;
   playbackPositionSeconds: number;
   playbackDurationSeconds: number | null;
+  purpose: 'full' | 'segment-preview';
+  sourceStartSeconds: number;
+  sourceEndSeconds: number | null;
   state: WebPlaybackState;
   errorCode: string | null;
   createdAt: number;
@@ -162,7 +165,10 @@ export class PlaybackSessionService {
     const filmId = input.filmId ?? this.films.filmIdForPart(input.partId!);
     if (!filmId) throw new Error('FILM_NOT_FOUND');
     const partId = input.partId ?? null;
-    const savedPlayback = this.films.playbackState(filmId, partId);
+    const purpose = input.purpose ?? 'full';
+    const sourceStartSeconds = purpose === 'segment-preview' ? input.startSeconds! : 0;
+    const sourceEndSeconds = purpose === 'segment-preview' ? input.endSeconds! : null;
+    const savedPlayback = purpose === 'full' ? this.films.playbackState(filmId, partId) : null;
     const { probe, plan } = await this.capabilities.playbackPlan(asset.filePath);
     const subtitleTracks = await resolvePlaybackSubtitleTracks(
       asset.filePath,
@@ -185,7 +191,12 @@ export class PlaybackSessionService {
       subtitleTracks,
       jobKey: null,
       playbackPositionSeconds: savedPlayback?.positionSeconds ?? 0,
-      playbackDurationSeconds: savedPlayback?.durationSeconds ?? probe?.durationSeconds ?? null,
+      playbackDurationSeconds: purpose === 'segment-preview'
+        ? input.endSeconds! - input.startSeconds!
+        : savedPlayback?.durationSeconds ?? probe?.durationSeconds ?? null,
+      purpose,
+      sourceStartSeconds,
+      sourceEndSeconds,
       state: plan.mode === 'direct' ? 'ready' : 'preparing',
       errorCode: null,
       createdAt: now,
@@ -200,7 +211,7 @@ export class PlaybackSessionService {
         job.consumers.add(session.id);
         session.state = job.state === 'complete' ? 'complete' : 'ready';
       }
-      this.films.markPlayed(filmId);
+      if (purpose === 'full') this.films.markPlayed(filmId);
       this.logger.info('Web playback session created', {
         sessionId: session.id,
         deviceId: ownerDeviceId,
@@ -233,12 +244,14 @@ export class PlaybackSessionService {
     session.playbackPositionSeconds = progress.positionSeconds;
     if (progress.durationSeconds !== undefined) session.playbackDurationSeconds = progress.durationSeconds;
     session.lastAccessAt = Date.now();
-    this.films.updatePlaybackProgress(
-      session.filmId,
-      session.partId,
-      session.playbackPositionSeconds,
-      session.playbackDurationSeconds ?? undefined,
-    );
+    if (session.purpose === 'full') {
+      this.films.updatePlaybackProgress(
+        session.filmId,
+        session.partId,
+        session.playbackPositionSeconds,
+        session.playbackDurationSeconds ?? undefined,
+      );
+    }
     return this.toDto(session);
   }
 
@@ -291,7 +304,14 @@ export class PlaybackSessionService {
     const tools = this.capabilities.toolPaths();
     if (!tools.ffmpeg) throw new Error('PLAYBACK_TOOLS_UNAVAILABLE');
     const sourceStat = await fs.promises.stat(asset.filePath);
-    const key = playbackCacheKey(asset.filePath, sourceStat.size, sourceStat.mtimeMs, session.plan);
+    const key = playbackCacheKey(
+      asset.filePath,
+      sourceStat.size,
+      sourceStat.mtimeMs,
+      session.plan,
+      session.sourceStartSeconds,
+      session.sourceEndSeconds,
+    );
     const cacheConfiguration = this.cacheConfiguration();
     const directory = path.join(cacheConfiguration.directory, key);
     const mapKey = playbackJobMapKey(directory, key);
@@ -341,7 +361,9 @@ export class PlaybackSessionService {
       process: null,
       state: 'preparing',
       progressSeconds: 0,
-      durationSeconds: session.probe?.durationSeconds ?? null,
+      durationSeconds: session.sourceEndSeconds === null
+        ? session.probe?.durationSeconds ?? null
+        : session.sourceEndSeconds - session.sourceStartSeconds,
       errorCode: null,
       stderr: '',
       videoPipeline: preferredVideoPipeline,
@@ -349,7 +371,14 @@ export class PlaybackSessionService {
       lastAccessAt: Date.now(),
     };
     this.jobs.set(mapKey, job);
-    await this.startFfmpegWithFallback(job, tools.ffmpeg, asset.filePath, session.plan);
+    await this.startFfmpegWithFallback(
+      job,
+      tools.ffmpeg,
+      asset.filePath,
+      session.plan,
+      session.sourceStartSeconds,
+      session.sourceEndSeconds,
+    );
     if (job.state === 'preparing') job.state = 'ready';
     return job;
   }
@@ -359,11 +388,13 @@ export class PlaybackSessionService {
     ffmpegPath: string,
     sourceFilePath: string,
     plan: BrowserPlaybackPlan,
+    sourceStartSeconds: number,
+    sourceEndSeconds: number | null,
   ): Promise<void> {
     const candidates = playbackPipelineCandidates(job.videoPipeline);
     for (let index = 0; index < candidates.length; index += 1) {
       job.videoPipeline = candidates[index]!;
-      this.startFfmpeg(job, ffmpegPath, sourceFilePath, plan);
+      this.startFfmpeg(job, ffmpegPath, sourceFilePath, plan, sourceStartSeconds, sourceEndSeconds);
       try {
         await waitUntilPlayable(job);
         return;
@@ -390,8 +421,22 @@ export class PlaybackSessionService {
     }
   }
 
-  private startFfmpeg(job: PlaybackJob, ffmpegPath: string, sourceFilePath: string, plan: BrowserPlaybackPlan): void {
-    const args = buildHlsTranscodeArgs(sourceFilePath, job.directory, plan, job.videoPipeline);
+  private startFfmpeg(
+    job: PlaybackJob,
+    ffmpegPath: string,
+    sourceFilePath: string,
+    plan: BrowserPlaybackPlan,
+    sourceStartSeconds: number,
+    sourceEndSeconds: number | null,
+  ): void {
+    const args = buildHlsTranscodeArgs(
+      sourceFilePath,
+      job.directory,
+      plan,
+      job.videoPipeline,
+      sourceStartSeconds,
+      sourceEndSeconds,
+    );
     const child = spawn(ffmpegPath, args, {
       windowsHide: true,
       shell: false,
@@ -499,6 +544,8 @@ export class PlaybackSessionService {
       durationSeconds: session.playbackDurationSeconds ?? session.probe?.durationSeconds ?? null,
       processPercent,
       playbackPositionSeconds: session.playbackPositionSeconds,
+      sourceStartSeconds: session.sourceStartSeconds,
+      sourceEndSeconds: session.sourceEndSeconds,
       subtitleTracks: session.subtitleTracks.map((track) => ({
         index: track.index,
         codec: track.codec,
@@ -752,6 +799,8 @@ export function buildHlsTranscodeArgs(
   outputDirectory: string,
   plan: BrowserPlaybackPlan,
   videoPipeline: 'copy' | 'cached' | VideoTranscodePipeline = 'software',
+  sourceStartSeconds = 0,
+  sourceEndSeconds: number | null = null,
 ): string[] {
   const cudaPipeline = plan.videoMode === 'transcode' && videoPipeline === 'cuda-nvenc';
   const videoArgs = plan.videoMode === 'copy'
@@ -798,7 +847,9 @@ export function buildHlsTranscodeArgs(
     '-y',
     '-fflags', '+genpts',
     ...(cudaPipeline ? ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'] : []),
+    ...(sourceStartSeconds > 0 ? ['-ss', String(sourceStartSeconds)] : []),
     '-i', sourceFilePath,
+    ...(sourceEndSeconds !== null ? ['-t', String(sourceEndSeconds - sourceStartSeconds)] : []),
     '-map', '0:v:0',
     ...(plan.audioMode === 'none' ? [] : ['-map', '0:a:0?']),
     '-sn',
@@ -825,6 +876,8 @@ export function playbackCacheKey(
   fileSize: number,
   modifiedAtMs: number,
   plan: BrowserPlaybackPlan,
+  sourceStartSeconds = 0,
+  sourceEndSeconds: number | null = null,
 ): string {
   return createHash('sha256')
     .update(path.resolve(filePath).toLowerCase())
@@ -833,7 +886,7 @@ export function playbackCacheKey(
     .update('\0')
     .update(String(Math.trunc(modifiedAtMs)))
     .update('\0')
-    .update(`${plan.videoMode}:${plan.audioMode}:hls-v1`)
+    .update(`${plan.videoMode}:${plan.audioMode}:hls-v2:${sourceStartSeconds}:${sourceEndSeconds ?? ''}`)
     .digest('hex');
 }
 

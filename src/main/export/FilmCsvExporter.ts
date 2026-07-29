@@ -1,14 +1,25 @@
+export interface FilmCsvHighlight {
+  fileName: string;
+  relativePath: string;
+  partLabel: string;
+  title: string;
+  startSeconds: number;
+  endSeconds: number;
+  timeRange: string;
+}
+
 export interface FilmCsvRow {
   filename: string;
   nfoTitle: string;
   customCategories: string[];
   actors: string[];
   nfoSummary: string;
+  highlights: FilmCsvHighlight[];
 }
 
 export type FilmCsvScope = 'favorite' | 'organized';
 
-const HEADERS = ['文件名', 'NFO标题', '我的分类', '演员', 'NFO 摘要'];
+const HEADERS = ['文件名', 'NFO标题', '我的分类', '演员', 'NFO 摘要', '精彩片段'];
 const SCOPE_LABELS: Record<FilmCsvScope, string> = {
   favorite: '收藏',
   organized: '已整理',
@@ -34,6 +45,7 @@ export function buildFilmCsv(rows: FilmCsvRow[]): string {
     row.customCategories.join('、'),
     row.actors.join('、'),
     row.nfoSummary,
+    JSON.stringify(row.highlights),
   ])];
   return `\uFEFF${lines.map((line) => line.map(csvCell).join(',')).join('\r\n')}\r\n`;
 }

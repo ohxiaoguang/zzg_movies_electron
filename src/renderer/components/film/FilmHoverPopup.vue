@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
-import type { FilmSummaryDto } from '../../../shared/contracts';
+import type { FilmSegmentDto, FilmSummaryDto } from '../../../shared/contracts';
 import { mediaUrl } from '../../api';
 import { calculatePopupPosition, type PopupPosition } from '../../composables/hoverPopupGeometry';
 import { claimPreview, releasePreview } from '../../composables/usePreviewManager';
@@ -24,7 +24,7 @@ type PreviewMode = 'video' | 'slideshow' | 'empty';
 
 const popup = ref<HTMLElement | null>(null);
 const video = ref<HTMLVideoElement | null>(null);
-const hasVideoPreview = computed(() => Boolean(props.film.previewAssetId || props.film.allowOriginalPreview));
+const hasVideoPreview = computed(() => props.film.highlightSegmentCount > 0);
 const mode = ref<PreviewMode>(hasVideoPreview.value ? 'video' : props.film.previewImageAssetIds.length ? 'slideshow' : 'empty');
 const imageIndex = ref(0);
 const popupWidth = ref(520);
@@ -32,6 +32,9 @@ const position = ref<PopupPosition>({ left: 12, top: 12 });
 const favorite = ref(props.film.favorite);
 const favoriteSaving = ref(false);
 const videoPreparing = ref(hasVideoPreview.value);
+const highlightSegments = ref<FilmSegmentDto[]>([]);
+const segmentIndex = ref(-1);
+const activeHighlight = computed(() => highlightSegments.value[segmentIndex.value] ?? null);
 let slideshowTimer: ReturnType<typeof setInterval> | null = null;
 
 const imageIds = computed(() => props.film.previewImageAssetIds);
@@ -71,16 +74,44 @@ async function startPreview(): Promise<void> {
     mode.value = 'video';
     videoPreparing.value = true;
     claimPreview(props.film.id, video.value);
-    video.value.src = mediaUrl('preview', props.film.id);
-    video.value.load();
-    try {
-      await video.value.play();
-    } catch {
-      fallbackToImages();
+    if (props.film.highlightSegmentCount) {
+      const result = await window.filmLibrary.films.detail(props.film.id);
+      if (result.ok) {
+        highlightSegments.value = result.data.segments.filter((segment) => segment.includeInPreview);
+        if (highlightSegments.value.length) {
+          await playHighlight(0).catch(fallbackToImages);
+          return;
+        }
+      }
     }
+    fallbackToImages();
     return;
   }
   startSlideshow();
+}
+
+async function playHighlight(index: number): Promise<void> {
+  const element = video.value;
+  if (!element || !highlightSegments.value.length) return;
+  const nextIndex = index % highlightSegments.value.length;
+  const segment = highlightSegments.value[nextIndex]!;
+  segmentIndex.value = nextIndex;
+  videoPreparing.value = true;
+  element.src = mediaUrl('part', segment.filmFileId);
+  element.load();
+  await new Promise<void>((resolve, reject) => {
+    element.addEventListener('loadedmetadata', () => resolve(), { once: true });
+    element.addEventListener('error', () => reject(new Error('SEGMENT_MEDIA_FAILED')), { once: true });
+  });
+  element.currentTime = segment.startSeconds;
+  await element.play();
+}
+
+function onVideoTimeUpdate(): void {
+  const element = video.value;
+  const segment = highlightSegments.value[segmentIndex.value];
+  if (!element || !segment || element.currentTime + 0.05 < segment.endSeconds) return;
+  void playHighlight(segmentIndex.value + 1).catch(fallbackToImages);
 }
 
 function fallbackToImages(): void {
@@ -123,6 +154,8 @@ function stopSlideshow(): void {
 
 function stopVideo(): void {
   if (!video.value) return;
+  highlightSegments.value = [];
+  segmentIndex.value = -1;
   releasePreview(props.film.id, video.value);
 }
 
@@ -132,7 +165,6 @@ function onVideoError(): void {
     filmId: props.film.id,
     mediaErrorCode: video.value?.error?.code ?? null,
     mediaErrorMessage: video.value?.error?.message ?? null,
-    usesOriginal: !props.film.previewAssetId && props.film.allowOriginalPreview,
   });
   fallbackToImages();
 }
@@ -143,6 +175,14 @@ function onVideoPlaying(): void {
 
 function onVideoWaiting(): void {
   videoPreparing.value = true;
+}
+
+function formatTime(value: number): string {
+  const seconds = Math.max(0, Math.round(value));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const rest = seconds % 60;
+  return [hours, minutes, rest].map((part) => String(part).padStart(2, '0')).join(':');
 }
 
 async function openOriginal(): Promise<void> {
@@ -196,9 +236,13 @@ onBeforeUnmount(() => {
   <Teleport to="body">
     <section ref="popup" class="film-hover-popup" :style="popupStyle" @mouseenter="$emit('enter')" @mouseleave="$emit('leave')">
       <div class="popup-media">
-        <video v-if="mode === 'video'" ref="video" muted loop playsinline preload="metadata" @playing="onVideoPlaying" @waiting="onVideoWaiting" @error="onVideoError" />
+        <video v-if="mode === 'video'" ref="video" muted :loop="!highlightSegments.length" playsinline preload="metadata" @playing="onVideoPlaying" @waiting="onVideoWaiting" @timeupdate="onVideoTimeUpdate" @error="onVideoError" />
         <img v-else-if="mode === 'slideshow' && currentImageUrl" :src="currentImageUrl" :alt="film.title" />
         <div v-else class="popup-empty">暂无预览</div>
+        <div v-if="mode === 'video' && activeHighlight" class="segment-preview-label">
+          <strong>{{ activeHighlight.title || '未命名片段' }}</strong>
+          <span>{{ formatTime(activeHighlight.startSeconds) }} → {{ formatTime(activeHighlight.endSeconds) }}</span>
+        </div>
         <div v-if="mode === 'video' && videoPreparing" class="preview-preparing"><span />正在准备视频预览…</div>
       </div>
       <div class="popup-content">
@@ -220,6 +264,10 @@ onBeforeUnmount(() => {
 .film-hover-popup { position: fixed; z-index: 3000; box-sizing: border-box; max-width: calc(100vw - 24px); overflow: hidden; border: 1px solid rgba(255, 255, 255, .12); border-radius: 14px; color: var(--ink); background: #151923; box-shadow: 0 24px 60px rgba(0, 0, 0, .48); pointer-events: auto; }
 .popup-media { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000; }
 .popup-media video, .popup-media img { display: block; width: 100%; height: 100%; object-fit: contain; background: #000; }
+.segment-preview-label { position: absolute; z-index: 2; top: 10px; left: 50%; display: flex; max-width: calc(100% - 28px); padding: 5px 10px; border-radius: 6px; color: rgba(255,255,255,.9); background: rgba(0,0,0,.48); font-size: 11px; line-height: 1.35; transform: translateX(-50%); backdrop-filter: blur(3px); gap: 8px; pointer-events: none; }
+.segment-preview-label strong, .segment-preview-label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.segment-preview-label strong { max-width: 250px; }
+.segment-preview-label span { color: rgba(255,255,255,.72); font-variant-numeric: tabular-nums; }
 .preview-preparing { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 9px; color: #d8dee8; background: rgba(0, 0, 0, .72); font-size: 12px; pointer-events: none; }
 .preview-preparing span { width: 15px; height: 15px; border: 2px solid rgba(255,255,255,.28); border-top-color: var(--accent); border-radius: 50%; animation: preview-spin .8s linear infinite; }
 @keyframes preview-spin { to { transform: rotate(360deg); } }

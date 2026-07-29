@@ -3,6 +3,8 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const drawerPath = path.resolve(process.cwd(), 'src/renderer/components/film/FilmDetailDrawer.vue');
+const segmentEditorPath = path.resolve(process.cwd(), 'src/renderer/components/film/FilmSegmentEditor.vue');
+const detailPlayerPath = path.resolve(process.cwd(), 'src/renderer/components/film/FilmDetailPlayer.vue');
 const cardPath = path.resolve(process.cwd(), 'src/renderer/components/film/FilmCard.vue');
 const popupPath = path.resolve(process.cwd(), 'src/renderer/components/film/FilmHoverPopup.vue');
 const headerPath = path.resolve(process.cwd(), 'src/renderer/components/film/FilmDetailHeader.vue');
@@ -21,11 +23,14 @@ const themePath = path.resolve(process.cwd(), 'src/renderer/styles/theme.css');
 describe('renderer regressions', () => {
   const drawer = fs.readFileSync(drawerPath, 'utf8');
 
-  it('keeps the thumbnail strip synchronized with the active image', () => {
-    expect(drawer).toContain('thumbnailStripRef');
-    expect(drawer).toContain('scrollIntoView');
-    expect(drawer).toContain('fullscreenchange');
-    expect(drawer).toContain('overflow-y: hidden');
+  it('shows image thumbnails and opens a navigable full-size image dialog', () => {
+    expect(drawer).toContain('image-thumbnail-grid');
+    expect(drawer).toContain('imageViewerVisible');
+    expect(drawer).toContain('class="image-viewer-dialog"');
+    expect(drawer).toContain('width="96vw"');
+    expect(drawer).toContain('@click="previousImage"');
+    expect(drawer).toContain('@click="nextImage"');
+    expect(drawer).toContain('object-fit: contain');
   });
 
   it('renders every selected category and uses the serialized auto-save queue', () => {
@@ -40,13 +45,16 @@ describe('renderer regressions', () => {
     expect(drawer).toContain('updateCategories');
   });
 
-  it('keeps favorite and all custom categories in a sticky, wrapping detail header', () => {
+  it('keeps poster, favorite and categories in the left detail sidebar', () => {
     const header = fs.readFileSync(headerPath, 'utf8');
     expect(drawer).toContain('<FilmDetailHeader');
-    expect(header).toContain('position: sticky');
-    expect(header).toContain('top: 0');
+    expect(header).toContain('position: relative');
     expect(header).toContain('flex-wrap: wrap');
     expect(header).toContain("favorite ? '已收藏' : '收藏'");
+    expect(header).toContain('v-for="item in categories"');
+    expect(header).toContain('aspect-ratio: 2 / 3');
+    expect(drawer).toContain('grid-template-columns: minmax(240px, 1fr) minmax(0, 3fr)');
+    expect(drawer).toContain('overflow: hidden');
     expect(header).not.toContain('+N');
   });
 
@@ -88,7 +96,7 @@ describe('renderer regressions', () => {
     expect(drawer).not.toContain("importNfo('force')");
   });
 
-  it('keeps preview media out of the card and delegates it to a fixed Teleport popup', () => {
+  it('uses annotated segments for hover preview and falls back to images', () => {
     const card = fs.readFileSync(cardPath, 'utf8');
     const popup = fs.readFileSync(popupPath, 'utf8');
     expect(card).not.toContain('<video');
@@ -100,10 +108,51 @@ describe('renderer regressions', () => {
     expect(popup).toContain('object-fit: contain');
     expect(popup).toContain('claimPreview');
     expect(popup).toContain('releasePreview');
-    expect(popup).toContain("mediaUrl('preview', props.film.id)");
-    expect(popup).toContain('props.film.allowOriginalPreview');
+    expect(popup).toContain("mediaUrl('part', segment.filmFileId)");
+    expect(popup).not.toContain("mediaUrl('preview'");
+    expect(popup).not.toContain('props.film.allowOriginalPreview');
+    expect(popup).toContain('segment-preview-label');
+    expect(popup).toContain('activeHighlight.title');
     expect(popup).toContain('正在准备视频预览');
     expect(popup).toMatch(/<video v-if="mode === 'video'"[\s\S]*?<img v-else-if="mode === 'slideshow'[\s\S]*?<div v-else class="popup-empty">暂无预览<\/div>[\s\S]*?<div v-if="mode === 'video' && videoPreparing"/);
+  });
+
+  it('uses a full-width detail workbench and exposes segment titles on timeline nodes', () => {
+    const segmentEditor = fs.readFileSync(segmentEditorPath, 'utf8');
+    const detailPlayer = fs.readFileSync(detailPlayerPath, 'utf8');
+    expect(drawer).toContain('size="100vw"');
+    expect(drawer).toContain('tab-position="right"');
+    expect(drawer).toContain('grid-template-rows: minmax(0, 1fr) 128px');
+    expect(drawer).toContain('.el-drawer__header) { height: 34px');
+    expect(drawer).not.toContain('label="预览视频"');
+    expect(detailPlayer).toContain(':title="`${segment.title');
+    expect(detailPlayer).toContain('aspect-ratio: 16 / 9');
+    expect(detailPlayer).toContain('element?.videoWidth');
+    expect(detailPlayer).toContain('element?.videoHeight');
+    expect(detailPlayer).toContain('Math.min(availableWidth / videoWidth, availableHeight / videoHeight)');
+    expect(detailPlayer).toContain(':style="fittedSize"');
+    expect(drawer).toContain('<FilmDetailPlayer');
+    expect(segmentEditor).not.toContain('<video');
+    expect(segmentEditor).not.toContain('placeholder="批注');
+    expect(segmentEditor).not.toContain('<small v-if="segment.comment"');
+    expect((detailPlayer.match(/<video/g) || [])).toHaveLength(1);
+    expect(segmentEditor).not.toContain('连续播放精彩片段');
+    expect(segmentEditor).not.toContain('空格播放/暂停');
+    expect(segmentEditor).not.toContain('@click="edit(segment)"');
+    expect(segmentEditor).toContain('grid-template-columns: repeat(2, minmax(0, 1fr))');
+    expect(segmentEditor).toContain('formatTime(segment.endSeconds - segment.startSeconds)');
+    expect(drawer).toContain('<aside class="detail-sidebar">');
+    expect(drawer).toContain("const activeSidebarSections = ref<string[]>([])");
+    expect(drawer).toContain('<el-collapse-item title="基本信息" name="basic">');
+    expect(drawer).toContain('<el-collapse-item title="详细信息" name="details">');
+    expect(drawer).not.toContain('<el-tab-pane label="基本信息"');
+    expect(drawer).not.toContain('<el-tab-pane label="详细信息"');
+    expect(segmentEditor).toContain('defineExpose({ markStart, markEnd })');
+    expect(detailPlayer).toContain('playbackGeneration += 1');
+    expect(detailPlayer).toContain('defineExpose({ playSegment, playPreview, playOriginal, selectPart, seekRelative, togglePlayback, stopPlayback })');
+    expect(drawer).toContain('detailPlayer.value?.stopPlayback()');
+    expect(drawer).toContain('segmentEditor.value?.markStart()');
+    expect(drawer).toContain('segmentEditor.value?.markEnd()');
   });
 
   it('lists NFO actors and routes an actor click to the library filter', () => {
@@ -136,9 +185,8 @@ describe('renderer regressions', () => {
     expect(drawer).toContain('rescanJobId');
     expect(sources).toContain('重新扫描此来源');
     expect(sources).toContain('scan.start([source.id])');
-    expect(sources).toContain('原片预览');
-    expect(sources).toContain('allowOriginalPreview');
-    expect(sources).toContain('updateOriginalPreview');
+    expect(sources).not.toContain('原片预览');
+    expect(sources).not.toContain('updateOriginalPreview');
   });
 
   it('exports the current organized or favorite page through the desktop CSV API', () => {

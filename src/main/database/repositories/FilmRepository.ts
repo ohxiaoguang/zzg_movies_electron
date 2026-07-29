@@ -8,6 +8,9 @@ import type {
   FilmDetailDto,
   FilmImageDto,
   FilmPartDto,
+  FilmSegmentCreateInput,
+  FilmSegmentDto,
+  FilmSegmentUpdateInput,
   FilmPageDto,
   FilmPageQuery,
   FilmSummaryDto,
@@ -15,7 +18,7 @@ import type {
   GenreDto,
   TagDto,
 } from '../../../shared/contracts';
-import type { FilmCsvRow } from '../../export/FilmCsvExporter';
+import type { FilmCsvHighlight, FilmCsvRow } from '../../export/FilmCsvExporter';
 import type { AssetType } from '../../../shared/enums';
 import type { FilmCandidate, FilmFileCandidate } from '../../scanner/ScanCandidate';
 import { normalizeRelativePath, physicalFileKey } from '../../scanner/PartNaming';
@@ -41,6 +44,7 @@ interface FilmSummaryRow {
   existing_file_count: number;
   missing_file_count: number;
   archived: number;
+  segment_count: number;
 }
 
 interface FilmRow extends FilmSummaryRow {
@@ -105,6 +109,24 @@ interface AssetRow {
   missing: number;
 }
 
+interface FilmSegmentRow {
+  id: string;
+  film_id: string;
+  film_file_id: string;
+  start_seconds: number;
+  end_seconds: number;
+  title: string;
+  comment: string;
+  include_in_preview: number;
+  sort_order: number;
+  source_file_size: number;
+  source_file_modified_at: string | null;
+  current_file_size: number;
+  current_file_modified_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ExistingFilmRow {
   id: string;
   relative_path: string;
@@ -163,6 +185,8 @@ export class FilmRepository {
                 f.missing, f.archived, f.updated_at, s.root_path AS source_root_path,
                 s.deleted_at AS source_deleted_at,
                 s.allow_original_preview AS source_allow_original_preview,
+                (SELECT COUNT(*) FROM film_segment segment
+                 WHERE segment.film_id = f.id AND segment.include_in_preview = 1) AS segment_count,
                 COUNT(ff.id) AS total_file_count,
                 COALESCE(SUM(CASE WHEN ff.missing = 0 THEN 1 ELSE 0 END), 0) AS existing_file_count,
                 COALESCE(SUM(CASE WHEN ff.missing = 1 THEN 1 ELSE 0 END), 0) AS missing_file_count
@@ -221,15 +245,41 @@ export class FilmRepository {
   }
 
   public csvRows(query: FilmPageQuery): FilmCsvRow[] {
-    const exportQuery: FilmPageQuery = { ...query, organizationState: 'organized', allData: false, missingOnly: false };
+    const favoriteScope = query.favoriteOnly && query.organizationState !== 'organized';
+    const exportQuery: FilmPageQuery = {
+      ...query,
+      organizationState: favoriteScope ? 'all' : 'organized',
+      allData: false,
+      missingOnly: false,
+    };
     const { where, params } = this.buildWhere(exportQuery);
     const rows = this.db.prepare(
-      `SELECT f.id, f.filename, f.title, f.actors_json, f.plot, f.outline
+      `SELECT f.id, f.filename, f.title, f.actors_json, f.plot, f.outline,
+              (SELECT json_group_array(json_object(
+                 'fileName', export_segment.filename,
+                 'relativePath', export_segment.relative_path,
+                 'partLabel', export_segment.part_label,
+                 'title', export_segment.title,
+                 'startSeconds', export_segment.start_seconds,
+                 'endSeconds', export_segment.end_seconds
+               ))
+               FROM (
+                 SELECT segment.title, segment.start_seconds, segment.end_seconds,
+                        segment_file.filename, segment_file.relative_path,
+                        CASE
+                          WHEN segment_file.part_type = 'single' THEN '单文件'
+                          ELSE UPPER(segment_file.part_type) || ' ' || segment_file.part_number
+                        END AS part_label
+                 FROM film_segment segment
+                 JOIN film_file segment_file ON segment_file.id = segment.film_file_id
+                 WHERE segment.film_id = f.id AND segment.include_in_preview = 1
+                 ORDER BY segment.sort_order, segment.start_seconds, segment.id
+               ) export_segment) AS highlights_json
        FROM film f JOIN media_source s ON s.id = f.source_id
        ${where}
        AND EXISTS (SELECT 1 FROM film_file export_ff WHERE export_ff.film_id = f.id AND export_ff.missing = 0)
        ORDER BY ${this.orderBy(exportQuery.sort)}`,
-    ).all(...params) as Array<{ id: string; filename: string; title: string; actors_json: string; plot: string | null; outline: string | null }>;
+    ).all(...params) as Array<{ id: string; filename: string; title: string; actors_json: string; plot: string | null; outline: string | null; highlights_json: string | null }>;
     const categoryMap = this.categoriesForFilms(rows.map((row) => row.id));
     return rows.map((row) => ({
       filename: row.filename,
@@ -237,6 +287,7 @@ export class FilmRepository {
       customCategories: (categoryMap.get(row.id) ?? []).map((category) => category.name),
       actors: jsonArray(row.actors_json),
       nfoSummary: row.plot?.trim() || row.outline?.trim() || '',
+      highlights: csvHighlights(row.highlights_json),
     }));
   }
 
@@ -251,6 +302,8 @@ export class FilmRepository {
                 f.archived, f.imported_at, f.updated_at, f.last_seen_at,
                 s.name AS source_name, s.root_path AS source_root_path, s.deleted_at AS source_deleted_at,
                 s.allow_original_preview AS source_allow_original_preview,
+                (SELECT COUNT(*) FROM film_segment segment
+                 WHERE segment.film_id = f.id AND segment.include_in_preview = 1) AS segment_count,
                 COUNT(ff.id) AS total_file_count,
                 COALESCE(SUM(CASE WHEN ff.missing = 0 THEN 1 ELSE 0 END), 0) AS existing_file_count,
                 COALESCE(SUM(CASE WHEN ff.missing = 1 THEN 1 ELSE 0 END), 0) AS missing_file_count
@@ -285,6 +338,7 @@ export class FilmRepository {
     const categories = this.categoriesForFilms([id]).get(id) ?? [];
     const summary = this.toSummary(row, assets, categories);
     const parts = this.partsForFilm(id);
+    const segments = this.segmentsForFilm(id);
     const images = assets
       .filter((asset): asset is FilmImageDto => ['poster', 'fanart', 'thumb', 'extra_fanart'].includes(asset.assetType) && !asset.missing)
       .sort((left, right) => imagePriority(left.assetType) - imagePriority(right.assetType) || left.sortOrder - right.sortOrder)
@@ -319,8 +373,87 @@ export class FilmRepository {
       assets,
       parts,
       images,
+      segments,
       availability: summary.availability,
     };
+  }
+
+  public createSegment(input: FilmSegmentCreateInput): FilmSegmentDto {
+    const part = this.db
+      .prepare(
+        `SELECT id, film_id, file_size, file_modified_at
+         FROM film_file WHERE id = ? AND film_id = ?`,
+      )
+      .get(input.filmFileId, input.filmId) as {
+        id: string;
+        film_id: string;
+        file_size: number;
+        file_modified_at: string | null;
+      } | undefined;
+    if (!part) throw new Error('FILM_PART_NOT_FOUND');
+    const now = new Date().toISOString();
+    const id = randomUUID();
+    const nextOrder = this.db
+      .prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS value FROM film_segment WHERE film_id = ?')
+      .get(input.filmId) as { value: number };
+    this.db
+      .prepare(
+        `INSERT INTO film_segment (
+           id, film_id, film_file_id, start_seconds, end_seconds, title, comment,
+           include_in_preview, sort_order, source_file_size, source_file_modified_at,
+           created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        input.filmId,
+        input.filmFileId,
+        input.startSeconds,
+        input.endSeconds,
+        input.title ?? '',
+        input.comment ?? '',
+        input.includeInPreview === false ? 0 : 1,
+        Number(nextOrder.value),
+        part.file_size,
+        part.file_modified_at,
+        now,
+        now,
+      );
+    return this.segmentById(id)!;
+  }
+
+  public updateSegment(input: FilmSegmentUpdateInput): FilmSegmentDto {
+    const existing = this.segmentById(input.id);
+    if (!existing) throw new Error('FILM_SEGMENT_NOT_FOUND');
+    const startSeconds = input.startSeconds ?? existing.startSeconds;
+    const endSeconds = input.endSeconds ?? existing.endSeconds;
+    if (endSeconds <= startSeconds) throw new Error('INVALID_FILM_SEGMENT_RANGE');
+    this.db
+      .prepare(
+        `UPDATE film_segment SET
+           start_seconds = ?, end_seconds = ?, title = ?, comment = ?,
+           include_in_preview = ?, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(
+        startSeconds,
+        endSeconds,
+        input.title ?? existing.title,
+        input.comment ?? existing.comment,
+        (input.includeInPreview ?? existing.includeInPreview) ? 1 : 0,
+        new Date().toISOString(),
+        input.id,
+      );
+    return this.segmentById(input.id)!;
+  }
+
+  public deleteSegment(id: string): void {
+    const result = this.db.prepare('DELETE FROM film_segment WHERE id = ?').run(id);
+    if (result.changes !== 1) throw new Error('FILM_SEGMENT_NOT_FOUND');
+  }
+
+  public segments(filmId: string): FilmSegmentDto[] {
+    return this.segmentsForFilm(filmId);
   }
 
   public update(input: FilmUpdateInput): FilmDetailDto {
@@ -1004,6 +1137,53 @@ export class FilmRepository {
     }));
   }
 
+  private segmentsForFilm(filmId: string): FilmSegmentDto[] {
+    const rows = this.db
+      .prepare(
+        `SELECT segment.*,
+                file.file_size AS current_file_size,
+                file.file_modified_at AS current_file_modified_at
+         FROM film_segment segment
+         JOIN film_file file ON file.id = segment.film_file_id
+         WHERE segment.film_id = ?
+         ORDER BY segment.sort_order, file.part_number, segment.start_seconds, segment.id`,
+      )
+      .all(filmId) as FilmSegmentRow[];
+    return rows.map((row) => this.toSegment(row));
+  }
+
+  private segmentById(id: string): FilmSegmentDto | null {
+    const row = this.db
+      .prepare(
+        `SELECT segment.*,
+                file.file_size AS current_file_size,
+                file.file_modified_at AS current_file_modified_at
+         FROM film_segment segment
+         JOIN film_file file ON file.id = segment.film_file_id
+         WHERE segment.id = ?`,
+      )
+      .get(id) as FilmSegmentRow | undefined;
+    return row ? this.toSegment(row) : null;
+  }
+
+  private toSegment(row: FilmSegmentRow): FilmSegmentDto {
+    return {
+      id: row.id,
+      filmId: row.film_id,
+      filmFileId: row.film_file_id,
+      startSeconds: Number(row.start_seconds),
+      endSeconds: Number(row.end_seconds),
+      title: row.title,
+      comment: row.comment,
+      includeInPreview: Boolean(row.include_in_preview),
+      sortOrder: Number(row.sort_order),
+      sourceChanged: Number(row.source_file_size) !== Number(row.current_file_size)
+        || row.source_file_modified_at !== row.current_file_modified_at,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
   private syncFiles(filmId: string, sourceId: string, candidates: FilmFileCandidate[], now: string): void {
     const existing = this.db.prepare('SELECT * FROM film_file WHERE film_id = ? ORDER BY created_at, id').all(filmId) as FilmFileRow[];
     const touched = new Set<string>();
@@ -1223,6 +1403,7 @@ export class FilmRepository {
       previewAssetId: preview?.id ?? null,
       allowOriginalPreview: Boolean(row.source_allow_original_preview),
       previewImageAssetIds: images,
+      highlightSegmentCount: Number(row.segment_count) || 0,
       updatedAt: row.updated_at,
       availability,
       totalFileCount,
@@ -1401,6 +1582,41 @@ function jsonArray(value: string): string[] {
   } catch {
     return [];
   }
+}
+
+function csvHighlights(value: string | null): FilmCsvHighlight[] {
+  try {
+    const parsed = JSON.parse(value || '[]') as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((item) => {
+      if (!item || typeof item !== 'object') return [];
+      const record = item as Record<string, unknown>;
+      const startSeconds = Number(record.startSeconds);
+      const endSeconds = Number(record.endSeconds);
+      if (!Number.isFinite(startSeconds) || !Number.isFinite(endSeconds) || endSeconds <= startSeconds) return [];
+      return [{
+        fileName: typeof record.fileName === 'string' ? record.fileName : '',
+        relativePath: typeof record.relativePath === 'string' ? record.relativePath : '',
+        partLabel: typeof record.partLabel === 'string' ? record.partLabel : '',
+        title: typeof record.title === 'string' && record.title.trim() ? record.title.trim() : '未命名片段',
+        startSeconds,
+        endSeconds,
+        timeRange: `${formatCsvTime(startSeconds)} → ${formatCsvTime(endSeconds)}`,
+      }];
+    });
+  } catch {
+    return [];
+  }
+}
+
+function formatCsvTime(seconds: number): string {
+  const milliseconds = Math.max(0, Math.round(seconds * 1000));
+  const hours = Math.floor(milliseconds / 3_600_000);
+  const minutes = Math.floor((milliseconds % 3_600_000) / 60_000);
+  const wholeSeconds = Math.floor((milliseconds % 60_000) / 1000);
+  const remainder = milliseconds % 1000;
+  const base = [hours, minutes, wholeSeconds].map((part) => String(part).padStart(2, '0')).join(':');
+  return remainder ? `${base}.${String(remainder).padStart(3, '0').replace(/0+$/, '')}` : base;
 }
 
 function uniqueNames(names: string[]): string[] {

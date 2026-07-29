@@ -40,7 +40,7 @@ export class MediaProtocol {
       const sourceStat = await fs.promises.stat(sourceFilePath);
       if (!sourceStat.isFile()) return new Response('Not Found', { status: 404 });
       let filePath = sourceFilePath;
-      if (route.kind === 'preview') {
+      if (route.kind === 'preview' || route.kind === 'part') {
         const cachedPath = await this.previewTranscoder.preparePlayableFile(sourceFilePath, request.signal);
         if (request.signal.aborted) return new Response(null, { status: 204 });
         filePath = cachedPath;
@@ -84,17 +84,18 @@ export class MediaProtocol {
     if (kind === 'asset') return this.films.assetLocation(id);
     if (kind === 'preview') return this.films.previewLocation(id);
     if (kind === 'poster') return this.films.preferredAssetLocation(id, ['poster']);
+    if (kind === 'part') return this.films.partLocation(id);
     return null;
   }
 }
 
-export function parseMediaUrl(requestUrl: string): { kind: 'asset' | 'preview' | 'poster'; id: string } | null {
+export function parseMediaUrl(requestUrl: string): { kind: 'asset' | 'preview' | 'poster' | 'part'; id: string } | null {
   try {
     const url = new URL(requestUrl);
     if (url.search || url.hash) return null;
-    const kind = url.hostname as 'asset' | 'preview' | 'poster';
+    const kind = url.hostname as 'asset' | 'preview' | 'poster' | 'part';
     const id = url.pathname.split('/').filter(Boolean);
-    if (!['asset', 'preview', 'poster'].includes(kind) || id.length !== 1 || !isUuid(id[0])) return null;
+    if (!['asset', 'preview', 'poster', 'part'].includes(kind) || id.length !== 1 || !isUuid(id[0])) return null;
     return { kind, id: id[0] };
   } catch {
     return null;

@@ -15,6 +15,11 @@ import type {
 } from '../../shared/contracts';
 import { isRecord, isUuid } from '../../shared/validation';
 import {
+  validateFilmSegmentCreate,
+  validateFilmSegmentDelete,
+  validateFilmSegmentUpdate,
+} from '../../shared/filmSegmentValidation';
+import {
   validateCategoryCreate,
   validateCategoryRemove,
   validateCategoryRename,
@@ -169,6 +174,16 @@ export function registerIpcHandlers(context: IpcContext): () => void {
   handle(IPC_CHANNELS.filmsPartsShowInFolder, async (_event, payload) => {
     if (!isUuid(payload)) throw new Error('INVALID_PART_ID');
     await context.fileOpen.showPartInFolder(payload);
+    return null;
+  });
+  handle(IPC_CHANNELS.filmSegmentsCreate, (_event, payload) => (
+    context.management.createSegment(validateFilmSegmentCreate(payload))
+  ));
+  handle(IPC_CHANNELS.filmSegmentsUpdate, (_event, payload) => (
+    context.management.updateSegment(validateFilmSegmentUpdate(payload))
+  ));
+  handle(IPC_CHANNELS.filmSegmentsDelete, (_event, payload) => {
+    context.management.deleteSegment(validateFilmSegmentDelete(payload));
     return null;
   });
   handle(IPC_CHANNELS.filmsRecordsPageAll, (_event, payload) => context.films.page({ ...context.libraryRead.pageQuery(payload), allData: true }));

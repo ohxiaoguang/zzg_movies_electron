@@ -115,6 +115,10 @@ describe('web playback pipeline', () => {
     expect(cudaArgs).toContain('scale_cuda=w=\'min(1920,iw)\':h=-2:format=yuv420p');
     expect(cudaArgs).toContain('h264_nvenc');
     expect(cudaArgs).not.toContain('libx264');
+
+    const rangedArgs = buildHlsTranscodeArgs('movie.mkv', 'cache', videoTranscode, 'software', 600, 780);
+    expect(rangedArgs.slice(rangedArgs.indexOf('-ss'), rangedArgs.indexOf('-ss') + 2)).toEqual(['-ss', '600']);
+    expect(rangedArgs.slice(rangedArgs.indexOf('-t'), rangedArgs.indexOf('-t') + 2)).toEqual(['-t', '180']);
   });
 
   it('keeps cache identity tied to source revisions and playback profile', () => {
@@ -129,6 +133,7 @@ describe('web playback pipeline', () => {
     expect(playbackCacheKey('C:\\Movies\\movie.mkv', 101, 1_000, plan)).not.toBe(first);
     expect(playbackCacheKey('C:\\Movies\\movie.mkv', 100, 2_000, plan)).not.toBe(first);
     expect(playbackCacheKey('C:\\Movies\\movie.mkv', 100, 1_000, { ...plan, audioMode: 'transcode' })).not.toBe(first);
+    expect(playbackCacheKey('C:\\Movies\\movie.mkv', 100, 1_000, plan, 10, 20)).not.toBe(first);
   });
 
   it('waits for the first referenced HLS segment to exist and manages the configured cache safely', async () => {
@@ -251,6 +256,22 @@ describe('web playback pipeline', () => {
     const resumed = await service.create({ filmId }, 'device-a');
     expect(resumed).toMatchObject({ playbackPositionSeconds: 12.5, durationSeconds: 90 });
     service.cancel(resumed.id, 'device-a');
+    const segment = await service.create({
+      partId: '22222222-2222-4222-8222-222222222222',
+      purpose: 'segment-preview',
+      startSeconds: 20,
+      endSeconds: 30,
+    }, 'device-a');
+    expect(segment).toMatchObject({
+      playbackPositionSeconds: 0,
+      durationSeconds: 10,
+      sourceStartSeconds: 20,
+      sourceEndSeconds: 30,
+    });
+    expect(films.markPlayed).toHaveBeenCalledTimes(2);
+    service.updateProgress(segment.id, 'device-a', { positionSeconds: 5, durationSeconds: 10 });
+    expect(films.updatePlaybackProgress).toHaveBeenCalledTimes(1);
+    service.cancel(segment.id, 'device-a');
     await service.stop();
   });
 
@@ -259,6 +280,23 @@ describe('web playback pipeline', () => {
     const partId = '22222222-2222-4222-8222-222222222222';
     expect(validatePlaybackSessionCreate({ filmId })).toEqual({ filmId });
     expect(validatePlaybackSessionCreate({ partId })).toEqual({ partId });
+    expect(validatePlaybackSessionCreate({
+      partId,
+      purpose: 'segment-preview',
+      startSeconds: 10,
+      endSeconds: 20,
+    })).toEqual({
+      partId,
+      purpose: 'segment-preview',
+      startSeconds: 10,
+      endSeconds: 20,
+    });
+    expect(() => validatePlaybackSessionCreate({
+      partId,
+      purpose: 'segment-preview',
+      startSeconds: 20,
+      endSeconds: 10,
+    })).toThrow('INVALID_PLAYBACK_REQUEST');
     expect(() => validatePlaybackSessionCreate({ filmId, partId })).toThrow('INVALID_PLAYBACK_REQUEST');
     expect(() => validatePlaybackSessionCreate({ filmId: 'C:\\secret.mkv' })).toThrow('INVALID_PLAYBACK_REQUEST');
     expect(validatePlaybackProgress({ positionSeconds: 12.34567, durationSeconds: 100 }))

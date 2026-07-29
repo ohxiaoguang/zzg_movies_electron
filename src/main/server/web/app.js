@@ -156,10 +156,11 @@ function bindEvents() {
   elements.nextPage.addEventListener('click', () => {
     if (state.page < state.totalPages) { state.page += 1; void loadFilms(); }
   });
-  elements.closeDetail.addEventListener('click', () => elements.filmDetail.close());
-  elements.filmDetail.addEventListener('close', releaseActivePlayback);
+  elements.closeDetail.addEventListener('click', closeFilmDetail);
+  elements.filmDetail.addEventListener('close', stopDetailPlayback);
+  elements.filmDetail.addEventListener('cancel', stopDetailPlayback);
   elements.filmDetail.addEventListener('click', (event) => {
-    if (event.target === elements.filmDetail) elements.filmDetail.close();
+    if (event.target === elements.filmDetail) closeFilmDetail();
   });
   elements.deviceName.value = defaultDeviceName();
   elements.pairingForm.addEventListener('submit', (event) => {
@@ -169,6 +170,20 @@ function bindEvents() {
   elements.deviceRevoke.addEventListener('click', () => void revokeDevice());
   elements.settingsDeviceRevoke.addEventListener('click', () => void revokeDevice());
   elements.createCategory.addEventListener('click', () => void createCategory());
+}
+
+function closeFilmDetail() {
+  stopDetailPlayback();
+  if (elements.filmDetail.open) elements.filmDetail.close();
+}
+
+function stopDetailPlayback() {
+  releaseActivePlayback();
+  for (const video of elements.detailContent.querySelectorAll('video')) {
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+  }
 }
 
 function populateFilters(filters) {
@@ -487,24 +502,16 @@ async function showDetail(id) {
 function renderDetail(film) {
   releaseActivePlayback();
   const mediaNavigation = createDetailMediaNavigation();
-  const preview = createPreviewPlayer(film);
-  const original = createOriginalPlayback(film);
-  const partsSection = createPartsSection(film, original);
-  const content = [
-    createDetailHeader(film, mediaNavigation.element),
-    createMediaSection(film, preview, original, mediaNavigation),
-  ];
-  if (partsSection) content.push(partsSection);
-  content.push(
-    createLocalMetadataSection(film),
-    createNfoTagsSection(film),
-    createNfoSummarySection(film),
-    createFileInfoSection(film),
-  );
-  elements.detailContent.replaceChildren(...content);
+  const playback = createUnifiedPlayback(film);
+  const layout = createElement('div', 'detail-layout-grid');
+  const main = createElement('main', 'detail-main-column');
+  main.append(playback.section, createMediaSection(film, playback, mediaNavigation));
+  layout.append(createDetailHeader(film, mediaNavigation.element, playback), main);
+  elements.detailContent.replaceChildren(layout);
+  playback.activate();
 }
 
-function createDetailHeader(film, mediaNavigation) {
+function createDetailHeader(film, mediaNavigation, playback) {
   const header = createElement('header', 'detail-header');
   const poster = createElement('div', 'detail-poster');
   if (film.posterAssetId) {
@@ -541,8 +548,27 @@ function createDetailHeader(film, mediaNavigation) {
   main.append(titleRow);
   if (availability) main.append(availability);
   main.append(categories);
+  const sidebarInfo = createElement('div', 'detail-sidebar-info');
+  const basicInfo = createSidebarDisclosure('基本信息', [
+    createLocalMetadataSection(film),
+    createNfoTagsSection(film),
+    createNfoSummarySection(film),
+  ]);
+  const detailsContent = [];
+  const partsSection = createPartsSection(film, playback);
+  if (partsSection) detailsContent.push(partsSection);
+  detailsContent.push(createFileInfoSection(film));
+  sidebarInfo.append(basicInfo, createSidebarDisclosure('详细信息', detailsContent));
+  main.append(sidebarInfo);
   header.append(poster, main);
   return header;
+}
+
+function createSidebarDisclosure(title, content, open = false) {
+  const disclosure = createElement('details', 'detail-sidebar-disclosure');
+  disclosure.open = open;
+  disclosure.append(createElement('summary', '', title), ...content);
+  return disclosure;
 }
 
 function createDetailMediaNavigation() {
@@ -629,44 +655,29 @@ function createCategoryEditor(film) {
   return section;
 }
 
-function createMediaSection(film, preview, original, navigation) {
+function createMediaSection(film, playback, navigation) {
   const section = createElement('section', 'detail-section media-section');
   const tabs = createElement('div', 'detail-tabs');
-  const previewButton = actionButton('预览视频', () => activate('preview'), 'detail-tab active');
+  const highlightsButton = actionButton('精彩片段', () => activate('highlights'), 'detail-tab active');
   const imageButton = actionButton('图片图库', () => activate('images'), 'detail-tab');
-  const originalButton = actionButton('原片', () => activate('original'), 'detail-tab');
-  tabs.append(previewButton, imageButton, originalButton);
-  const previewPanel = createElement('div', 'detail-tab-panel');
-  previewPanel.dataset.tab = 'preview';
-  previewPanel.append(preview.section);
+  tabs.append(highlightsButton, imageButton);
+  const highlightsPanel = createElement('div', 'detail-tab-panel');
+  highlightsPanel.dataset.tab = 'highlights';
+  highlightsPanel.append(playback.segmentsPanel);
   const imagePanel = createElement('div', 'detail-tab-panel');
   imagePanel.dataset.tab = 'images';
   imagePanel.hidden = true;
   const gallery = film.images.length ? createGallery(film) : null;
   imagePanel.append(gallery?.section || createElement('p', 'media-empty', '暂无图片'));
-  const originalPanel = createElement('div', 'detail-tab-panel');
-  originalPanel.dataset.tab = 'original';
-  originalPanel.hidden = true;
-  originalPanel.append(original.section);
-  const panels = [previewPanel, imagePanel, originalPanel];
+  const panels = [highlightsPanel, imagePanel];
   function activate(name) {
-    previewButton.classList.toggle('active', name === 'preview');
+    highlightsButton.classList.toggle('active', name === 'highlights');
     imageButton.classList.toggle('active', name === 'images');
-    originalButton.classList.toggle('active', name === 'original');
     for (const panel of panels) panel.hidden = panel.dataset.tab !== name;
-    if (name === 'preview') {
-      preview.activate();
-      navigation.setMode(preview.canSeek ? {
-        backward: () => preview.seek(-10),
-        forward: () => preview.seek(10),
-        backTitle: '后退 10 秒',
-        forwardTitle: '前进 10 秒',
-      } : {});
-    } else if (name === 'original') {
-      original.activate();
-      navigation.setMode(original.canSeek ? {
-        backward: () => original.seek(-10),
-        forward: () => original.seek(10),
+    if (name !== 'images') {
+      navigation.setMode(playback.canSeek ? {
+        backward: () => playback.seek(-10),
+        forward: () => playback.seek(10),
         backTitle: '后退 10 秒',
         forwardTitle: '前进 10 秒',
       } : {});
@@ -680,19 +691,26 @@ function createMediaSection(film, preview, original, navigation) {
       } : {});
     }
   }
-  section.addEventListener('playback:reveal', () => activate('original'));
+  section.addEventListener('playback:reveal', () => activate('highlights'));
   section.append(tabs, ...panels);
-  activate('preview');
+  activate('highlights');
   return section;
 }
 
 function createGallery(film) {
   const gallery = createElement('div', 'detail-gallery');
-  const main = createElement('div', 'gallery-main');
+  const thumbnails = createElement('div', 'gallery-thumbnail-grid');
+  const lightbox = createElement('div', 'gallery-lightbox');
+  const stage = createElement('div', 'gallery-lightbox-stage');
   const image = document.createElement('img');
-  image.alt = `${film.title} 图片`;
   const count = createElement('span', 'gallery-count');
-  const thumbnails = createElement('div', 'gallery-thumbs');
+  const close = actionButton('×', () => closeViewer(), 'gallery-close');
+  lightbox.hidden = true;
+  lightbox.tabIndex = -1;
+  lightbox.setAttribute('role', 'dialog');
+  lightbox.setAttribute('aria-modal', 'true');
+  lightbox.setAttribute('aria-label', `${film.title} 图片查看器`);
+  image.alt = `${film.title} 图片`;
   let index = 0;
   const show = (next) => {
     index = (next + film.images.length) % film.images.length;
@@ -700,20 +718,33 @@ function createGallery(film) {
     count.textContent = `${index + 1} / ${film.images.length}`;
     const items = [...thumbnails.children];
     items.forEach((item, itemIndex) => item.classList.toggle('active', itemIndex === index));
-    const activeThumbnail = items[index];
-    window.requestAnimationFrame(() => {
-      if (!activeThumbnail?.isConnected) return;
-      activeThumbnail.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-    });
+    lightbox.hidden = false;
+    window.requestAnimationFrame(() => lightbox.focus());
   };
-  main.append(image);
+  function closeViewer() {
+    lightbox.hidden = true;
+  }
+  stage.append(image, close, count);
   if (film.images.length > 1) {
-    main.append(
+    stage.append(
       actionButton('‹', () => show(index - 1), 'gallery-arrow left'),
       actionButton('›', () => show(index + 1), 'gallery-arrow right'),
-      count,
     );
   }
+  lightbox.append(stage);
+  lightbox.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      closeViewer();
+    } else if (event.key === 'ArrowLeft' && film.images.length > 1) {
+      event.preventDefault();
+      show(index - 1);
+    } else if (event.key === 'ArrowRight' && film.images.length > 1) {
+      event.preventDefault();
+      show(index + 1);
+    }
+  });
   film.images.forEach((item, itemIndex) => {
     const button = actionButton('', () => show(itemIndex));
     const thumbnail = document.createElement('img');
@@ -722,8 +753,7 @@ function createGallery(film) {
     button.append(thumbnail);
     thumbnails.append(button);
   });
-  gallery.append(main, thumbnails);
-  show(0);
+  gallery.append(thumbnails, lightbox);
   return {
     section: gallery,
     canStep: film.images.length > 1,
@@ -871,43 +901,16 @@ function createFileInfoSection(film) {
   return section;
 }
 
-function createPreviewPlayer(film) {
-  const section = createElement('section', 'web-playback');
-  const status = createElement('small', 'muted');
-  status.classList.add('playback-status');
-  const video = document.createElement('video');
-  video.controls = true;
-  video.playsInline = true;
-  video.preload = 'metadata';
-  const hasPreview = Boolean(film.previewAssetId || film.allowOriginalPreview);
-  if (hasPreview) {
-    attachPreview(video, status, film.id);
-    section.append(status, video);
-  } else {
-    status.textContent = '暂无预览视频，请切换到“原片”页签';
-    section.append(status, createElement('p', 'media-empty', '暂无预览视频'));
-  }
-  return {
-    section,
-    canSeek: hasPreview,
-    activate() {
-      if (!hasPreview || state.playback?.video === video) return;
-      releaseActivePlayback();
-      attachPreview(video, status, film.id);
-    },
-    seek(deltaSeconds) {
-      seekVideoBy(video, deltaSeconds);
-    },
-  };
-}
-
-function createOriginalPlayback(film) {
-  const section = createElement('section', 'web-playback');
+function createUnifiedPlayback(film) {
+  const section = createElement('section', 'web-playback unified-playback');
   const status = createElement('small', 'muted playback-status');
   const video = document.createElement('video');
   video.controls = true;
   video.playsInline = true;
   video.preload = 'metadata';
+  const videoFrame = createElement('div', 'segment-video-frame');
+  const segmentLabel = createElement('div', 'segment-current-label');
+  videoFrame.append(video, segmentLabel);
   video.addEventListener('loadedmetadata', () => {
     const active = state.playback;
     if (active?.video === video) active.mediaReady = true;
@@ -918,14 +921,82 @@ function createOriginalPlayback(film) {
   resetSubtitlePicker(subtitleSelect);
   subtitleSelect.addEventListener('change', () => selectSubtitleTrack(video, subtitleSelect.value));
   const parts = film.parts.filter((part) => !part.missing);
+  const allSegments = film.segments || [];
+  const previewSegments = allSegments.filter((segment) => segment.includeInPreview);
+  const segmentsPanel = createElement('div', 'web-segments-panel');
+  let activeSegmentIndex = -1;
+  let activeSegment = null;
+  let activeSegmentSession = null;
+
   if (!parts.length) {
     status.textContent = '原片文件当前不可用';
-  } else if (parts.length > 1) {
-    status.textContent = '请选择要播放的分段';
   } else {
-    status.textContent = '切换到“原片”页签后开始播放';
+    status.textContent = allSegments.length
+      ? `${allSegments.length} 个片段标注 · 点击播放原片或选择精彩片段`
+      : '点击播放原片';
   }
+
+  const clearSegmentMode = () => {
+    activeSegmentIndex = -1;
+    activeSegment = null;
+    activeSegmentSession = null;
+    segmentLabel.replaceChildren();
+  };
+  const playOriginal = async (partId = null) => {
+    clearSegmentMode();
+    await startAdaptivePlayback(
+      video,
+      status,
+      partId ? { partId } : { filmId: film.id },
+      subtitleSelect,
+    );
+  };
+  const playSegment = async (segment, sequencePosition = -1) => {
+    activeSegmentIndex = sequencePosition;
+    activeSegment = segment;
+    segmentLabel.replaceChildren(
+      createElement('strong', '', segment.title || '未命名片段'),
+      createElement('span', '', `${formatPlaybackTime(segment.startSeconds)} → ${formatPlaybackTime(segment.endSeconds)}`),
+    );
+    status.textContent = `正在准备 ${segment.title || '未命名片段'}…`;
+    activeSegmentSession = await startAdaptivePlayback(video, status, {
+      partId: segment.filmFileId,
+      purpose: 'segment-preview',
+      startSeconds: segment.startSeconds,
+      endSeconds: segment.endSeconds,
+    });
+    if (activeSegmentSession) {
+      status.textContent = `${segment.title || '未命名片段'} · ${formatPlaybackTime(segment.startSeconds)}–${formatPlaybackTime(segment.endSeconds)}`;
+    }
+  };
+  const playSegmentAt = async (index) => {
+    if (index >= previewSegments.length) {
+      clearSegmentMode();
+      video.pause();
+      status.textContent = '精彩片段播放完毕';
+      return;
+    }
+    await playSegment(previewSegments[index], index);
+  };
+  const advanceSegment = () => {
+    if (activeSegmentIndex >= 0) void playSegmentAt(activeSegmentIndex + 1);
+  };
+
   video.addEventListener('timeupdate', () => {
+    if (activeSegment && activeSegmentSession) {
+      const segment = activeSegment;
+      const finished = activeSegmentSession.transport === 'direct'
+        ? video.currentTime + 0.05 >= segment.endSeconds
+        : video.currentTime + 0.05 >= segment.endSeconds - segment.startSeconds;
+      if (finished) {
+        if (activeSegmentIndex >= 0) advanceSegment();
+        else {
+          video.pause();
+          clearSegmentMode();
+        }
+      }
+      return;
+    }
     const active = state.playback;
     if (!active?.sessionId || active.video !== video || Date.now() - active.lastProgressAt < 10_000) return;
     active.lastProgressAt = Date.now();
@@ -935,6 +1006,14 @@ function createOriginalPlayback(film) {
     }).catch(() => undefined);
   });
   video.addEventListener('ended', () => {
+    if (activeSegment) {
+      if (activeSegmentIndex >= 0) advanceSegment();
+      else {
+        clearSegmentMode();
+        status.textContent = '片段播放完毕';
+      }
+      return;
+    }
     const active = state.playback;
     if (!active?.sessionId || active.video !== video) return;
     void client.updatePlaybackProgress(active.sessionId, {
@@ -943,6 +1022,7 @@ function createOriginalPlayback(film) {
     }).catch(() => undefined);
   });
   video.addEventListener('pause', () => {
+    if (activeSegment) return;
     const active = state.playback;
     if (!active?.sessionId || active.video !== video || !(video.currentTime > 0)) return;
     void client.updatePlaybackProgress(active.sessionId, {
@@ -950,59 +1030,91 @@ function createOriginalPlayback(film) {
       ...(Number.isFinite(video.duration) ? { durationSeconds: video.duration } : {}),
     }).catch(() => undefined);
   });
-  section.append(status, video, subtitlePicker);
+  const playerActions = createElement('div', 'unified-player-actions');
+  const playOriginalButton = actionButton('播放 / 继续原片', () => void playOriginal(), 'primary-button');
+  playOriginalButton.disabled = !parts.length;
+  const playHighlightsButton = actionButton('连续播放精彩片段', () => void playSegmentAt(0));
+  playHighlightsButton.disabled = !previewSegments.length;
+  playerActions.append(playOriginalButton, playHighlightsButton);
+  const playerControls = createElement('div', 'player-control-row');
+  playerControls.append(subtitlePicker, playerActions);
+  section.append(status, videoFrame, playerControls);
+
   if (parts.length > 1) {
     const choices = createElement('div', 'original-part-choices');
     for (const part of parts) {
       choices.append(actionButton(
         `${part.partType.toUpperCase()} ${part.partNumber}`,
-        () => void startAdaptivePlayback(video, status, { partId: part.id }, subtitleSelect),
+        () => void playOriginal(part.id),
       ));
     }
     section.append(choices);
   }
+  if (allSegments.length) {
+    const timelines = createElement('div', 'web-segment-timelines');
+    for (const part of film.parts) {
+      const partSegments = allSegments.filter((segment) => segment.filmFileId === part.id);
+      if (!partSegments.length) continue;
+      const duration = Math.max(
+        Number(film.runtimeSeconds) || 0,
+        ...partSegments.map((segment) => segment.endSeconds),
+        1,
+      );
+      const timelineRow = createElement('div', 'web-segment-timeline-row');
+      timelineRow.append(createElement(
+        'span',
+        'web-segment-part-label',
+        part.partType === 'single' ? part.filename : `${part.partType.toUpperCase()} ${part.partNumber}`,
+      ));
+      const track = createElement('div', 'web-segment-timeline');
+      for (const segment of partSegments) {
+        const node = actionButton('', () => void playSegment(segment), 'web-segment-node');
+        node.title = `${segment.title || '未命名片段'} · ${formatPlaybackTime(segment.startSeconds)} → ${formatPlaybackTime(segment.endSeconds)}`;
+        node.setAttribute('aria-label', node.title);
+        node.classList.toggle('disabled', !segment.includeInPreview);
+        node.style.left = `${Math.min(100, (segment.startSeconds / duration) * 100)}%`;
+        node.style.width = `${Math.max(.5, Math.min(100, ((segment.endSeconds - segment.startSeconds) / duration) * 100))}%`;
+        track.append(node);
+      }
+      timelineRow.append(track);
+      timelines.append(timelineRow);
+    }
+    const list = createElement('div', 'web-segment-list');
+    allSegments.forEach((segment, index) => {
+      const row = actionButton('', () => void playSegment(segment), 'web-segment-row');
+      row.append(
+        createElement('strong', '', segment.title || `片段 ${index + 1}`),
+        createElement('span', '', formatPlaybackTime(segment.endSeconds - segment.startSeconds)),
+      );
+      if (!segment.includeInPreview) row.append(createElement('em', '', '不纳入连续预览'));
+      if (segment.sourceChanged) row.append(createElement('em', '', '源文件已变化'));
+      list.append(row);
+    });
+    segmentsPanel.append(timelines, list);
+  } else {
+    segmentsPanel.append(createElement('p', 'segment-empty-hint', '暂无精彩片段；没有片段时，影片卡片将使用图片轮播预览'));
+  }
+
   const reveal = () => {
     section.dispatchEvent(new CustomEvent('playback:reveal', { bubbles: true }));
     section.scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
   return {
     section,
+    segmentsPanel,
     canSeek: parts.length > 0,
     activate() {
       if (!parts.length || state.playback?.video === video) return;
-      if (parts.length === 1) {
-        void startAdaptivePlayback(video, status, { filmId: film.id }, subtitleSelect);
-        return;
-      }
-      releaseActivePlayback();
       resetSubtitlePicker(subtitleSelect);
-      state.playback = { video, hls: null, sessionId: null, lastProgressAt: 0, statusTimer: null, mediaReady: false };
-      status.textContent = '请选择要播放的分段';
     },
     playPart(partId) {
       reveal();
-      void startAdaptivePlayback(video, status, { partId }, subtitleSelect);
+      void playOriginal(partId);
     },
     seek(deltaSeconds) {
       seekVideoBy(video, deltaSeconds);
     },
   };
-}
-
-function attachPreview(video, status, filmId) {
-  video.muted = true;
-  video.src = client.media('previews', filmId);
-  video.load();
-  status.textContent = '正在读取预览视频…';
-  state.playback = { video, hls: null, sessionId: null, lastProgressAt: 0, statusTimer: null };
-  video.addEventListener('loadedmetadata', () => {
-    if (state.playback?.video === video && !state.playback.sessionId) status.textContent = '预览视频已就绪 · 默认静音';
-  }, { once: true });
-  video.addEventListener('error', () => {
-    if (state.playback?.video === video && !state.playback.sessionId) {
-      status.textContent = '预览视频无法播放，可切换到“原片”页签';
-    }
-  }, { once: true });
 }
 
 async function startAdaptivePlayback(video, status, input, subtitleSelect = null) {
@@ -1027,13 +1139,15 @@ async function startAdaptivePlayback(video, status, input, subtitleSelect = null
     const session = await client.createPlaybackSession(input);
     if (state.playback?.video !== video) {
       void client.cancelPlaybackSession(session.id).catch(() => undefined);
-      return;
+      return null;
     }
     state.playback.sessionId = session.id;
     state.playback.resumePositionSeconds = session.playbackPositionSeconds;
     status.textContent = playbackDescription(session);
-    attachSubtitleTracks(video, session.subtitleTracks);
-    if (subtitleSelect) configureSubtitlePicker(subtitleSelect, session.subtitleTracks);
+    if (input.purpose !== 'segment-preview') {
+      attachSubtitleTracks(video, session.subtitleTracks);
+      if (subtitleSelect) configureSubtitlePicker(subtitleSelect, session.subtitleTracks);
+    }
     if (session.transport === 'direct') {
       video.src = session.url;
       video.load();
@@ -1043,17 +1157,22 @@ async function startAdaptivePlayback(video, status, input, subtitleSelect = null
       try {
         await attachHls(video, session.url, status);
       } catch {
-        if (state.playback?.sessionId !== session.id) return;
+        if (state.playback?.sessionId !== session.id) return null;
         status.textContent = '首次播放流尚未就绪，转码完成后会自动重新载入播放器…';
-        return;
+        return null;
       }
     }
-    const resumed = await applyPlaybackPosition(video, session.playbackPositionSeconds);
-    if (resumed) status.textContent = `${playbackDescription(session)} · 从 ${formatPlaybackTime(session.playbackPositionSeconds)} 继续`;
-    if (state.playback?.video !== video) return;
+    const initialPosition = input.purpose === 'segment-preview' && session.transport === 'direct'
+      ? session.sourceStartSeconds
+      : session.playbackPositionSeconds;
+    const resumed = await applyPlaybackPosition(video, initialPosition);
+    if (resumed && input.purpose !== 'segment-preview') status.textContent = `${playbackDescription(session)} · 从 ${formatPlaybackTime(session.playbackPositionSeconds)} 继续`;
+    if (state.playback?.video !== video) return null;
     await video.play().catch(() => undefined);
+    return session;
   } catch (error) {
     status.textContent = errorMessage(error);
+    return null;
   }
 }
 

@@ -13,6 +13,9 @@ import type {
   FilmUpdateInput,
   FilmUpdatePatch,
   FilmNfoImportMode,
+  FilmSegmentCreateInput,
+  FilmSegmentDto,
+  FilmSegmentUpdateInput,
   CustomCategoryDto,
   CustomCategoryCreateInput,
   CustomCategoryRenameInput,
@@ -65,6 +68,9 @@ export interface FilmLibraryApi {
     partsList(filmId: string): Promise<ApiResult<FilmPartDto[]>>;
     partsOpen(partId: string): Promise<ApiResult<null>>;
     partsShowInFolder(partId: string): Promise<ApiResult<null>>;
+    createSegment(input: FilmSegmentCreateInput): Promise<ApiResult<FilmSegmentDto>>;
+    updateSegment(input: FilmSegmentUpdateInput): Promise<ApiResult<FilmSegmentDto>>;
+    deleteSegment(id: string): Promise<ApiResult<null>>;
     recordsPageAll(query: FilmPageQuery): Promise<ApiResult<FilmPageDto>>;
     recordsDelete(input: FilmRecordDeleteInput): Promise<ApiResult<null>>;
     recordsDeleteBatch(input: FilmRecordDeleteBatchInput): Promise<ApiResult<null>>;

@@ -76,6 +76,44 @@ export interface FilmPartDto {
   missing: boolean;
 }
 
+export interface FilmSegmentDto {
+  id: string;
+  filmId: string;
+  filmFileId: string;
+  startSeconds: number;
+  endSeconds: number;
+  title: string;
+  comment: string;
+  includeInPreview: boolean;
+  sortOrder: number;
+  sourceChanged: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FilmSegmentCreateInput {
+  filmId: string;
+  filmFileId: string;
+  startSeconds: number;
+  endSeconds: number;
+  title?: string;
+  comment?: string;
+  includeInPreview?: boolean;
+}
+
+export interface FilmSegmentUpdateInput {
+  id: string;
+  startSeconds?: number;
+  endSeconds?: number;
+  title?: string;
+  comment?: string;
+  includeInPreview?: boolean;
+}
+
+export interface FilmSegmentDeleteInput {
+  id: string;
+}
+
 export interface FilmImageDto extends FilmAssetDto {
   assetType: 'poster' | 'fanart' | 'thumb' | 'extra_fanart';
 }
@@ -120,6 +158,7 @@ export interface FilmSummaryDto {
   previewAssetId: string | null;
   allowOriginalPreview: boolean;
   previewImageAssetIds: string[];
+  highlightSegmentCount: number;
   updatedAt: string;
   availability: FilmAvailability;
   totalFileCount: number;
@@ -157,6 +196,7 @@ export interface FilmDetailDto extends FilmSummaryDto {
   assets: FilmAssetDto[];
   parts: FilmPartDto[];
   images: FilmImageDto[];
+  segments: FilmSegmentDto[];
   availability: FilmAvailability;
 }
 
@@ -424,6 +464,9 @@ export type WebPlaybackState = 'preparing' | 'ready' | 'complete' | 'error' | 'c
 export interface WebPlaybackSessionCreateInput {
   filmId?: string;
   partId?: string;
+  purpose?: 'full' | 'segment-preview';
+  startSeconds?: number;
+  endSeconds?: number;
 }
 
 export interface WebPlaybackProgressInput {
@@ -448,6 +491,8 @@ export interface WebPlaybackSessionDto {
   durationSeconds: number | null;
   processPercent: number | null;
   playbackPositionSeconds: number;
+  sourceStartSeconds: number;
+  sourceEndSeconds: number | null;
   subtitleTracks: Array<{
     index: number;
     codec: string | null;

@@ -10,7 +10,19 @@ export function validatePlaybackSessionCreate(payload: unknown): WebPlaybackSess
   if (hasFilm === hasPart) throw new Error('INVALID_PLAYBACK_REQUEST');
   if (hasFilm && !isUuid(filmId)) throw new Error('INVALID_PLAYBACK_REQUEST');
   if (hasPart && !isUuid(partId)) throw new Error('INVALID_PLAYBACK_REQUEST');
-  return hasFilm ? { filmId } : { partId: partId as string };
+  const purpose = payload.purpose === undefined ? 'full' : payload.purpose;
+  if (purpose !== 'full' && purpose !== 'segment-preview') throw new Error('INVALID_PLAYBACK_REQUEST');
+  if (purpose === 'segment-preview' && !hasPart) throw new Error('INVALID_PLAYBACK_REQUEST');
+  const startSeconds = payload.startSeconds === undefined ? undefined : finiteSeconds(payload.startSeconds);
+  const endSeconds = payload.endSeconds === undefined ? undefined : finiteSeconds(payload.endSeconds);
+  if (purpose === 'segment-preview' && (startSeconds === undefined || endSeconds === undefined || endSeconds <= startSeconds)) {
+    throw new Error('INVALID_PLAYBACK_REQUEST');
+  }
+  if (purpose === 'full' && (startSeconds !== undefined || endSeconds !== undefined)) throw new Error('INVALID_PLAYBACK_REQUEST');
+  return {
+    ...(hasFilm ? { filmId: filmId as string } : { partId: partId as string }),
+    ...(purpose === 'full' ? {} : { purpose, startSeconds, endSeconds }),
+  };
 }
 
 export function validatePlaybackProgress(payload: unknown): WebPlaybackProgressInput {

@@ -11,6 +11,10 @@ import type {
   FilmNfoImportInput,
   FilmPageQuery,
   FilmRecordDeleteConfirmedInput,
+  FilmSegmentCreateInput,
+  FilmSegmentDeleteInput,
+  FilmSegmentDto,
+  FilmSegmentUpdateInput,
   FilmTaxonomyUpdateInput,
   FilmUpdateInput,
   ScanStartDto,
@@ -54,6 +58,18 @@ export class FilmLibraryManagementService {
   public updateTaxonomy(input: FilmTaxonomyUpdateInput): FilmDetailDto {
     const { id, ...taxonomy } = input;
     return this.films.updateTaxonomy(id, taxonomy);
+  }
+
+  public createSegment(input: FilmSegmentCreateInput): FilmSegmentDto {
+    return this.films.createSegment(input);
+  }
+
+  public updateSegment(input: FilmSegmentUpdateInput): FilmSegmentDto {
+    return this.films.updateSegment(input);
+  }
+
+  public deleteSegment(input: FilmSegmentDeleteInput): void {
+    this.films.deleteSegment(input.id);
   }
 
   public batchUpdate(input: FilmBatchUpdateInput): FilmDetailDto[] {
