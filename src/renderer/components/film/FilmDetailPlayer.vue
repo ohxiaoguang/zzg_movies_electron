@@ -14,12 +14,14 @@ const emit = defineEmits<{
 
 const video = ref<HTMLVideoElement | null>(null);
 const stage = ref<HTMLElement | null>(null);
+const stageSlot = ref<HTMLElement | null>(null);
 const selectedPartId = ref('');
 const currentSeconds = ref(0);
 const durationSeconds = ref(0);
 const sequenceIndex = ref(-1);
 const activeSegment = ref<FilmSegmentDto | null>(null);
 const intrinsicSize = ref({ width: 0, height: 0 });
+const stageSize = ref<{ width: string; height: string }>({ width: '100%', height: '100%' });
 const fittedSize = ref<{ width: string; height: string }>({ width: '100%', height: '100%' });
 let stageObserver: ResizeObserver | null = null;
 let playbackGeneration = 0;
@@ -37,6 +39,7 @@ watch(() => props.film.id, () => {
   sequenceIndex.value = -1;
   activeSegment.value = null;
   intrinsicSize.value = { width: 0, height: 0 };
+  stageSize.value = { width: '100%', height: '100%' };
   fittedSize.value = { width: '100%', height: '100%' };
 }, { immediate: true });
 
@@ -48,12 +51,12 @@ watch(selectedPartId, () => {
   emitPosition();
 });
 
-watch(stage, (nextStage) => {
+watch(stageSlot, (nextSlot) => {
   stageObserver?.disconnect();
   stageObserver = null;
-  if (!nextStage) return;
-  stageObserver = new ResizeObserver(() => fitVideoToStage());
-  stageObserver.observe(nextStage);
+  if (!nextSlot) return;
+  stageObserver = new ResizeObserver(() => fitPlayerToSlot());
+  stageObserver.observe(nextSlot);
   void nextTick(fitVideoToStage);
 });
 
@@ -69,16 +72,24 @@ function onLoadedMetadata(): void {
 }
 
 function fitVideoToStage(): void {
-  const container = stage.value;
-  const { width: videoWidth, height: videoHeight } = intrinsicSize.value;
-  if (!container || !videoWidth || !videoHeight) {
-    fittedSize.value = { width: '100%', height: '100%' };
-    return;
-  }
+  fitPlayerToSlot();
+}
+
+function fitPlayerToSlot(): void {
+  const container = stageSlot.value;
+  if (!container) return;
   const availableWidth = container.clientWidth;
   const availableHeight = container.clientHeight;
   if (!availableWidth || !availableHeight) return;
-  const scale = Math.min(availableWidth / videoWidth, availableHeight / videoHeight);
+  const stageWidth = Math.max(1, Math.floor(Math.min(availableWidth, availableHeight * (16 / 9))));
+  const stageHeight = Math.max(1, Math.floor(stageWidth * (9 / 16)));
+  stageSize.value = { width: `${stageWidth}px`, height: `${stageHeight}px` };
+  const { width: videoWidth, height: videoHeight } = intrinsicSize.value;
+  if (!videoWidth || !videoHeight) {
+    fittedSize.value = { width: '100%', height: '100%' };
+    return;
+  }
+  const scale = Math.min(stageWidth / videoWidth, stageHeight / videoHeight);
   fittedSize.value = {
     width: `${Math.max(1, Math.floor(videoWidth * scale))}px`,
     height: `${Math.max(1, Math.floor(videoHeight * scale))}px`,
@@ -234,23 +245,25 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div v-if="source" ref="stage" class="player-stage">
-      <video
-        ref="video"
-        class="detail-player-video"
-        :src="source"
-        :style="fittedSize"
-        :data-video-width="intrinsicSize.width"
-        :data-video-height="intrinsicSize.height"
-        controls
-        playsinline
-        preload="metadata"
-        @loadedmetadata="onLoadedMetadata"
-        @timeupdate="onTimeUpdate"
-      />
-      <div v-if="activeSegment" class="active-segment-label">
-        <strong>{{ activeSegment.title || '未命名片段' }}</strong>
-        <span>{{ formatTime(activeSegment.startSeconds) }} → {{ formatTime(activeSegment.endSeconds) }}</span>
+    <div v-if="source" ref="stageSlot" class="player-stage-slot">
+      <div ref="stage" class="player-stage" :style="stageSize">
+        <video
+          ref="video"
+          class="detail-player-video"
+          :src="source"
+          :style="fittedSize"
+          :data-video-width="intrinsicSize.width"
+          :data-video-height="intrinsicSize.height"
+          controls
+          playsinline
+          preload="metadata"
+          @loadedmetadata="onLoadedMetadata"
+          @timeupdate="onTimeUpdate"
+        />
+        <div v-if="activeSegment" class="active-segment-label">
+          <strong>{{ activeSegment.title || '未命名片段' }}</strong>
+          <span>{{ formatTime(activeSegment.startSeconds) }} → {{ formatTime(activeSegment.endSeconds) }}</span>
+        </div>
       </div>
     </div>
     <div v-else class="player-unavailable">当前没有可播放的影片文件</div>
@@ -284,7 +297,8 @@ onBeforeUnmount(() => {
 .player-context span { overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .player-actions { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: 6px; }
 .part-select { width: min(320px, 32vw); }
-.player-stage { position: relative; display: grid; width: 100%; height: auto; min-height: 0; max-height: 100%; align-self: center; justify-self: center; aspect-ratio: 16 / 9; place-items: center; overflow: hidden; border-radius: 9px; background: #050609; box-shadow: 0 16px 42px rgba(0, 0, 0, .28); }
+.player-stage-slot { display: grid; width: 100%; height: 100%; min-height: 0; place-items: center; overflow: hidden; }
+.player-stage { position: relative; display: grid; max-width: 100%; max-height: 100%; aspect-ratio: 16 / 9; place-items: center; overflow: hidden; border-radius: 9px; background: #050609; box-shadow: 0 16px 42px rgba(0, 0, 0, .28); }
 .detail-player-video { display: block; min-width: 0; min-height: 0; max-width: 100%; max-height: 100%; flex: 0 0 auto; object-fit: contain !important; object-position: 50% 50%; background: #050609; }
 .active-segment-label { position: absolute; z-index: 2; top: 12px; left: 50%; display: flex; max-width: calc(100% - 32px); padding: 6px 11px; border-radius: 7px; color: rgba(255,255,255,.94); background: rgba(0,0,0,.48); font-size: 11px; transform: translateX(-50%); backdrop-filter: blur(4px); gap: 9px; pointer-events: none; }
 .active-segment-label strong, .active-segment-label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

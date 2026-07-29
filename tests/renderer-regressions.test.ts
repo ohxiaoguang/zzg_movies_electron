@@ -129,7 +129,10 @@ describe('renderer regressions', () => {
     expect(detailPlayer).toContain('aspect-ratio: 16 / 9');
     expect(detailPlayer).toContain('element?.videoWidth');
     expect(detailPlayer).toContain('element?.videoHeight');
-    expect(detailPlayer).toContain('Math.min(availableWidth / videoWidth, availableHeight / videoHeight)');
+    expect(detailPlayer).toContain('Math.min(availableWidth, availableHeight * (16 / 9))');
+    expect(detailPlayer).toContain('Math.min(stageWidth / videoWidth, stageHeight / videoHeight)');
+    expect(detailPlayer).toContain('ref="stageSlot" class="player-stage-slot"');
+    expect(detailPlayer).toContain(':style="stageSize"');
     expect(detailPlayer).toContain(':style="fittedSize"');
     expect(drawer).toContain('<FilmDetailPlayer');
     expect(segmentEditor).not.toContain('<video');
