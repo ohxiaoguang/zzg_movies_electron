@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { BrowserWindow } from 'electron';
+import { app, BrowserWindow } from 'electron';
 import type { AppLogger } from '../system/AppLogger';
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string;
@@ -15,6 +15,7 @@ interface CreateMainWindowOptions {
 export function createMainWindow(logger: AppLogger, options: CreateMainWindowOptions = {}): BrowserWindow {
   const preloadPath = path.join(__dirname, 'preload.js');
   const window = new BrowserWindow({
+    title: `Local Film Library v${app.getVersion()}`,
     width: 1480,
     height: 920,
     minWidth: 1120,

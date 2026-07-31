@@ -4,21 +4,28 @@ import { useRoute, useRouter } from 'vue-router';
 import { Film, FolderOpened, CollectionTag, Setting, VideoCamera, Star, Clock, CircleCheck, Files, User } from '@element-plus/icons-vue';
 import { useScanStore } from '../stores/scan';
 import ScanProgressDialog from '../components/scan/ScanProgressDialog.vue';
+import ResonanceBall from '../components/resonance/ResonanceBall.vue';
 import { closeAllHoverPopups } from '../composables/hoverPopupManager';
 
 const router = useRouter();
 const route = useRoute();
 const scan = useScanStore();
 const counts = ref({ all: 0, unorganized: 0, organized: 0, favorite: 0, allData: 0 });
+const appVersion = ref('');
 async function loadCounts(): Promise<void> {
   const result = await window.filmLibrary.films.navigationCounts();
   if (result.ok) counts.value = result.data;
+}
+async function loadAppVersion(): Promise<void> {
+  const result = await window.filmLibrary.app.info();
+  if (result.ok) appVersion.value = `v${result.data.version.replace(/^v/i, '')}`;
 }
 function handleLibraryChanged(): void { void loadCounts(); }
 onMounted(() => {
   scan.listen();
   window.addEventListener('film-library:changed', handleLibraryChanged);
   void loadCounts();
+  void loadAppVersion();
 });
 onBeforeUnmount(() => window.removeEventListener('film-library:changed', handleLibraryChanged));
 watch(() => route.fullPath, () => closeAllHoverPopups());
@@ -46,7 +53,7 @@ function selected(): string {
       <div class="brand-block">
         <div class="brand-mark"><VideoCamera :size="22" /></div>
         <div>
-          <div class="brand-title">LOCAL FILM</div>
+          <div class="brand-title">LOCAL FILM <span v-if="appVersion" class="brand-version">{{ appVersion }}</span></div>
           <div class="brand-subtitle">Library / 本地影库</div>
         </div>
       </div>
@@ -65,17 +72,16 @@ function selected(): string {
         <el-menu-item index="/actors"><User /><span>演员</span></el-menu-item>
         <el-menu-item index="settings"><Setting /><span>设置</span></el-menu-item>
       </el-menu>
-      <div class="sidebar-footer">
-        <span class="status-dot" /> 100% 本地运行
-      </div>
     </el-aside>
     <el-main class="app-main">
       <RouterView />
     </el-main>
   </el-container>
+  <ResonanceBall />
   <ScanProgressDialog v-model="scan.dialogVisible" :progress="scan.progress" @cancel="scan.cancel" @close="scan.closeDialog" />
 </template>
 
 <style scoped>
 .side-menu .el-menu-item small { margin-left: auto; color: var(--subtle); font-size: 10px; }
+.brand-version { color: var(--accent); font-size: 10px; font-weight: 700; letter-spacing: .04em; }
 </style>

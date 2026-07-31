@@ -21,6 +21,7 @@ const settingsPath = path.resolve(process.cwd(), 'src/renderer/views/SettingsVie
 const desktopIntegrationPath = path.resolve(process.cwd(), 'src/main/system/DesktopIntegrationService.ts');
 const themePath = path.resolve(process.cwd(), 'src/renderer/styles/theme.css');
 const rendererIndexPath = path.resolve(process.cwd(), 'src/renderer/index.html');
+const resonancePath = path.resolve(process.cwd(), 'src/renderer/components/resonance/ResonanceBall.vue');
 
 describe('renderer regressions', () => {
   const drawer = fs.readFileSync(drawerPath, 'utf8');
@@ -169,7 +170,7 @@ describe('renderer regressions', () => {
     expect(drawer).not.toContain('<el-tab-pane label="详细信息"');
     expect(segmentEditor).toContain('defineExpose({ markStart, markEnd })');
     expect(detailPlayer).toContain('playbackGeneration += 1');
-    expect(detailPlayer).toContain('defineExpose({ playSegment, playPreview, playOriginal, selectPart, seekRelative, togglePlayback, stopPlayback })');
+    expect(detailPlayer).toContain('defineExpose({ playSegment, playPreview, playOriginal, selectPart, seekRelative, togglePlayback, stopPlayback, getPlaybackSnapshot })');
     expect(detailPlayer).toContain('window.filmLibrary.films.subtitleTracks(partId)');
     expect(detailPlayer).toContain('window.filmLibrary.films.subtitleContent(partId, Number(index))');
     expect(detailPlayer).toMatch(/watch\(selectedPartId,[\s\S]*?\}, \{ immediate: true \}\);/);
@@ -318,6 +319,24 @@ describe('renderer regressions', () => {
     expect(theme).toContain('.app-shell { height: 100vh; min-height: 0; overflow: hidden;');
     expect(theme).toContain('.app-sidebar { position: relative; display: flex; height: 100vh;');
     expect(theme).toContain('.app-main { height: 100vh; min-width: 0; padding: 0; overflow-x: hidden; overflow-y: auto;');
+  });
+
+  it('shows the package version at the top and removes the local-only footer', () => {
+    const layout = fs.readFileSync(layoutPath, 'utf8');
+    const mainWindow = fs.readFileSync(mainWindowPath, 'utf8');
+    const theme = fs.readFileSync(themePath, 'utf8');
+    expect(layout).toContain('window.filmLibrary.app.info()');
+    expect(layout).toContain('class="brand-version"');
+    expect(layout).not.toContain('100% 本地运行');
+    expect(layout).not.toContain('sidebar-footer');
+    expect(theme).not.toContain('.sidebar-footer');
+    expect(mainWindow).toContain('title: `Local Film Library v${app.getVersion()}`');
+  });
+
+  it('keeps every resonance video fully visible without cropping', () => {
+    const resonance = fs.readFileSync(resonancePath, 'utf8');
+    expect(resonance).toContain('object-fit: contain; background: #000;');
+    expect(resonance).not.toContain('object-fit: cover;');
   });
 
   it('does not render or bundle a QR code in LAN web access settings', () => {

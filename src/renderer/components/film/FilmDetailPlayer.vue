@@ -10,7 +10,17 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   positionChange: [currentSeconds: number, durationSeconds: number, partId: string];
+  addToResonance: [];
 }>();
+
+interface FilmPlaybackSnapshot {
+  partId: string;
+  filename: string;
+  currentSeconds: number;
+  durationSeconds: number;
+  width: number;
+  height: number;
+}
 
 const video = ref<HTMLVideoElement | null>(null);
 const stage = ref<HTMLElement | null>(null);
@@ -217,6 +227,20 @@ function stopPlayback(): void {
   video.value?.pause();
 }
 
+function getPlaybackSnapshot(): FilmPlaybackSnapshot | null {
+  const part = selectedPart.value;
+  if (!part) return null;
+  const element = video.value;
+  return {
+    partId: part.id,
+    filename: part.filename,
+    currentSeconds: element?.currentTime ?? currentSeconds.value,
+    durationSeconds: Number.isFinite(element?.duration) ? element!.duration : durationSeconds.value,
+    width: element?.videoWidth || props.film.width || 16,
+    height: element?.videoHeight || props.film.height || 9,
+  };
+}
+
 async function loadSubtitleTracks(): Promise<void> {
   const partId = selectedPartId.value;
   const generation = ++subtitleGeneration;
@@ -313,7 +337,7 @@ function formatTime(value: number): string {
   return [hours, minutes, rest].map((part) => String(part).padStart(2, '0')).join(':');
 }
 
-defineExpose({ playSegment, playPreview, playOriginal, selectPart, seekRelative, togglePlayback, stopPlayback });
+defineExpose({ playSegment, playPreview, playOriginal, selectPart, seekRelative, togglePlayback, stopPlayback, getPlaybackSnapshot });
 onBeforeUnmount(() => {
   stageObserver?.disconnect();
   subtitleGeneration += 1;
@@ -355,6 +379,7 @@ onBeforeUnmount(() => {
         <el-select v-if="availableParts.length > 1" :model-value="selectedPartId" class="part-select" aria-label="选择影片文件" @change="selectPart">
           <el-option v-for="part in availableParts" :key="part.id" :label="`${part.partType.toUpperCase()} ${part.partNumber} · ${part.filename}`" :value="part.id" />
         </el-select>
+        <el-button class="resonance-add-button" size="small" :disabled="!source" @click="emit('addToResonance')">添加进共鸣球</el-button>
         <el-button size="small" @click="playOriginal">继续播放原片</el-button>
         <el-button type="primary" size="small" :disabled="!previewSegments.length" @click="playPreview">连续播放精彩片段</el-button>
       </div>
@@ -420,9 +445,10 @@ onBeforeUnmount(() => {
 .player-context { display: flex; min-width: 0; align-items: center; gap: 8px; }
 .player-context strong { flex: 0 0 auto; font-size: 12px; }
 .player-context span { overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.player-actions { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: 6px; }
+.player-actions { display: flex; min-width: 0; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; }
 .part-select { width: min(320px, 32vw); }
 .subtitle-select { width: min(210px, 22vw); }
+.resonance-add-button { --el-button-text-color: #b7f2da; --el-button-border-color: rgba(152,227,194,.42); --el-button-bg-color: rgba(54,115,94,.16); }
 .player-stage-slot { display: grid; width: 100%; height: 100%; min-height: 0; place-items: center; overflow: hidden; }
 .player-stage { position: relative; display: grid; max-width: 100%; max-height: 100%; aspect-ratio: 16 / 9; place-items: center; overflow: hidden; border-radius: 9px; background: #050609; box-shadow: 0 16px 42px rgba(0, 0, 0, .28); }
 .detail-player-video { display: block; min-width: 0; min-height: 0; max-width: 100%; max-height: 100%; flex: 0 0 auto; object-fit: contain !important; object-position: 50% 50%; background: #050609; }

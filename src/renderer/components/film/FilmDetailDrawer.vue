@@ -6,6 +6,7 @@ import type { ActorDto, CustomCategoryDto, FilmDetailDto, FilmPartDto, FilmUpdat
 import type { AssetType } from '../../../shared/enums';
 import { mediaUrl } from '../../api';
 import { useScanStore } from '../../stores/scan';
+import { useResonanceStore } from '../../stores/resonance';
 import FilmDetailHeader, { type SelectedCategoryItem } from './FilmDetailHeader.vue';
 import FilmDetailPlayer from './FilmDetailPlayer.vue';
 import FilmSegmentEditor from './FilmSegmentEditor.vue';
@@ -14,6 +15,7 @@ const props = defineProps<{ modelValue: boolean; filmId: string | null }>();
 const emit = defineEmits<{ 'update:modelValue': [value: boolean]; updated: [] }>();
 const router = useRouter();
 const scan = useScanStore();
+const resonance = useResonanceStore();
 type SaveState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
 interface CategorySelection { ids: string[]; newNames: string[]; }
 interface PendingSave { patch?: FilmUpdatePatch; favorite?: boolean; categories?: CategorySelection; }
@@ -321,6 +323,25 @@ function updateSegments(segments: FilmDetailDto['segments']): void {
 function updatePlaybackPosition(currentSeconds: number, durationSeconds: number, partId: string): void {
   Object.assign(playbackPosition, { currentSeconds, durationSeconds, partId });
 }
+function addToResonance(): void {
+  if (!detail.value) return;
+  const snapshot = detailPlayer.value?.getPlaybackSnapshot();
+  if (!snapshot) {
+    ElMessage.warning('当前没有可加入共鸣球的视频');
+    return;
+  }
+  detailPlayer.value?.stopPlayback();
+  const result = resonance.add({
+    filmId: detail.value.id,
+    partId: snapshot.partId,
+    title: detail.value.title,
+    filename: snapshot.filename,
+    currentSeconds: snapshot.currentSeconds,
+    durationSeconds: snapshot.durationSeconds,
+    aspectRatio: snapshot.width / snapshot.height,
+  });
+  ElMessage.success(result === 'added' ? '已添加进共鸣球，当前视频已暂停' : '已更新共鸣球中的播放进度，当前视频已暂停');
+}
 function handleKeydown(event: KeyboardEvent): void {
   if (!props.modelValue || event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || (event.target instanceof HTMLElement && event.target.isContentEditable)) return;
   if (imageViewerVisible.value) {
@@ -391,6 +412,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', handleKeydown); de
             :film="detail"
             :segments="detail.segments"
             @position-change="updatePlaybackPosition"
+            @add-to-resonance="addToResonance"
           />
 
           <el-tabs v-model="activeDetailTab" class="detail-content-tabs" tab-position="right">
