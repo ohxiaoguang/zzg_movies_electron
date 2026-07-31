@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
-import type { FilmDetailDto, FilmSegmentDto } from '../../../shared/contracts';
+import type { DesktopSubtitleTrackDto, FilmDetailDto, FilmSegmentDto } from '../../../shared/contracts';
 import { mediaUrl } from '../../api';
 
 const props = defineProps<{
@@ -23,14 +23,21 @@ const activeSegment = ref<FilmSegmentDto | null>(null);
 const intrinsicSize = ref({ width: 0, height: 0 });
 const stageSize = ref<{ width: string; height: string }>({ width: '100%', height: '100%' });
 const fittedSize = ref<{ width: string; height: string }>({ width: '100%', height: '100%' });
+const subtitleTracks = ref<DesktopSubtitleTrackDto[]>([]);
+const selectedSubtitleIndex = ref('');
+const subtitleUrl = ref('');
+const subtitleBusy = ref(false);
+const subtitleError = ref('');
 let stageObserver: ResizeObserver | null = null;
 let playbackGeneration = 0;
+let subtitleGeneration = 0;
 
 const availableParts = computed(() => props.film.parts.filter((part) => !part.missing));
 const selectedPart = computed(() => availableParts.value.find((part) => part.id === selectedPartId.value) ?? null);
 const source = computed(() => selectedPartId.value ? mediaUrl('part', selectedPartId.value) : '');
 const selectedPartSegments = computed(() => props.segments.filter((segment) => segment.filmFileId === selectedPartId.value));
 const previewSegments = computed(() => props.segments.filter((segment) => segment.includeInPreview));
+const supportedSubtitleTracks = computed(() => subtitleTracks.value.filter((track) => track.supported));
 
 watch(() => props.film.id, () => {
   selectedPartId.value = availableParts.value[0]?.id ?? '';
@@ -48,8 +55,9 @@ watch(selectedPartId, () => {
   durationSeconds.value = 0;
   intrinsicSize.value = { width: 0, height: 0 };
   fittedSize.value = { width: '100%', height: '100%' };
+  void loadSubtitleTracks();
   emitPosition();
-});
+}, { immediate: true });
 
 watch(stageSlot, (nextSlot) => {
   stageObserver?.disconnect();
@@ -209,6 +217,89 @@ function stopPlayback(): void {
   video.value?.pause();
 }
 
+async function loadSubtitleTracks(): Promise<void> {
+  const partId = selectedPartId.value;
+  const generation = ++subtitleGeneration;
+  resetSubtitleState();
+  if (!partId) return;
+  subtitleBusy.value = true;
+  const result = await window.filmLibrary.films.subtitleTracks(partId);
+  if (generation !== subtitleGeneration || partId !== selectedPartId.value) return;
+  subtitleBusy.value = false;
+  if (!result.ok) {
+    subtitleError.value = result.error.message;
+    return;
+  }
+  subtitleTracks.value = result.data;
+}
+
+async function selectSubtitle(index: string): Promise<void> {
+  const partId = selectedPartId.value;
+  const generation = ++subtitleGeneration;
+  selectedSubtitleIndex.value = index;
+  subtitleError.value = '';
+  releaseSubtitleUrl();
+  disableTextTracks();
+  if (!partId || !index) return;
+  subtitleBusy.value = true;
+  const result = await window.filmLibrary.films.subtitleContent(partId, Number(index));
+  if (
+    generation !== subtitleGeneration
+    || partId !== selectedPartId.value
+    || index !== selectedSubtitleIndex.value
+  ) {
+    return;
+  }
+  subtitleBusy.value = false;
+  if (!result.ok) {
+    subtitleError.value = result.error.message;
+    selectedSubtitleIndex.value = '';
+    return;
+  }
+  subtitleUrl.value = URL.createObjectURL(new Blob([result.data], { type: 'text/vtt;charset=utf-8' }));
+  await nextTick();
+  showSelectedTextTrack();
+}
+
+function subtitleLabel(track: DesktopSubtitleTrackDto): string {
+  const details = [track.language, track.codec].filter(Boolean).join(' · ');
+  return track.title || details || `字幕 ${track.index}`;
+}
+
+function selectedSubtitleLabel(): string {
+  const track = supportedSubtitleTracks.value.find((item) => String(item.index) === selectedSubtitleIndex.value);
+  return track ? subtitleLabel(track) : '字幕';
+}
+
+function showSelectedTextTrack(): void {
+  const tracks = video.value?.textTracks;
+  if (!tracks) return;
+  for (let index = 0; index < tracks.length; index += 1) {
+    tracks[index]!.mode = index === tracks.length - 1 ? 'showing' : 'disabled';
+  }
+}
+
+function disableTextTracks(): void {
+  const tracks = video.value?.textTracks;
+  if (!tracks) return;
+  for (let index = 0; index < tracks.length; index += 1) tracks[index]!.mode = 'disabled';
+}
+
+function resetSubtitleState(): void {
+  subtitleTracks.value = [];
+  selectedSubtitleIndex.value = '';
+  subtitleBusy.value = false;
+  subtitleError.value = '';
+  disableTextTracks();
+  releaseSubtitleUrl();
+}
+
+function releaseSubtitleUrl(): void {
+  if (!subtitleUrl.value) return;
+  URL.revokeObjectURL(subtitleUrl.value);
+  subtitleUrl.value = '';
+}
+
 function waitForMetadata(element: HTMLVideoElement): Promise<void> {
   if (element.readyState >= 1) return Promise.resolve();
   return new Promise((resolve) => element.addEventListener('loadedmetadata', () => resolve(), { once: true }));
@@ -225,6 +316,8 @@ function formatTime(value: number): string {
 defineExpose({ playSegment, playPreview, playOriginal, selectPart, seekRelative, togglePlayback, stopPlayback });
 onBeforeUnmount(() => {
   stageObserver?.disconnect();
+  subtitleGeneration += 1;
+  releaseSubtitleUrl();
   stopPlayback();
 });
 </script>
@@ -237,6 +330,28 @@ onBeforeUnmount(() => {
         <span v-if="selectedPart">{{ selectedPart.filename }}</span>
       </div>
       <div class="player-actions">
+        <el-select
+          v-if="source"
+          :model-value="selectedSubtitleIndex"
+          class="subtitle-select"
+          aria-label="选择字幕"
+          :disabled="subtitleBusy || !supportedSubtitleTracks.length"
+          :loading="subtitleBusy"
+          :placeholder="subtitleError || '关闭字幕'"
+          @change="selectSubtitle"
+        >
+          <el-option
+            :label="subtitleError ? '字幕加载失败' : subtitleBusy ? '正在加载字幕…' : subtitleTracks.length ? '关闭字幕' : '无可用字幕'"
+            value=""
+          />
+          <el-option
+            v-for="track in subtitleTracks"
+            :key="track.index"
+            :label="`${subtitleLabel(track)}${track.supported ? '' : '（不支持）'}`"
+            :value="String(track.index)"
+            :disabled="!track.supported"
+          />
+        </el-select>
         <el-select v-if="availableParts.length > 1" :model-value="selectedPartId" class="part-select" aria-label="选择影片文件" @change="selectPart">
           <el-option v-for="part in availableParts" :key="part.id" :label="`${part.partType.toUpperCase()} ${part.partNumber} · ${part.filename}`" :value="part.id" />
         </el-select>
@@ -259,7 +374,17 @@ onBeforeUnmount(() => {
           preload="metadata"
           @loadedmetadata="onLoadedMetadata"
           @timeupdate="onTimeUpdate"
-        />
+        >
+          <track
+            v-if="subtitleUrl"
+            kind="subtitles"
+            :src="subtitleUrl"
+            srclang="und"
+            :label="selectedSubtitleLabel()"
+            default
+            @load="showSelectedTextTrack"
+          />
+        </video>
         <div v-if="activeSegment" class="active-segment-label">
           <strong>{{ activeSegment.title || '未命名片段' }}</strong>
           <span>{{ formatTime(activeSegment.startSeconds) }} → {{ formatTime(activeSegment.endSeconds) }}</span>
@@ -297,9 +422,11 @@ onBeforeUnmount(() => {
 .player-context span { overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .player-actions { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: 6px; }
 .part-select { width: min(320px, 32vw); }
+.subtitle-select { width: min(210px, 22vw); }
 .player-stage-slot { display: grid; width: 100%; height: 100%; min-height: 0; place-items: center; overflow: hidden; }
 .player-stage { position: relative; display: grid; max-width: 100%; max-height: 100%; aspect-ratio: 16 / 9; place-items: center; overflow: hidden; border-radius: 9px; background: #050609; box-shadow: 0 16px 42px rgba(0, 0, 0, .28); }
 .detail-player-video { display: block; min-width: 0; min-height: 0; max-width: 100%; max-height: 100%; flex: 0 0 auto; object-fit: contain !important; object-position: 50% 50%; background: #050609; }
+.detail-player-video::cue { color: #fff; background: rgba(0, 0, 0, .72); font-size: 55%; line-height: 1.25; }
 .active-segment-label { position: absolute; z-index: 2; top: 12px; left: 50%; display: flex; max-width: calc(100% - 32px); padding: 6px 11px; border-radius: 7px; color: rgba(255,255,255,.94); background: rgba(0,0,0,.48); font-size: 11px; transform: translateX(-50%); backdrop-filter: blur(4px); gap: 9px; pointer-events: none; }
 .active-segment-label strong, .active-segment-label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .active-segment-label span { color: rgba(255,255,255,.72); font-variant-numeric: tabular-nums; }
@@ -316,6 +443,7 @@ onBeforeUnmount(() => {
   .player-toolbar { align-items: stretch; flex-direction: column; }
   .player-actions { justify-content: flex-start; flex-wrap: wrap; }
   .part-select { width: 100%; }
+  .subtitle-select { width: 100%; }
   .detail-player { height: auto; overflow: visible; }
   .player-stage { height: auto; aspect-ratio: 16 / 9; }
   .player-timeline-row { grid-template-columns: minmax(0, 1fr); gap: 5px; }

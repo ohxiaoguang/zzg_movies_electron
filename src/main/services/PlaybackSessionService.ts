@@ -3,6 +3,7 @@ import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn, type ChildProcess } from 'node:child_process';
 import type {
+  DesktopSubtitleTrackDto,
   PlaybackCacheInfoDto,
   WebPlaybackCapabilityDto,
   WebPlaybackProgressInput,
@@ -227,6 +228,19 @@ export class PlaybackSessionService {
       this.sessions.delete(session.id);
       throw error;
     }
+  }
+
+  public async desktopSubtitleTracks(partId: string): Promise<DesktopSubtitleTrackDto[]> {
+    const { tracks } = await this.resolveDesktopSubtitleContext(partId);
+    return tracks.map(({ sourceFilePath: _sourceFilePath, ...track }) => track);
+  }
+
+  public async desktopSubtitleContent(partId: string, streamIndex: number): Promise<string> {
+    const { sourceFilePath, tracks } = await this.resolveDesktopSubtitleContext(partId);
+    const subtitle = tracks.find((track) => track.index === streamIndex);
+    if (!subtitle) throw new Error('INVALID_SUBTITLE_TRACK');
+    const asset = await this.resolveSubtitleAsset(sourceFilePath, subtitle);
+    return fs.promises.readFile(asset.filePath, 'utf8');
   }
 
   public get(sessionId: string, ownerDeviceId: string | null): WebPlaybackSessionDto {
@@ -563,15 +577,38 @@ export class PlaybackSessionService {
   private async resolveSubtitleFile(session: PlaybackSession, streamIndex: number): Promise<ResolvedMediaAsset> {
     const subtitle = session.subtitleTracks.find((track) => track.index === streamIndex);
     if (!subtitle) throw new Error('PLAYBACK_MEDIA_NOT_FOUND');
+    return this.resolveSubtitleAsset(session.sourceFilePath, subtitle);
+  }
+
+  private async resolveDesktopSubtitleContext(partId: string): Promise<{
+    sourceFilePath: string;
+    tracks: PlaybackSubtitleTrack[];
+  }> {
+    const asset = await this.media.resolve('part', partId);
+    const probe = await this.capabilities.inspect(asset.filePath);
+    return {
+      sourceFilePath: asset.filePath,
+      tracks: await resolvePlaybackSubtitleTracks(
+        asset.filePath,
+        probe?.subtitles ?? [],
+        Boolean(this.capabilities.toolPaths().ffmpeg),
+      ),
+    };
+  }
+
+  private async resolveSubtitleAsset(
+    videoFilePath: string,
+    subtitle: PlaybackSubtitleTrack,
+  ): Promise<ResolvedMediaAsset> {
     if (!subtitle.supported) throw new Error('SUBTITLE_UNSUPPORTED');
-    const sourceFilePath = subtitle.sourceFilePath ?? session.sourceFilePath;
+    const sourceFilePath = subtitle.sourceFilePath ?? videoFilePath;
     const sourceStat = await fs.promises.stat(sourceFilePath);
     const key = subtitle.source === 'sidecar'
       ? sidecarSubtitleCacheKey(sourceFilePath, sourceStat.size, sourceStat.mtimeMs)
-      : subtitleCacheKey(sourceFilePath, sourceStat.size, sourceStat.mtimeMs, streamIndex);
+      : subtitleCacheKey(sourceFilePath, sourceStat.size, sourceStat.mtimeMs, subtitle.index);
     const cacheConfiguration = this.cacheConfiguration();
     const directory = path.join(cacheConfiguration.directory, 'subtitles', key);
-    const outputPath = path.join(directory, `subtitle-${streamIndex}.vtt`);
+    const outputPath = path.join(directory, `subtitle-${subtitle.index}.vtt`);
     assertInsideDirectory(cacheConfiguration.directory, directory);
     if (!await fileExists(outputPath)) {
       const conversionKey = `${path.resolve(directory)}\0${key}`;
@@ -587,7 +624,7 @@ export class PlaybackSessionService {
           : convertEmbeddedSubtitle(
               requiredFfmpegPath(this.capabilities.toolPaths().ffmpeg),
               sourceFilePath,
-              streamIndex,
+              subtitle.index,
               directory,
               outputPath,
             );

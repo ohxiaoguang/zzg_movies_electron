@@ -390,6 +390,14 @@ describe('web playback pipeline', () => {
       const sidecarVtt = fs.readFileSync(sidecarSubtitle.filePath, 'utf8');
       expect(sidecarVtt).toContain('WEBVTT');
       expect(sidecarVtt).toContain('line:82% position:50% align:center size:88%');
+      const desktopTracks = await service.desktopSubtitleTracks('22222222-2222-4222-8222-222222222222');
+      expect(desktopTracks).toEqual(session.subtitleTracks.map(({ url: _url, ...track }) => track));
+      const desktopVtt = await service.desktopSubtitleContent(
+        '22222222-2222-4222-8222-222222222222',
+        desktopTracks[1]!.index,
+      );
+      expect(desktopVtt).toContain('WEBVTT');
+      expect(desktopVtt).toContain('Local Film Library');
       service.cancel(session.id, 'ffmpeg-test-device');
       await service.stop();
     },

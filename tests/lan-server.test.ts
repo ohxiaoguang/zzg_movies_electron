@@ -263,7 +263,7 @@ describe('localhost read-only web server', () => {
     expect(styles).toContain('grid-template-columns: 246px minmax(0, 1fr)');
     expect(styles).toContain('.app-sidebar.is-open');
     expect(styles).toContain('.web-playback video::cue');
-    expect(styles).toContain('font-size: 70%');
+    expect(styles).toContain('font-size: 16px');
     expect(styles).toContain('#film-detail { width: 100vw');
     expect(styles).toContain('grid-template-columns: minmax(190px, 1fr) minmax(0, 3fr)');
     expect(styles).toContain('.detail-main-column');

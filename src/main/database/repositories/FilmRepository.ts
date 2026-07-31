@@ -22,6 +22,7 @@ import type { FilmCsvHighlight, FilmCsvRow } from '../../export/FilmCsvExporter'
 import type { AssetType } from '../../../shared/enums';
 import type { FilmCandidate, FilmFileCandidate } from '../../scanner/ScanCandidate';
 import { normalizeRelativePath, physicalFileKey } from '../../scanner/PartNaming';
+import { planBrowserPlaybackFromMetadata } from '../../media/MediaCapabilityService';
 import { FilmFileOwnershipRepairService } from '../FilmFileOwnershipRepairService';
 
 interface FilmSummaryRow {
@@ -35,6 +36,8 @@ interface FilmSummaryRow {
   year: number | null;
   favorite: number;
   rating: number;
+  video_codec: string | null;
+  audio_codec: string | null;
   missing: number;
   updated_at: string;
   source_root_path: string;
@@ -182,6 +185,7 @@ export class FilmRepository {
       .prepare(
         `SELECT f.id, f.source_id, s.name AS source_name, f.relative_path, f.filename,
                 f.title, f.original_title, f.year, f.favorite, f.rating,
+                f.video_codec, f.audio_codec,
                 f.missing, f.archived, f.updated_at, s.root_path AS source_root_path,
                 s.deleted_at AS source_deleted_at,
                 s.allow_original_preview AS source_allow_original_preview,
@@ -199,9 +203,13 @@ export class FilmRepository {
          `,
       )
       .all(...params) as FilmSummaryRow[];
-    const assetMap = this.assetsForFilms(rows.map((row) => row.id));
-    const categoryMap = this.categoriesForFilms(rows.map((row) => row.id));
-    const summaries = rows
+    const playbackFilteredRows = rows.filter((row) => (
+      query.playbackCompatibility !== 'non-native'
+      || planBrowserPlaybackFromMetadata(row.filename, row.video_codec, row.audio_codec).mode !== 'direct'
+    ));
+    const assetMap = this.assetsForFilms(playbackFilteredRows.map((row) => row.id));
+    const categoryMap = this.categoriesForFilms(playbackFilteredRows.map((row) => row.id));
+    const summaries = playbackFilteredRows
       .map((row) => this.toSummary(row, assetMap.get(row.id) ?? [], categoryMap.get(row.id) ?? []))
       .filter((summary) => this.matchesAvailability(summary, query));
     const total = summaries.length;

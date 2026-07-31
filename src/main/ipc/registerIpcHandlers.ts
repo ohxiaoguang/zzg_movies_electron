@@ -176,6 +176,21 @@ export function registerIpcHandlers(context: IpcContext): () => void {
     await context.fileOpen.showPartInFolder(payload);
     return null;
   });
+  handle(IPC_CHANNELS.playbackSubtitleTracks, (_event, payload) => {
+    if (!isUuid(payload)) throw new Error('INVALID_PART_ID');
+    return context.playback.desktopSubtitleTracks(payload);
+  });
+  handle(IPC_CHANNELS.playbackSubtitleContent, (_event, payload) => {
+    if (
+      !isRecord(payload)
+      || !isUuid(payload.partId)
+      || !Number.isInteger(payload.index)
+      || (payload.index as number) < 0
+    ) {
+      throw new Error('INVALID_SUBTITLE_TRACK');
+    }
+    return context.playback.desktopSubtitleContent(payload.partId, payload.index as number);
+  });
   handle(IPC_CHANNELS.filmSegmentsCreate, (_event, payload) => (
     context.management.createSegment(validateFilmSegmentCreate(payload))
   ));
@@ -355,6 +370,8 @@ function publicMessage(code: string): string {
     INVALID_CATEGORY_ORDER: '分类排序数据无效',
     CSV_EXPORT_FAILED: 'CSV 导出失败，请检查保存位置后重试',
     INVALID_PART_ID: '影片分段不存在',
+    INVALID_SUBTITLE_TRACK: '字幕轨道无效',
+    SUBTITLE_UNSUPPORTED: '当前字幕格式暂不支持',
     INVALID_LAN_SERVER_PORT: '端口必须是 1024 到 65535 之间的整数',
     INVALID_LAN_BIND_MODE: '局域网监听模式无效',
     INVALID_LAN_SERVER_HOST: '只能指定私有 IPv4 网卡地址',

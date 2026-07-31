@@ -21,6 +21,8 @@ export const IPC_CHANNELS = {
   filmsPartsList: 'films.parts.list',
   filmsPartsOpen: 'films.parts.open',
   filmsPartsShowInFolder: 'films.parts.show-in-folder',
+  playbackSubtitleTracks: 'playback-subtitles:tracks',
+  playbackSubtitleContent: 'playback-subtitles:content',
   filmSegmentsCreate: 'film-segments:create',
   filmSegmentsUpdate: 'film-segments:update',
   filmSegmentsDelete: 'film-segments:delete',

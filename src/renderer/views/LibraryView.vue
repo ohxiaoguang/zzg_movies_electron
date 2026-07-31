@@ -137,12 +137,11 @@ function changePage(page: number): void { library.filters.page = page; void libr
       <el-select v-model="library.filters.actor" filterable clearable placeholder="NFO 演员" @change="filterChanged"><el-option v-for="actor in actors" :key="actor.name" :label="`${actor.name} (${actor.filmCount})`" :value="actor.name" /></el-select>
       <el-select :model-value="library.filters.favoriteOnly ? 'favorite' : 'all'" placeholder="收藏" @change="favoriteFilterChanged"><el-option label="全部影片" value="all" /><el-option label="仅收藏" value="favorite" /></el-select>
       <el-select v-model="library.filters.sort" placeholder="排序" @change="filterChanged"><el-option label="最近新增" value="added" /><el-option label="最近观看" value="played" /><el-option label="最近更新" value="recent" /><el-option label="标题" value="title" /><el-option label="年份" value="year" /><el-option label="评分" value="rating" /><el-option label="文件名" value="file" /></el-select>
-      <el-select v-if="allData" v-model="library.filters.recordIssue" class="mismatch-filter" placeholder="记录类型" @change="filterChanged"><el-option label="全部记录" value="all" /><el-option label="自动标题与单文件名不一致" value="title-mismatch" /><el-option label="非 CD 多文件错误合并" value="invalid-multipart" /></el-select>
-      <el-select v-if="allData" v-model="library.filters.availability" placeholder="数据状态" @change="filterChanged"><el-option label="全部状态" value="all" /><el-option label="正常" value="available" /><el-option label="部分缺失" value="partial_missing" /><el-option label="完全缺失" value="missing" /><el-option label="来源离线" value="source_offline" /><el-option label="来源已删除" value="source_removed" /><el-option label="已归档" value="archived" /></el-select>
+      <el-select v-if="allData" v-model="library.filters.availability" placeholder="数据状态" @change="filterChanged"><el-option label="全部状态" value="all" /><el-option label="正常" value="available" /><el-option label="部分缺失" value="partial_missing" /><el-option label="完全缺失" value="missing" /><el-option label="来源离线" value="source_offline" /><el-option label="来源已删除" value="source_removed" /></el-select>
       <el-select v-if="!allData" v-model="library.settings.cardSize" placeholder="卡片大小" @change="cardSizeChanged"><el-option label="小卡片" :value="160" /><el-option label="标准" :value="200" /><el-option label="大卡片" :value="240" /><el-option label="超大" :value="280" /></el-select>
       <el-button :loading="library.loading" @click="refresh"><Refresh />刷新</el-button>
       <span class="grow" />
-      <el-radio-group v-model="library.viewMode" size="small"><el-radio-button value="grid"><Grid /></el-radio-button><el-radio-button value="table"><List /></el-radio-button></el-radio-group>
+      <el-radio-group v-if="!allData" v-model="library.viewMode" size="small"><el-radio-button value="grid"><Grid /></el-radio-button><el-radio-button value="table"><List /></el-radio-button></el-radio-group>
     </div>
     <div v-if="library.error" class="error-banner">{{ library.error }}</div>
     <FilmGrid v-if="!allData && library.viewMode === 'grid'" :films="library.items" :hover-delay="library.settings.hoverDelayMs" :slideshow-interval="library.settings.slideshowIntervalMs" :card-width="library.settings.cardSize" @select="selectFilm" @updated="refresh" />
@@ -157,7 +156,6 @@ function changePage(page: number): void { library.filters.page = page; void libr
 .heading-actions .el-button svg { width: 15px; margin-right: 5px; }
 .library-toolbar .el-input { width: 260px; }
 .library-toolbar .el-select { width: 138px; }
-.library-toolbar .mismatch-filter { width: 220px; }
 .library-toolbar .el-radio-button svg { width: 15px; }
 .error-banner { padding: 13px 16px; margin-bottom: 16px; border: 1px solid rgba(255, 120, 120, .25); border-radius: 9px; color: #ffadad; background: rgba(255, 100, 100, .07); font-size: 13px; }
 </style>

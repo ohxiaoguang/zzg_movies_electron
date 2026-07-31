@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   planBrowserPlayback,
+  planBrowserPlaybackFromMetadata,
   selectPreferredH264Encoder,
   selectPreferredVideoTranscodePipeline,
   type MediaProbeResult,
@@ -38,6 +39,10 @@ describe('browser media capability planning', () => {
       videoMode: 'copy',
       audioMode: 'copy',
     });
+    expect(planBrowserPlaybackFromMetadata('MOVIE.MP4', ' H264 ', ' AAC ')).toMatchObject({
+      mode: 'direct',
+      reason: 'BROWSER_COMPATIBLE',
+    });
   });
 
   it('remuxes H.264/AAC in a browser-incompatible container without re-encoding', () => {
@@ -55,6 +60,13 @@ describe('browser media capability planning', () => {
       reason: 'AUDIO_TRANSCODE_REQUIRED',
       videoMode: 'copy',
       audioMode: 'transcode',
+    });
+    expect(planBrowserPlayback('movie.mp4', {
+      ...probe('h264', null, ['mov', 'mp4']),
+      audio: { index: 1, codec: null, language: null, title: null, channels: 2 },
+    })).toMatchObject({
+      mode: 'transcode',
+      reason: 'AUDIO_TRANSCODE_REQUIRED',
     });
   });
 

@@ -36,6 +36,7 @@ const highlightSegments = ref<FilmSegmentDto[]>([]);
 const segmentIndex = ref(-1);
 const activeHighlight = computed(() => highlightSegments.value[segmentIndex.value] ?? null);
 let slideshowTimer: ReturnType<typeof setInterval> | null = null;
+let highlightPlaybackGeneration = 0;
 
 const imageIds = computed(() => props.film.previewImageAssetIds);
 const currentImageUrl = computed(() => {
@@ -93,16 +94,29 @@ async function startPreview(): Promise<void> {
 async function playHighlight(index: number): Promise<void> {
   const element = video.value;
   if (!element || !highlightSegments.value.length) return;
+  const playbackGeneration = ++highlightPlaybackGeneration;
   const nextIndex = index % highlightSegments.value.length;
   const segment = highlightSegments.value[nextIndex]!;
   segmentIndex.value = nextIndex;
   videoPreparing.value = true;
   element.src = mediaUrl('part', segment.filmFileId);
   element.load();
-  await new Promise<void>((resolve, reject) => {
-    element.addEventListener('loadedmetadata', () => resolve(), { once: true });
-    element.addEventListener('error', () => reject(new Error('SEGMENT_MEDIA_FAILED')), { once: true });
-  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const onLoaded = (): void => { cleanup(); resolve(); };
+      const onError = (): void => { cleanup(); reject(new Error('SEGMENT_MEDIA_FAILED')); };
+      const cleanup = (): void => {
+        element.removeEventListener('loadedmetadata', onLoaded);
+        element.removeEventListener('error', onError);
+      };
+      element.addEventListener('loadedmetadata', onLoaded, { once: true });
+      element.addEventListener('error', onError, { once: true });
+    });
+  } catch (error) {
+    if (playbackGeneration !== highlightPlaybackGeneration) return;
+    throw error;
+  }
+  if (playbackGeneration !== highlightPlaybackGeneration || element !== video.value) return;
   element.currentTime = segment.startSeconds;
   await element.play();
 }
@@ -129,12 +143,29 @@ function startSlideshow(): void {
   mode.value = 'slideshow';
   imageIndex.value = 0;
   preloadImages();
+  scheduleSlideshow();
+}
+
+function scheduleSlideshow(): void {
+  stopSlideshow();
   if (imageIds.value.length > 1) {
     slideshowTimer = setInterval(() => {
       imageIndex.value = (imageIndex.value + 1) % imageIds.value.length;
       preloadImages();
     }, props.slideshowInterval);
   }
+}
+
+function selectImage(index: number): void {
+  if (index < 0 || index >= imageIds.value.length) return;
+  imageIndex.value = index;
+  preloadImages();
+  scheduleSlideshow();
+}
+
+function selectHighlight(index: number): void {
+  if (index < 0 || index >= highlightSegments.value.length) return;
+  void playHighlight(index).catch(fallbackToImages);
 }
 
 function preloadImages(): void {
@@ -153,6 +184,7 @@ function stopSlideshow(): void {
 }
 
 function stopVideo(): void {
+  highlightPlaybackGeneration += 1;
   if (!video.value) return;
   highlightSegments.value = [];
   segmentIndex.value = -1;
@@ -187,6 +219,11 @@ function formatTime(value: number): string {
 
 async function openOriginal(): Promise<void> {
   const result = await window.filmLibrary.films.open(props.film.id);
+  if (!result.ok) ElMessage.error(result.error.message);
+}
+
+async function showInFolder(): Promise<void> {
+  const result = await window.filmLibrary.films.showInFolder(props.film.id);
   if (!result.ok) ElMessage.error(result.error.message);
 }
 
@@ -235,7 +272,7 @@ onBeforeUnmount(() => {
 <template>
   <Teleport to="body">
     <section ref="popup" class="film-hover-popup" :style="popupStyle" @mouseenter="$emit('enter')" @mouseleave="$emit('leave')">
-      <div class="popup-media">
+      <div class="popup-media" :class="{ 'popup-media-image': mode !== 'video' }">
         <video v-if="mode === 'video'" ref="video" muted :loop="!highlightSegments.length" playsinline preload="metadata" @playing="onVideoPlaying" @waiting="onVideoWaiting" @timeupdate="onVideoTimeUpdate" @error="onVideoError" />
         <img v-else-if="mode === 'slideshow' && currentImageUrl" :src="currentImageUrl" :alt="film.title" />
         <div v-else class="popup-empty">暂无预览</div>
@@ -244,6 +281,12 @@ onBeforeUnmount(() => {
           <span>{{ formatTime(activeHighlight.startSeconds) }} → {{ formatTime(activeHighlight.endSeconds) }}</span>
         </div>
         <div v-if="mode === 'video' && videoPreparing" class="preview-preparing"><span />正在准备视频预览…</div>
+        <div v-if="mode === 'slideshow' && imageIds.length > 1" class="preview-pagination" aria-label="预览图片切换">
+          <button v-for="(_imageId, index) in imageIds" :key="_imageId" type="button" class="preview-dot" :class="{ active: imageIndex === index }" :aria-label="`显示第 ${index + 1} 张预览图`" :aria-current="imageIndex === index ? 'true' : undefined" @click.stop="selectImage(index)" />
+        </div>
+        <div v-if="mode === 'video' && highlightSegments.length > 1" class="preview-pagination" aria-label="预览片段切换">
+          <button v-for="(segment, index) in highlightSegments" :key="segment.id" type="button" class="preview-dot" :class="{ active: segmentIndex === index }" :aria-label="`播放第 ${index + 1} 个预览片段${segment.title ? `：${segment.title}` : ''}`" :aria-current="segmentIndex === index ? 'true' : undefined" @click.stop="selectHighlight(index)" />
+        </div>
       </div>
       <div class="popup-content">
         <div class="popup-heading">
@@ -252,6 +295,7 @@ onBeforeUnmount(() => {
         </div>
         <div class="popup-actions">
           <button type="button" class="popup-action popup-primary" @click.stop="openOriginal">播放原片</button>
+          <button type="button" class="popup-action" @click.stop="showInFolder">打开文件位置</button>
           <button type="button" class="popup-action" @click.stop="openDetails">查看详情</button>
           <button type="button" class="popup-action popup-favorite" :class="{ active: favorite }" :disabled="favoriteSaving" :aria-pressed="favorite" @click.stop="toggleFavorite">{{ favorite ? '已收藏' : '收藏' }}</button>
         </div>
@@ -263,7 +307,13 @@ onBeforeUnmount(() => {
 <style scoped>
 .film-hover-popup { position: fixed; z-index: 3000; box-sizing: border-box; max-width: calc(100vw - 24px); overflow: hidden; border: 1px solid rgba(255, 255, 255, .12); border-radius: 14px; color: var(--ink); background: #151923; box-shadow: 0 24px 60px rgba(0, 0, 0, .48); pointer-events: auto; }
 .popup-media { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000; }
+.popup-media-image { aspect-ratio: 800 / 537; }
 .popup-media video, .popup-media img { display: block; width: 100%; height: 100%; object-fit: contain; background: #000; }
+.popup-media-image img { object-fit: cover; }
+.preview-pagination { position: absolute; z-index: 3; bottom: 10px; left: 50%; display: flex; align-items: center; max-width: calc(100% - 28px); padding: 6px 8px; border-radius: 999px; background: rgba(0, 0, 0, .46); transform: translateX(-50%); gap: 7px; }
+.preview-dot { width: 8px; height: 8px; padding: 0; border: 1px solid rgba(255, 255, 255, .5); border-radius: 50%; background: rgba(255, 255, 255, .3); cursor: pointer; transition: border-color .15s ease, background-color .15s ease, transform .15s ease; }
+.preview-dot:hover, .preview-dot:focus-visible { border-color: #fff; background: rgba(255, 255, 255, .72); outline: none; transform: scale(1.2); }
+.preview-dot.active { border-color: #fff; background: #fff; transform: scale(1.2); }
 .segment-preview-label { position: absolute; z-index: 2; top: 10px; left: 50%; display: flex; max-width: calc(100% - 28px); padding: 5px 10px; border-radius: 6px; color: rgba(255,255,255,.9); background: rgba(0,0,0,.48); font-size: 11px; line-height: 1.35; transform: translateX(-50%); backdrop-filter: blur(3px); gap: 8px; pointer-events: none; }
 .segment-preview-label strong, .segment-preview-label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .segment-preview-label strong { max-width: 250px; }
@@ -276,7 +326,7 @@ onBeforeUnmount(() => {
 .popup-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .popup-title { min-width: 0; overflow: hidden; font-size: 14px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .popup-status { flex: 0 0 auto; color: var(--muted); font-size: 11px; }
-.popup-actions { display: flex; gap: 7px; margin-top: 10px; }
+.popup-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
 .popup-action { min-width: 0; padding: 7px 10px; border: 1px solid var(--line); border-radius: 7px; color: var(--ink); background: #202633; cursor: pointer; font-size: 11px; }
 .popup-action:hover { border-color: var(--accent); background: #293344; }
 .popup-action:disabled { cursor: wait; opacity: .65; }

@@ -217,6 +217,7 @@ export interface FilmPageQuery {
   favoriteOnly?: boolean;
   missingOnly?: boolean;
   recordIssue?: 'all' | 'title-mismatch' | 'invalid-multipart';
+  playbackCompatibility?: 'all' | 'non-native';
   allData?: boolean;
   availability?: FilmAvailability | 'all';
   sort?: 'added' | 'played' | 'recent' | 'title' | 'year' | 'rating' | 'file';
@@ -472,6 +473,15 @@ export interface WebPlaybackSessionCreateInput {
 export interface WebPlaybackProgressInput {
   positionSeconds: number;
   durationSeconds?: number;
+}
+
+export interface DesktopSubtitleTrackDto {
+  index: number;
+  codec: string | null;
+  language: string | null;
+  title: string | null;
+  source: 'embedded' | 'sidecar';
+  supported: boolean;
 }
 
 export interface WebPlaybackSessionDto {

@@ -62,6 +62,10 @@ export function validateFilmPageQuery(
     if (!['all', 'title-mismatch', 'invalid-multipart'].includes(String(payload.recordIssue))) throw new Error('INVALID_PAGE_QUERY');
     query.recordIssue = payload.recordIssue as FilmPageQuery['recordIssue'];
   }
+  if (payload.playbackCompatibility !== undefined) {
+    if (!['all', 'non-native'].includes(String(payload.playbackCompatibility))) throw new Error('INVALID_PAGE_QUERY');
+    query.playbackCompatibility = payload.playbackCompatibility as FilmPageQuery['playbackCompatibility'];
+  }
   if (payload.allData !== undefined) {
     query.allData = booleanValue(payload.allData, strict);
   }

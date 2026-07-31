@@ -88,6 +88,7 @@ async function load(): Promise<void> {
   activeFilmId = filmId;
   hydrated.value = false;
   actorCounts.value = {};
+  Object.assign(playbackPosition, { currentSeconds: 0, durationSeconds: 0, partId: '' });
   resetSaveQueue();
   loading.value = true;
   try {
@@ -295,6 +296,17 @@ async function rescanDirectory(): Promise<void> {
   }
 }
 
+async function playWithLocalPlayer(): Promise<void> {
+  if (!detail.value) return;
+  const part = detail.value.parts.find((item) => item.id === playbackPosition.partId && !item.missing)
+    ?? detail.value.parts.find((item) => !item.missing);
+  detailPlayer.value?.stopPlayback();
+  const result = part
+    ? await window.filmLibrary.films.partsOpen(part.id)
+    : await window.filmLibrary.films.open(detail.value.id);
+  if (!result.ok) ElMessage.error(result.error.message);
+}
+
 function assetOf(type: AssetType): string | null { const asset = detail.value?.assets.find((item) => item.assetType === type && !item.missing); return asset ? mediaUrl('asset', asset.id) : null; }
 function previousImage(): void { if (images.value.length) imageIndex.value = (imageIndex.value - 1 + images.value.length) % images.value.length; }
 function nextImage(): void { if (images.value.length) imageIndex.value = (imageIndex.value + 1) % images.value.length; }
@@ -357,7 +369,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', handleKeydown); de
     <template v-else-if="detail">
       <div class="detail-workbench">
         <aside class="detail-sidebar">
-          <FilmDetailHeader :detail="detail" :poster="poster" :favorite="form.favorite" :categories="selectedCategories" :category-options="categoryOptions" :save-state="saveState" :save-state-label="saveStateLabel" :rescan-busy="rescanBusy" @favorite-change="queueFavorite" @category-add="addCategory" @category-remove="removeCategory" @retry="retrySave" @play="detailPlayer?.playOriginal()" @show-folder="showPrimaryFolder" @rescan="rescanDirectory" />
+          <FilmDetailHeader :detail="detail" :poster="poster" :favorite="form.favorite" :categories="selectedCategories" :category-options="categoryOptions" :save-state="saveState" :save-state-label="saveStateLabel" :rescan-busy="rescanBusy" @favorite-change="queueFavorite" @category-add="addCategory" @category-remove="removeCategory" @retry="retrySave" @play="detailPlayer?.playOriginal()" @local-player="playWithLocalPlayer" @show-folder="showPrimaryFolder" @rescan="rescanDirectory" />
 
           <el-collapse v-model="activeSidebarSections" class="sidebar-info-collapse">
             <el-collapse-item title="基本信息" name="basic">

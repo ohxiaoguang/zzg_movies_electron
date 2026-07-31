@@ -82,6 +82,38 @@ describe('SQLite migrations and scanning', () => {
     expect(context.database.db.prepare('SELECT COUNT(*) AS count FROM film_genre').get()).toEqual({ count: 0 });
   });
 
+  it('filters non-native playback records with the same rules as the player', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'film-library-playback-filter-'));
+    tempRoots.push(root);
+    const fixtures = [
+      { name: 'Direct MP4.mp4', video: 'h264', audio: 'aac' },
+      { name: 'Direct WebM.webm', video: 'vp9', audio: 'opus' },
+      { name: 'Remux MKV.mkv', video: 'h264', audio: 'aac' },
+      { name: 'Transcode HEVC.mp4', video: 'hevc', audio: 'aac' },
+    ];
+    for (const fixture of fixtures) {
+      const stem = path.parse(fixture.name).name;
+      fs.writeFileSync(path.join(root, fixture.name), 'media');
+      fs.writeFileSync(
+        path.join(root, `${stem}.nfo`),
+        `<movie><title>${stem}</title><fileinfo><streamdetails><video><codec>${fixture.video}</codec></video><audio><codec>${fixture.audio}</codec></audio></streamdetails></fileinfo></movie>`,
+      );
+    }
+    const context = createContext(root);
+    context.scan.start({});
+    expect((await waitForScan(context.scan)).status).toBe('completed');
+
+    const filtered = context.films.page({
+      page: 1,
+      pageSize: 20,
+      allData: true,
+      playbackCompatibility: 'non-native',
+      sort: 'file',
+    });
+    expect(filtered.total).toBe(2);
+    expect(filtered.items.map((film) => film.filename)).toEqual(['Remux MKV.mkv', 'Transcode HEVC.mp4']);
+  });
+
   it('is idempotent, preserves user fields, and treats a renamed file as a new film', async () => {
     const root = fixtureRoot();
     const context = createContext(root);

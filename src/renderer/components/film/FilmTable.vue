@@ -23,12 +23,11 @@ function availabilityLabel(value: FilmSummaryDto['availability']): string {
     <el-table-column prop="year" label="年份" width="90" />
     <el-table-column label="我的分类" min-width="180"><template #default="{ row }"><span v-if="row.customCategories.length">{{ categoryNames(row) }}</span><el-tag v-else size="small" type="warning">未整理</el-tag></template></el-table-column>
     <el-table-column label="收藏" width="80"><template #default="{ row }">{{ row.favorite ? '♥' : '—' }}</template></el-table-column>
-    <el-table-column label="评分" width="100"><template #default="{ row }">{{ row.rating ? `★ ${row.rating.toFixed(1)}` : '—' }}</template></el-table-column>
     <el-table-column label="来源" min-width="160"><template #default="{ row }"><span class="muted">{{ row.sourceName }}</span></template></el-table-column>
     <el-table-column v-if="allData" label="文件数量" width="100"><template #default="{ row }">{{ row.existingFileCount }} / {{ row.totalFileCount }}</template></el-table-column>
     <el-table-column label="文件可用性" width="110"><template #default="{ row }"><el-tag :type="row.availability === 'available' ? 'success' : 'warning'" size="small">{{ availabilityLabel(row.availability) }}</el-tag></template></el-table-column>
     <el-table-column v-if="allData" label="数据库更新时间" min-width="170"><template #default="{ row }">{{ new Date(row.updatedAt).toLocaleString() }}</template></el-table-column>
-    <el-table-column v-if="allData" label="操作" width="80"><template #default="{ row }"><el-button text type="danger" @click.stop="emit('deleteRow', row)">删除</el-button></template></el-table-column>
+    <el-table-column v-if="allData" label="操作" width="96"><template #default="{ row }"><el-button text type="danger" @click.stop="emit('deleteRow', row)">删除</el-button></template></el-table-column>
   </el-table>
 </template>
 

@@ -128,8 +128,32 @@ export class MediaCapabilityService {
 }
 
 export function planBrowserPlayback(filePath: string, probe: MediaProbeResult | null): BrowserPlaybackPlan {
-  const extension = path.extname(filePath).toLowerCase();
   if (!probe?.video?.codec) {
+    return planBrowserPlaybackFromMetadata(filePath, null, null);
+  }
+
+  return planBrowserPlaybackFromMetadata(
+    filePath,
+    probe.video.codec,
+    probe.audio?.codec ?? null,
+    probe.audio !== null,
+  );
+}
+
+/**
+ * Classifies playback using the same container/codec rules as a probed media
+ * file. This is also used by library filters, where codec data comes from NFO.
+ */
+export function planBrowserPlaybackFromMetadata(
+  filePath: string,
+  videoCodec: string | null,
+  audioCodec: string | null,
+  audioPresent = Boolean(audioCodec?.trim()),
+): BrowserPlaybackPlan {
+  const extension = path.extname(filePath).toLowerCase();
+  const normalizedVideoCodec = videoCodec?.trim().toLowerCase() || null;
+  const normalizedAudioCodec = audioCodec?.trim().toLowerCase() || null;
+  if (!normalizedVideoCodec) {
     const directFallback = DIRECT_MP4_EXTENSIONS.has(extension) || DIRECT_WEBM_EXTENSIONS.has(extension);
     return {
       mode: directFallback ? 'direct' : 'transcode',
@@ -139,15 +163,13 @@ export function planBrowserPlayback(filePath: string, probe: MediaProbeResult | 
     };
   }
 
-  const videoCodec = probe.video.codec;
-  const audioCodec = probe.audio?.codec ?? null;
-  const audioAbsent = probe.audio === null;
+  const audioAbsent = !audioPresent;
   const directMp4 = DIRECT_MP4_EXTENSIONS.has(extension)
-    && MP4_VIDEO_CODECS.has(videoCodec)
-    && (audioAbsent || (audioCodec !== null && MP4_AUDIO_CODECS.has(audioCodec)));
+    && MP4_VIDEO_CODECS.has(normalizedVideoCodec)
+    && (audioAbsent || (normalizedAudioCodec !== null && MP4_AUDIO_CODECS.has(normalizedAudioCodec)));
   const directWebm = DIRECT_WEBM_EXTENSIONS.has(extension)
-    && WEBM_VIDEO_CODECS.has(videoCodec)
-    && (audioAbsent || (audioCodec !== null && WEBM_AUDIO_CODECS.has(audioCodec)));
+    && WEBM_VIDEO_CODECS.has(normalizedVideoCodec)
+    && (audioAbsent || (normalizedAudioCodec !== null && WEBM_AUDIO_CODECS.has(normalizedAudioCodec)));
   if (directMp4 || directWebm) {
     return {
       mode: 'direct',
@@ -157,8 +179,8 @@ export function planBrowserPlayback(filePath: string, probe: MediaProbeResult | 
     };
   }
 
-  if (videoCodec === 'h264') {
-    const audioCompatible = audioAbsent || (audioCodec !== null && MP4_AUDIO_CODECS.has(audioCodec));
+  if (normalizedVideoCodec === 'h264') {
+    const audioCompatible = audioAbsent || (normalizedAudioCodec !== null && MP4_AUDIO_CODECS.has(normalizedAudioCodec));
     return {
       mode: audioCompatible ? 'remux' : 'transcode',
       reason: audioCompatible ? 'CONTAINER_REMUX_REQUIRED' : 'AUDIO_TRANSCODE_REQUIRED',

@@ -6,6 +6,7 @@ const drawerPath = path.resolve(process.cwd(), 'src/renderer/components/film/Fil
 const segmentEditorPath = path.resolve(process.cwd(), 'src/renderer/components/film/FilmSegmentEditor.vue');
 const detailPlayerPath = path.resolve(process.cwd(), 'src/renderer/components/film/FilmDetailPlayer.vue');
 const cardPath = path.resolve(process.cwd(), 'src/renderer/components/film/FilmCard.vue');
+const tablePath = path.resolve(process.cwd(), 'src/renderer/components/film/FilmTable.vue');
 const popupPath = path.resolve(process.cwd(), 'src/renderer/components/film/FilmHoverPopup.vue');
 const headerPath = path.resolve(process.cwd(), 'src/renderer/components/film/FilmDetailHeader.vue');
 const preloadPath = path.resolve(process.cwd(), 'src/preload/api.ts');
@@ -19,6 +20,7 @@ const mainWindowPath = path.resolve(process.cwd(), 'src/main/window/createMainWi
 const settingsPath = path.resolve(process.cwd(), 'src/renderer/views/SettingsView.vue');
 const desktopIntegrationPath = path.resolve(process.cwd(), 'src/main/system/DesktopIntegrationService.ts');
 const themePath = path.resolve(process.cwd(), 'src/renderer/styles/theme.css');
+const rendererIndexPath = path.resolve(process.cwd(), 'src/renderer/index.html');
 
 describe('renderer regressions', () => {
   const drawer = fs.readFileSync(drawerPath, 'utf8');
@@ -105,7 +107,18 @@ describe('renderer regressions', () => {
     expect(popup).toContain('<Teleport to="body">');
     expect(popup).toContain('position: fixed');
     expect(popup).toContain('aspect-ratio: 16 / 9');
+    expect(popup).toContain(":class=\"{ 'popup-media-image': mode !== 'video' }\"");
+    expect(popup).toContain('aspect-ratio: 800 / 537');
+    expect(popup).toContain('.popup-media-image img');
+    expect(popup).toContain('object-fit: cover');
     expect(popup).toContain('object-fit: contain');
+    expect(popup).toContain('class="preview-pagination" aria-label="预览图片切换"');
+    expect(popup).toContain('class="preview-pagination" aria-label="预览片段切换"');
+    expect(popup).toContain('@click.stop="selectImage(index)"');
+    expect(popup).toContain('@click.stop="selectHighlight(index)"');
+    expect(popup).toContain('scheduleSlideshow()');
+    expect(popup).toContain('highlightPlaybackGeneration');
+    expect(popup).toContain('.preview-dot.active');
     expect(popup).toContain('claimPreview');
     expect(popup).toContain('releasePreview');
     expect(popup).toContain("mediaUrl('part', segment.filmFileId)");
@@ -114,12 +127,16 @@ describe('renderer regressions', () => {
     expect(popup).toContain('segment-preview-label');
     expect(popup).toContain('activeHighlight.title');
     expect(popup).toContain('正在准备视频预览');
+    expect(popup).toContain('window.filmLibrary.films.showInFolder(props.film.id)');
+    expect(popup).toContain('打开文件位置');
+    expect(popup).toContain('flex-wrap: wrap');
     expect(popup).toMatch(/<video v-if="mode === 'video'"[\s\S]*?<img v-else-if="mode === 'slideshow'[\s\S]*?<div v-else class="popup-empty">暂无预览<\/div>[\s\S]*?<div v-if="mode === 'video' && videoPreparing"/);
   });
 
   it('uses a full-width detail workbench and exposes segment titles on timeline nodes', () => {
     const segmentEditor = fs.readFileSync(segmentEditorPath, 'utf8');
     const detailPlayer = fs.readFileSync(detailPlayerPath, 'utf8');
+    const preload = fs.readFileSync(preloadPath, 'utf8');
     expect(drawer).toContain('size="100vw"');
     expect(drawer).toContain('tab-position="right"');
     expect(drawer).toContain('grid-template-rows: minmax(0, 1fr) 128px');
@@ -153,6 +170,17 @@ describe('renderer regressions', () => {
     expect(segmentEditor).toContain('defineExpose({ markStart, markEnd })');
     expect(detailPlayer).toContain('playbackGeneration += 1');
     expect(detailPlayer).toContain('defineExpose({ playSegment, playPreview, playOriginal, selectPart, seekRelative, togglePlayback, stopPlayback })');
+    expect(detailPlayer).toContain('window.filmLibrary.films.subtitleTracks(partId)');
+    expect(detailPlayer).toContain('window.filmLibrary.films.subtitleContent(partId, Number(index))');
+    expect(detailPlayer).toMatch(/watch\(selectedPartId,[\s\S]*?\}, \{ immediate: true \}\);/);
+    expect(detailPlayer).toContain("v-if=\"source\"");
+    expect(detailPlayer).toContain("'无可用字幕'");
+    expect(detailPlayer).toContain('<track');
+    expect(detailPlayer).toContain('.detail-player-video::cue');
+    expect(detailPlayer).toContain('font-size: 55%');
+    expect(preload).toContain('IPC_CHANNELS.playbackSubtitleTracks');
+    expect(preload).toContain('IPC_CHANNELS.playbackSubtitleContent');
+    expect(fs.readFileSync(rendererIndexPath, 'utf8')).toContain("media-src 'self' blob: film-media:");
     expect(drawer).toContain('detailPlayer.value?.stopPlayback()');
     expect(drawer).toContain('segmentEditor.value?.markStart()');
     expect(drawer).toContain('segmentEditor.value?.markEnd()');
@@ -184,10 +212,26 @@ describe('renderer regressions', () => {
     const sources = fs.readFileSync(sourcesPath, 'utf8');
     expect(header).toContain('重新扫描目录');
     expect(header).toContain("emit('rescan')");
+    expect(header).toContain('使用本地播放器播放');
+    expect(header).toContain("emit('localPlayer')");
+    expect(drawer).toContain('@local-player="playWithLocalPlayer"');
+    expect(drawer).toContain('window.filmLibrary.films.partsOpen(part.id)');
+    expect(drawer).toContain('window.filmLibrary.films.open(detail.value.id)');
+    expect(drawer).toContain('detailPlayer.value?.stopPlayback()');
     expect(drawer).toContain('window.filmLibrary.films.rescan(detail.value.id)');
     expect(drawer).toContain('rescanJobId');
     expect(sources).toContain('重新扫描此来源');
     expect(sources).toContain('scan.start([source.id])');
+    expect(sources).toContain('CircleCloseFilled');
+    expect(sources).toContain('EditPen');
+    expect(sources).toContain('class="source-edit-button"');
+    expect(sources).toContain('aria-label="编辑来源"');
+    expect(sources).toContain('.source-edit-button :deep(svg) { width: 17px; height: 17px;');
+    expect(sources).toContain('class="source-delete-button"');
+    expect(sources).toContain('aria-label="删除来源"');
+    expect(sources).toContain('.source-delete-button :deep(svg) { width: 17px; height: 17px;');
+    expect(sources).not.toContain('<Delete />');
+    expect(sources).not.toContain('<Edit />');
     expect(sources).not.toContain('原片预览');
     expect(sources).not.toContain('updateOriginalPreview');
   });
@@ -204,12 +248,19 @@ describe('renderer regressions', () => {
     expect(preload).toContain('invoke(IPC_CHANNELS.filmsExportCsv, query)');
   });
 
-  it('filters automatic single-file title mismatches on the all-data page', () => {
+  it('keeps the all-data toolbar focused on data status', () => {
     const library = fs.readFileSync(libraryPath, 'utf8');
-    expect(library).toContain('library.filters.recordIssue');
-    expect(library).toContain('自动标题与单文件名不一致');
-    expect(library).toContain('非 CD 多文件错误合并');
-    expect(library).toContain('value="invalid-multipart"');
+    const table = fs.readFileSync(tablePath, 'utf8');
+    expect(library).toContain('library.filters.availability');
+    expect(library).not.toContain('library.filters.recordIssue');
+    expect(library).not.toContain('library.filters.playbackCompatibility');
+    expect(library).toContain('<el-radio-group v-if="!allData"');
+    expect(library).not.toContain('label="已归档" value="archived"');
+    expect(table).not.toContain('label="评分"');
+    expect(table).not.toContain('row.rating');
+    expect(table).toContain('label="操作" width="96"');
+    expect(library).not.toContain('自动标题与单文件名不一致');
+    expect(library).not.toContain('非原生播放');
   });
 
   it('isolates development Chromium cache and uses the current console-message event shape', () => {
