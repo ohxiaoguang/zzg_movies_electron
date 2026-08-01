@@ -79,6 +79,8 @@ interface LanServerOptions {
   port?: number;
   version: string;
   databaseReady: () => boolean;
+  detailPlayerSeekStepSeconds?: () => number;
+  detailPlayerFineSeekStepSeconds?: () => number;
   configuration?: Partial<LanServerConfiguration>;
   auth?: LanAuthService;
   management?: FilmLibraryManagementService;
@@ -798,6 +800,8 @@ export class LanServer {
       service: 'local-film-library',
       version: this.options.version,
       apiVersion: 'v1',
+      detailPlayerSeekStepSeconds: this.detailPlayerSeekStepSeconds(),
+      detailPlayerFineSeekStepSeconds: this.detailPlayerFineSeekStepSeconds(),
       bindAddress: status.bindAddress,
       port: status.port,
       baseUrl: status.baseUrl ?? fallbackUrl,
@@ -807,6 +811,16 @@ export class LanServer {
       networkScope: status.bindMode,
       authenticationRequired: status.authenticationRequired,
     };
+  }
+
+  private detailPlayerSeekStepSeconds(): number {
+    const value = this.options.detailPlayerSeekStepSeconds?.();
+    return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 60 ? value : 1;
+  }
+
+  private detailPlayerFineSeekStepSeconds(): number {
+    const value = this.options.detailPlayerFineSeekStepSeconds?.();
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0.01 && value <= 5 ? value : 0.1;
   }
 
   private assertNoQuery(url: URL): void {

@@ -5,6 +5,7 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import type { ActorDto, CustomCategoryDto, FilmDetailDto, FilmPartDto, FilmUpdatePatch } from '../../../shared/contracts';
 import type { AssetType } from '../../../shared/enums';
 import { mediaUrl } from '../../api';
+import { useLibraryStore } from '../../stores/library';
 import { useScanStore } from '../../stores/scan';
 import { useResonanceStore } from '../../stores/resonance';
 import FilmDetailHeader, { type SelectedCategoryItem } from './FilmDetailHeader.vue';
@@ -14,6 +15,7 @@ import FilmSegmentEditor from './FilmSegmentEditor.vue';
 const props = defineProps<{ modelValue: boolean; filmId: string | null }>();
 const emit = defineEmits<{ 'update:modelValue': [value: boolean]; updated: [] }>();
 const router = useRouter();
+const library = useLibraryStore();
 const scan = useScanStore();
 const resonance = useResonanceStore();
 type SaveState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
@@ -363,7 +365,10 @@ function handleKeydown(event: KeyboardEvent): void {
     void nextTick(() => segmentEditor.value?.markEnd());
   } else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
     event.preventDefault();
-    const delta = event.shiftKey ? 0.1 : 1;
+    event.stopPropagation();
+    const delta = event.shiftKey
+      ? library.settings.detailPlayerFineSeekStepSeconds
+      : library.settings.detailPlayerSeekStepSeconds;
     detailPlayer.value?.seekRelative(event.key === 'ArrowLeft' ? -delta : delta);
   }
 }
@@ -380,8 +385,8 @@ async function close(): Promise<boolean> {
 }
 async function filterByActor(name: string): Promise<void> { if (await close()) await router.push({ path: '/library', query: { actor: name } }); }
 
-window.addEventListener('keydown', handleKeydown);
-onBeforeUnmount(() => { window.removeEventListener('keydown', handleKeydown); detailPlayer.value?.stopPlayback(); if (saveTimer) clearTimeout(saveTimer); });
+window.addEventListener('keydown', handleKeydown, true);
+onBeforeUnmount(() => { window.removeEventListener('keydown', handleKeydown, true); detailPlayer.value?.stopPlayback(); if (saveTimer) clearTimeout(saveTimer); });
 </script>
 
 <template>

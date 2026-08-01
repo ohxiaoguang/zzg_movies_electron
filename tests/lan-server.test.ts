@@ -4,7 +4,7 @@ import type { Server } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { ApiResult, FilmDetailDto, FilmFilterDataDto, FilmPageDto, PublicMediaSourceDto } from '../src/shared/contracts';
+import type { ApiResult, FilmDetailDto, FilmFilterDataDto, FilmPageDto, LanServerInfoDto, PublicMediaSourceDto } from '../src/shared/contracts';
 import { DatabaseManager } from '../src/main/database/DatabaseManager';
 import { FilmRepository } from '../src/main/database/repositories/FilmRepository';
 import { SettingsRepository } from '../src/main/database/repositories/SettingsRepository';
@@ -45,6 +45,11 @@ describe('localhost read-only web server', () => {
     });
     expect(first.baseUrl).toBe(`http://127.0.0.1:${first.port}`);
     expect(await context.server.start()).toEqual(first);
+
+    context.settings.update({ detailPlayerSeekStepSeconds: 12, detailPlayerFineSeekStepSeconds: 0.25 });
+    const serverInfo = await api<LanServerInfoDto>(`${first.baseUrl}/api/v1/server-info`);
+    expect(serverInfo.ok && serverInfo.data.detailPlayerSeekStepSeconds).toBe(12);
+    expect(serverInfo.ok && serverInfo.data.detailPlayerFineSeekStepSeconds).toBe(0.25);
 
     const health = await api<{ databaseReady: boolean; readOnly: boolean }>(`${first.baseUrl}/api/v1/health`);
     expect(health).toMatchObject({ ok: true, data: { databaseReady: true, readOnly: true } });
@@ -236,8 +241,12 @@ describe('localhost read-only web server', () => {
     expect(script).toContain("createElement('div', 'gallery-thumbnail-grid')");
     expect(script).toContain("createElement('div', 'gallery-lightbox')");
     expect(script).toContain("event.key === 'ArrowLeft'");
-    expect(script).not.toContain('preview.seek(-10)');
-    expect(script).toContain('playback.seek(10)');
+    expect(script).toContain('playback.seek(-configuredSeekStepSeconds())');
+    expect(script).toContain('playback.seek(configuredSeekStepSeconds())');
+    expect(script).toContain('function configuredSeekStepSeconds()');
+    expect(script).toContain('function configuredFineSeekStepSeconds()');
+    expect(script).toContain("video.addEventListener('keydown'");
+    expect(script).toContain('Promise.all([client.film(id), client.serverInfo()])');
     expect(script).toContain('function seekVideoBy(video, deltaSeconds)');
     expect(script).toContain('video.currentTime = target');
     expect(script).toContain('NVIDIA 全硬件转码（CUDA 解码与缩放）');
@@ -718,9 +727,11 @@ async function createContext() {
     port: 0,
     version: 'test',
     databaseReady: () => database.db.open,
+    detailPlayerSeekStepSeconds: () => settings.get().detailPlayerSeekStepSeconds,
+    detailPlayerFineSeekStepSeconds: () => settings.get().detailPlayerFineSeekStepSeconds,
   });
   lanServers.push(server);
-  return { root, database, library, media, server, logger, auth, management, scan, films, filmId: film.id };
+  return { root, database, library, media, server, logger, auth, management, scan, films, settings, filmId: film.id };
 }
 
 async function waitForScan(scan: ScanCoordinator): Promise<void> {

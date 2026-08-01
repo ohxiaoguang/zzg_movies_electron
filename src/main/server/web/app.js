@@ -493,7 +493,9 @@ async function showDetail(id) {
   elements.detailContent.replaceChildren(createElement('p', 'muted', '正在读取详情…'));
   elements.filmDetail.showModal();
   try {
-    renderDetail(await client.film(id));
+    const [film, server] = await Promise.all([client.film(id), client.serverInfo()]);
+    state.server = server;
+    renderDetail(film);
   } catch (error) {
     elements.detailContent.replaceChildren(createElement('p', 'error-panel', errorMessage(error)));
   }
@@ -675,11 +677,12 @@ function createMediaSection(film, playback, navigation) {
     imageButton.classList.toggle('active', name === 'images');
     for (const panel of panels) panel.hidden = panel.dataset.tab !== name;
     if (name !== 'images') {
+      const seekStep = configuredSeekStepSeconds();
       navigation.setMode(playback.canSeek ? {
-        backward: () => playback.seek(-10),
-        forward: () => playback.seek(10),
-        backTitle: '后退 10 秒',
-        forwardTitle: '前进 10 秒',
+        backward: () => playback.seek(-configuredSeekStepSeconds()),
+        forward: () => playback.seek(configuredSeekStepSeconds()),
+        backTitle: `后退 ${seekStep} 秒`,
+        forwardTitle: `前进 ${seekStep} 秒`,
       } : {});
     } else {
       releaseActivePlayback();
@@ -908,6 +911,13 @@ function createUnifiedPlayback(film) {
   video.controls = true;
   video.playsInline = true;
   video.preload = 'metadata';
+  video.addEventListener('keydown', (event) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    event.stopPropagation();
+    const delta = event.shiftKey ? configuredFineSeekStepSeconds() : configuredSeekStepSeconds();
+    seekVideoBy(video, event.key === 'ArrowLeft' ? -delta : delta);
+  }, true);
   const videoFrame = createElement('div', 'segment-video-frame');
   const segmentLabel = createElement('div', 'segment-current-label');
   videoFrame.append(video, segmentLabel);
@@ -1280,6 +1290,16 @@ function seekVideoBy(video, deltaSeconds) {
   } catch {
     // The media element remains authoritative while an HLS stream is preparing.
   }
+}
+
+function configuredSeekStepSeconds() {
+  const value = Number(state.server?.detailPlayerSeekStepSeconds);
+  return Number.isInteger(value) && value >= 1 && value <= 60 ? value : 1;
+}
+
+function configuredFineSeekStepSeconds() {
+  const value = Number(state.server?.detailPlayerFineSeekStepSeconds);
+  return Number.isFinite(value) && value >= 0.01 && value <= 5 ? value : 0.1;
 }
 
 async function applyPlaybackPosition(video, positionSeconds) {

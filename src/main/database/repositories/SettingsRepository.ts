@@ -17,6 +17,8 @@ export class SettingsRepository {
       cardSize: number;
       hoverDelayMs: number;
       slideshowIntervalMs: number;
+      detailPlayerSeekStepSeconds: number;
+      detailPlayerFineSeekStepSeconds: number;
       pageSize: number;
       videoExtensions: string[];
       imageExtensions: string[];
@@ -47,6 +49,18 @@ export class SettingsRepository {
       cardSize: clamp(settings.cardSize, 140, 320, DEFAULT_SETTINGS.cardSize),
       hoverDelayMs: clamp(settings.hoverDelayMs, 100, 3000, DEFAULT_SETTINGS.hoverDelayMs),
       slideshowIntervalMs: clamp(settings.slideshowIntervalMs, 500, 10_000, DEFAULT_SETTINGS.slideshowIntervalMs),
+      detailPlayerSeekStepSeconds: clampInteger(
+        settings.detailPlayerSeekStepSeconds,
+        1,
+        60,
+        DEFAULT_SETTINGS.detailPlayerSeekStepSeconds,
+      ),
+      detailPlayerFineSeekStepSeconds: clamp(
+        settings.detailPlayerFineSeekStepSeconds,
+        0.01,
+        5,
+        DEFAULT_SETTINGS.detailPlayerFineSeekStepSeconds,
+      ),
       pageSize: clamp(settings.pageSize, 12, 200, DEFAULT_SETTINGS.pageSize),
       videoExtensions: normalizeList(settings.videoExtensions, DEFAULT_SETTINGS.videoExtensions),
       imageExtensions: normalizeList(settings.imageExtensions, DEFAULT_SETTINGS.imageExtensions),
@@ -77,6 +91,18 @@ export class SettingsRepository {
     const current = this.get();
     if (input.cardSize !== undefined && (!Number.isFinite(input.cardSize) || input.cardSize < 140 || input.cardSize > 320)) throw new Error('INVALID_CARD_SIZE');
     if (
+      input.detailPlayerSeekStepSeconds !== undefined
+      && (!Number.isInteger(input.detailPlayerSeekStepSeconds) || input.detailPlayerSeekStepSeconds < 1 || input.detailPlayerSeekStepSeconds > 60)
+    ) {
+      throw new Error('INVALID_DETAIL_PLAYER_SEEK_STEP');
+    }
+    if (
+      input.detailPlayerFineSeekStepSeconds !== undefined
+      && (!Number.isFinite(input.detailPlayerFineSeekStepSeconds) || input.detailPlayerFineSeekStepSeconds < 0.01 || input.detailPlayerFineSeekStepSeconds > 5)
+    ) {
+      throw new Error('INVALID_DETAIL_PLAYER_FINE_SEEK_STEP');
+    }
+    if (
       input.playbackCacheLimitGb !== undefined
       && (!Number.isInteger(input.playbackCacheLimitGb) || input.playbackCacheLimitGb < 1 || input.playbackCacheLimitGb > 500)
     ) {
@@ -103,6 +129,8 @@ export class SettingsRepository {
       cardSize: input.cardSize ?? current.cardSize,
       hoverDelayMs: input.hoverDelayMs ?? current.hoverDelayMs,
       slideshowIntervalMs: input.slideshowIntervalMs ?? current.slideshowIntervalMs,
+      detailPlayerSeekStepSeconds: input.detailPlayerSeekStepSeconds ?? current.detailPlayerSeekStepSeconds,
+      detailPlayerFineSeekStepSeconds: input.detailPlayerFineSeekStepSeconds ?? current.detailPlayerFineSeekStepSeconds,
       pageSize: input.pageSize ?? current.pageSize,
       videoExtensions: input.videoExtensions ?? current.videoExtensions,
       imageExtensions: input.imageExtensions ?? current.imageExtensions,

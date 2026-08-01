@@ -138,6 +138,7 @@ describe('renderer regressions', () => {
     const segmentEditor = fs.readFileSync(segmentEditorPath, 'utf8');
     const detailPlayer = fs.readFileSync(detailPlayerPath, 'utf8');
     const preload = fs.readFileSync(preloadPath, 'utf8');
+    const settings = fs.readFileSync(settingsPath, 'utf8');
     expect(drawer).toContain('size="100vw"');
     expect(drawer).toContain('tab-position="right"');
     expect(drawer).toContain('grid-template-rows: minmax(0, 1fr) 128px');
@@ -185,6 +186,13 @@ describe('renderer regressions', () => {
     expect(drawer).toContain('detailPlayer.value?.stopPlayback()');
     expect(drawer).toContain('segmentEditor.value?.markStart()');
     expect(drawer).toContain('segmentEditor.value?.markEnd()');
+    expect(drawer).toContain('library.settings.detailPlayerSeekStepSeconds');
+    expect(drawer).toContain('library.settings.detailPlayerFineSeekStepSeconds');
+    expect(drawer).toContain("window.addEventListener('keydown', handleKeydown, true)");
+    expect(drawer).toContain('event.stopPropagation()');
+    expect(settings).toContain('快进/快退步进');
+    expect(settings).toContain('form.detailPlayerSeekStepSeconds');
+    expect(settings).toContain('form.detailPlayerFineSeekStepSeconds');
   });
 
   it('lists NFO actors and routes an actor click to the library filter', () => {

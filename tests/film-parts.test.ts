@@ -159,12 +159,20 @@ describe('multi-part films and availability', () => {
     expect(fs.existsSync(path.join(root, 'Movie-cd1.mp4'))).toBe(true);
   });
 
-  it('validates and persists desktop and playback-cache settings', () => {
+  it('validates and persists desktop, player and playback-cache settings', () => {
     const root = makeRoot();
     const context = createContext(root);
     expect(() => context.settings.update({ cardSize: 139 })).toThrow('INVALID_CARD_SIZE');
     expect(context.settings.update({ cardSize: 280 }).cardSize).toBe(280);
     expect(context.settings.get().cardSize).toBe(280);
+    expect(context.settings.update({ detailPlayerSeekStepSeconds: 10 }).detailPlayerSeekStepSeconds).toBe(10);
+    expect(context.settings.get().detailPlayerSeekStepSeconds).toBe(10);
+    expect(() => context.settings.update({ detailPlayerSeekStepSeconds: 0 })).toThrow('INVALID_DETAIL_PLAYER_SEEK_STEP');
+    expect(() => context.settings.update({ detailPlayerSeekStepSeconds: 1.5 })).toThrow('INVALID_DETAIL_PLAYER_SEEK_STEP');
+    expect(context.settings.update({ detailPlayerFineSeekStepSeconds: 0.25 }).detailPlayerFineSeekStepSeconds).toBe(0.25);
+    expect(context.settings.get().detailPlayerFineSeekStepSeconds).toBe(0.25);
+    expect(() => context.settings.update({ detailPlayerFineSeekStepSeconds: 0 })).toThrow('INVALID_DETAIL_PLAYER_FINE_SEEK_STEP');
+    expect(() => context.settings.update({ detailPlayerFineSeekStepSeconds: 5.01 })).toThrow('INVALID_DETAIL_PLAYER_FINE_SEEK_STEP');
     const cacheDirectory = path.join(root, 'Local Film Library Playback Cache');
     expect(context.settings.update({
       playbackCacheDirectory: cacheDirectory,

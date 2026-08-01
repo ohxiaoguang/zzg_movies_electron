@@ -12,6 +12,8 @@ export const useLibraryStore = defineStore('library', () => {
     cardSize: DEFAULT_SETTINGS.cardSize,
     hoverDelayMs: DEFAULT_SETTINGS.hoverDelayMs,
     slideshowIntervalMs: DEFAULT_SETTINGS.slideshowIntervalMs,
+    detailPlayerSeekStepSeconds: DEFAULT_SETTINGS.detailPlayerSeekStepSeconds,
+    detailPlayerFineSeekStepSeconds: DEFAULT_SETTINGS.detailPlayerFineSeekStepSeconds,
     pageSize: DEFAULT_SETTINGS.pageSize,
     videoExtensions: [...DEFAULT_SETTINGS.videoExtensions],
     imageExtensions: [...DEFAULT_SETTINGS.imageExtensions],

@@ -116,6 +116,8 @@ if (hasSingleInstanceLock) void app.whenReady().then(() => {
   lanServer = new LanServer(libraryRead, mediaAssets, logger, {
     version: app.getVersion(),
     databaseReady: () => Boolean(database?.db.open),
+    detailPlayerSeekStepSeconds: () => settings.get().detailPlayerSeekStepSeconds,
+    detailPlayerFineSeekStepSeconds: () => settings.get().detailPlayerFineSeekStepSeconds,
     configuration: lanServerConfigurationFromSettings(lanSettings),
     auth: lanAuth,
     management,

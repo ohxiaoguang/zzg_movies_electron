@@ -363,6 +363,8 @@ function publicMessage(code: string): string {
     FILE_OPEN_FAILED: '无法打开原始影片',
     FILM_MISSING: '原始影片文件不存在',
     INVALID_CARD_SIZE: '卡片宽度必须在 140 到 320 像素之间',
+    INVALID_DETAIL_PLAYER_SEEK_STEP: '详情页播放器快进/快退步进必须是 1 到 60 秒之间的整数',
+    INVALID_DETAIL_PLAYER_FINE_SEEK_STEP: '详情页播放器 Shift 微调步进必须在 0.01 到 5 秒之间',
     SOURCE_PATH_EXISTS: '该目录已经存在活动来源',
     CATEGORY_NOT_FOUND: '分类不存在',
     CATEGORY_EXISTS: '同名分类已经存在',
@@ -446,7 +448,7 @@ function validateCategoryReorder(payload: unknown): CustomCategoryReorderInput {
 function validateSettingsUpdate(payload: unknown): SettingsUpdateInput {
   if (!isRecord(payload)) throw new Error('INVALID_SETTINGS');
   const input: SettingsUpdateInput = {};
-  for (const key of ['cardSize', 'hoverDelayMs', 'slideshowIntervalMs', 'pageSize'] as const) {
+  for (const key of ['cardSize', 'hoverDelayMs', 'slideshowIntervalMs', 'detailPlayerSeekStepSeconds', 'detailPlayerFineSeekStepSeconds', 'pageSize'] as const) {
     if (payload[key] !== undefined) input[key] = Number(payload[key]);
   }
   for (const key of ['videoExtensions', 'imageExtensions', 'ignoredDirectories'] as const) {

@@ -17,6 +17,8 @@ export const DEFAULT_SETTINGS = {
   cardSize: 200,
   hoverDelayMs: 450,
   slideshowIntervalMs: 1200,
+  detailPlayerSeekStepSeconds: 1,
+  detailPlayerFineSeekStepSeconds: 0.1,
   pageSize: 60,
   videoExtensions: DEFAULT_VIDEO_EXTENSIONS,
   imageExtensions: DEFAULT_IMAGE_EXTENSIONS,
