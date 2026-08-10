@@ -22,9 +22,17 @@ const desktopIntegrationPath = path.resolve(process.cwd(), 'src/main/system/Desk
 const themePath = path.resolve(process.cwd(), 'src/renderer/styles/theme.css');
 const rendererIndexPath = path.resolve(process.cwd(), 'src/renderer/index.html');
 const resonancePath = path.resolve(process.cwd(), 'src/renderer/components/resonance/ResonanceBall.vue');
+const appPath = path.resolve(process.cwd(), 'src/renderer/App.vue');
 
 describe('renderer regressions', () => {
   const drawer = fs.readFileSync(drawerPath, 'utf8');
+
+  it('does not clear first-time account passwords during status polling', () => {
+    const app = fs.readFileSync(appPath, 'utf8');
+    expect(app).toContain('const credentialsWereConfigured = status.value?.configured === true');
+    expect(app).toContain('if (credentialsWereConfigured && !result.data.configured)');
+    expect(app).not.toContain("if (!result.data.configured) form.password = ''");
+  });
 
   it('shows image thumbnails and opens a navigable full-size image dialog', () => {
     expect(drawer).toContain('image-thumbnail-grid');

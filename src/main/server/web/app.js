@@ -38,8 +38,8 @@ class HttpFilmLibraryClient {
   films(query) { return this.request('/api/v1/films', query); }
   film(id) { return this.request(`/api/v1/films/${encodeURIComponent(id)}`); }
   filters() { return this.request('/api/v1/filters/counts'); }
-  pair(code, deviceName) { return this.request('/api/v1/auth/pair', null, { method: 'POST', body: { code, deviceName } }); }
-  revoke() { return this.request('/api/v1/auth/revoke', null, { method: 'POST' }); }
+  login(username, password) { return this.request('/api/v1/auth/login', null, { method: 'POST', body: { username, password } }); }
+  logout() { return this.request('/api/v1/auth/logout', null, { method: 'POST' }); }
   updateFavorite(id, favorite) { return this.request(`/api/v1/films/${encodeURIComponent(id)}/favorite`, null, { method: 'PATCH', body: { favorite } }); }
   updateMetadata(id, body) { return this.request(`/api/v1/films/${encodeURIComponent(id)}/metadata`, null, { method: 'PATCH', body }); }
   updateTaxonomy(id, body) { return this.request(`/api/v1/films/${encodeURIComponent(id)}/taxonomy`, null, { method: 'PATCH', body }); }
@@ -93,8 +93,8 @@ const elements = Object.fromEntries([
   'settings-view', 'server-facts', 'device-facts', 'settings-device-revoke',
   'role-badge', 'result-summary', 'error', 'film-grid', 'search', 'source',
   'category', 'tag', 'genre', 'actor', 'sort', 'refresh', 'previous-page', 'next-page',
-  'page-summary', 'film-detail', 'detail-content', 'close-detail', 'pairing-dialog',
-  'pairing-form', 'pairing-code', 'pairing-error', 'device-name', 'device-revoke',
+  'page-summary', 'film-detail', 'detail-content', 'close-detail', 'login-dialog',
+  'login-form', 'login-error', 'account-username', 'account-password', 'device-revoke',
   'create-category',
 ].map((id) => [camel(id), document.querySelector(`#${id}`)]));
 
@@ -106,7 +106,7 @@ async function bootstrap() {
     state.server = await client.serverInfo();
     await initializeLibrary();
   } catch (error) {
-    if (isAuthenticationError(error)) showPairing();
+    if (isAuthenticationError(error)) showLogin();
     else showError(error);
   }
 }
@@ -162,10 +162,10 @@ function bindEvents() {
   elements.filmDetail.addEventListener('click', (event) => {
     if (event.target === elements.filmDetail) closeFilmDetail();
   });
-  elements.deviceName.value = defaultDeviceName();
-  elements.pairingForm.addEventListener('submit', (event) => {
+  elements.accountUsername.value = localStorage.getItem('film-library-web-username') || '';
+  elements.loginForm.addEventListener('submit', (event) => {
     event.preventDefault();
-    void completePairing();
+    void completeLogin();
   });
   elements.deviceRevoke.addEventListener('click', () => void revokeDevice());
   elements.settingsDeviceRevoke.addEventListener('click', () => void revokeDevice());
@@ -227,7 +227,7 @@ async function reloadLibrary() {
     renderIndexViews();
     if (state.view === 'library') await loadFilms();
   } catch (error) {
-    if (isAuthenticationError(error)) showPairing();
+    if (isAuthenticationError(error)) showLogin();
     else showError(error);
   }
 }
@@ -246,7 +246,7 @@ async function loadFilms() {
     elements.nextPage.disabled = page.page >= page.totalPages;
     renderFilms(page.items);
   } catch (error) {
-    if (isAuthenticationError(error)) showPairing();
+    if (isAuthenticationError(error)) showLogin();
     else showError(error);
   } finally {
     setBusy(false);
@@ -422,8 +422,8 @@ function renderWebSettings() {
   addFact(elements.serverFacts, '访问地址', (state.server.baseUrls?.length ? state.server.baseUrls : [state.server.baseUrl]).join(' · '));
   addFact(elements.serverFacts, '网络范围', state.server.networkScope === 'lan' ? '私有局域网' : '仅本机');
   addFact(elements.serverFacts, '监听端口', String(state.server.port));
-  addFact(elements.serverFacts, '身份验证', state.server.authenticationRequired ? '需要配对' : '本机免配对');
-  addFact(elements.serverFacts, '管理接口', state.server.managementAvailable ? '可用（按设备角色授权）' : '未启用');
+  addFact(elements.serverFacts, '身份验证', state.server.authenticationRequired ? '需要账号登录' : '本机免登录');
+  addFact(elements.serverFacts, '管理接口', state.server.managementAvailable ? '可用（登录账号授权）' : '未启用');
   if (state.playbackCapabilities) {
     addFact(elements.serverFacts, 'ffprobe', state.playbackCapabilities.ffprobeAvailable ? '可用' : '未找到');
     addFact(elements.serverFacts, 'ffmpeg', state.playbackCapabilities.ffmpegAvailable ? '可用' : '未找到');
@@ -434,7 +434,7 @@ function renderWebSettings() {
     );
   }
   elements.deviceFacts.replaceChildren();
-  addFact(elements.deviceFacts, '设备', state.auth.device?.name || '本机浏览器');
+  addFact(elements.deviceFacts, '账号', state.auth.device?.name?.replace(/^账号\s+/, '') || '本机浏览器');
   addFact(elements.deviceFacts, '角色', state.auth.canManage ? '管理员' : '访客');
   addFact(elements.deviceFacts, '最近使用', formatDateTime(state.auth.device?.lastUsedAt));
 }
@@ -1487,36 +1487,33 @@ async function runAdminAction(operation, message) {
   }
 }
 
-async function completePairing() {
-  elements.pairingError.hidden = true;
+async function completeLogin() {
+  elements.loginError.hidden = true;
   try {
-    await client.pair(elements.pairingCode.value.trim(), elements.deviceName.value.trim());
-    elements.pairingCode.value = '';
-    elements.pairingDialog.close();
+    const username = elements.accountUsername.value.trim();
+    await client.login(username, elements.accountPassword.value);
+    localStorage.setItem('film-library-web-username', username);
+    elements.accountPassword.value = '';
+    elements.loginDialog.close();
     await initializeLibrary();
   } catch (error) {
-    elements.pairingError.hidden = false;
-    elements.pairingError.textContent = errorMessage(error);
+    elements.loginError.hidden = false;
+    elements.loginError.textContent = errorMessage(error);
   }
 }
 
 async function revokeDevice() {
-  try { await client.revoke(); } catch { /* Expired and revoked have the same local outcome. */ }
-  showPairing();
+  try { await client.logout(); } catch { /* Expired and logged out have the same local outcome. */ }
+  showLogin();
 }
 
-function showPairing() {
-  if (!elements.pairingDialog.open) elements.pairingDialog.showModal();
-  window.setTimeout(() => elements.pairingCode.focus(), 0);
+function showLogin() {
+  if (!elements.loginDialog.open) elements.loginDialog.showModal();
+  window.setTimeout(() => (elements.accountUsername.value ? elements.accountPassword : elements.accountUsername).focus(), 0);
 }
 
 function isAuthenticationError(error) {
   return error && typeof error === 'object' && (error.status === 401 || error.code === 'UNAUTHORIZED');
-}
-
-function defaultDeviceName() {
-  const platform = navigator.userAgentData?.platform || navigator.platform || 'Browser';
-  return `${platform} 浏览器`.slice(0, 100);
 }
 
 function field(labelText, type, value) {

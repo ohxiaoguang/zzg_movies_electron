@@ -86,6 +86,12 @@ try {
     const sourcePath = JSON.stringify(mediaRoot);
     const expectedCompatibilityPreview = ffmpegAvailable;
     const evaluation = await cdpEvaluate(socket, `(async () => {
+      const accountState = await window.filmLibrary.account.status();
+      const account = accountState.ok && accountState.data.authenticated
+        ? accountState
+        : accountState.ok && !accountState.data.configured
+          ? await window.filmLibrary.account.setup({ username: 'smoke-admin', password: 'smoke-test-password' })
+          : await window.filmLibrary.account.login({ username: 'smoke-admin', password: 'smoke-test-password' });
       const health = await window.filmLibrary.app.health();
       const info = await window.filmLibrary.app.info();
       const before = await window.filmLibrary.sources.list();
@@ -208,11 +214,12 @@ try {
       const allData = await window.filmLibrary.films.recordsPageAll({ page: 1, pageSize: 20 });
       const restored = created.ok ? await window.filmLibrary.sources.restore({ id: created.data.id }) : { ok: false };
       const after = await window.filmLibrary.sources.list();
-      return { health, info, before, created, previewEnabled, started, scanStatus, page, detail, localWebSettings, localWeb, previewProbe, directoryRescan, directoryRescanStatus, actorList, actorFiltered, parts, unorganizedBefore, classic, mystery, categorized, favorited, patched, patchedDetail, organizedAfter, ui, setting, removed, allData, restored, after };
+      return { account, health, info, before, created, previewEnabled, started, scanStatus, page, detail, localWebSettings, localWeb, previewProbe, directoryRescan, directoryRescanStatus, actorList, actorFiltered, parts, unorganizedBefore, classic, mystery, categorized, favorited, patched, patchedDetail, organizedAfter, ui, setting, removed, allData, restored, after };
     })()`, true);
 
     if (evaluation?.exceptionDetails) throw new Error(`Renderer evaluation failed: ${JSON.stringify(evaluation.exceptionDetails)}`);
     const result = evaluation?.result?.value;
+    if (!result?.account?.ok || !result.account.data?.authenticated) throw new Error(`Account setup failed: ${JSON.stringify(result?.account)}`);
     if (!result?.health?.ok || !result.health.data?.databaseReady || !result.health.data?.ipcReady) throw new Error(`Health check failed: ${JSON.stringify(result?.health)}`);
     if (!result.info?.ok || (expectedAppVersion && result.info.data.version !== expectedAppVersion)) throw new Error(`Application version failed: expected=${expectedAppVersion || '(any)'} actual=${JSON.stringify(result.info)}`);
     if (!result.created?.ok) throw new Error(`Source create failed: ${JSON.stringify(result.created)}`);

@@ -1,5 +1,7 @@
 import type {
   ApiResult,
+  AccountAuthStatusDto,
+  AccountCredentialsInput,
   ActorDto,
   AppHealthDto,
   AppInfoDto,
@@ -24,8 +26,6 @@ import type {
   CustomCategoryReorderInput,
   FfprobeTestResult,
   LanServerStatusDto,
-  LanPairingCodeDto,
-  LanPairedDeviceDto,
   MediaSourceDto,
   PlaybackCacheInfoDto,
   RemoveSourceInput,
@@ -44,6 +44,12 @@ import type {
 } from '../shared/contracts';
 
 export interface FilmLibraryApi {
+  account: {
+    status(): Promise<ApiResult<AccountAuthStatusDto>>;
+    setup(input: AccountCredentialsInput): Promise<ApiResult<AccountAuthStatusDto>>;
+    login(input: AccountCredentialsInput): Promise<ApiResult<AccountAuthStatusDto>>;
+    logout(): Promise<ApiResult<AccountAuthStatusDto>>;
+  };
   sources: {
     list(): Promise<ApiResult<MediaSourceDto[]>>;
     chooseDirectory(): Promise<ApiResult<string | null>>;
@@ -107,9 +113,6 @@ export interface FilmLibraryApi {
     status(): Promise<ApiResult<LanServerStatusDto>>;
     start(): Promise<ApiResult<LanServerStatusDto>>;
     stop(): Promise<ApiResult<LanServerStatusDto>>;
-    createPairingCode(role?: 'viewer' | 'admin'): Promise<ApiResult<LanPairingCodeDto>>;
-    listDevices(): Promise<ApiResult<LanPairedDeviceDto[]>>;
-    revokeDevice(id: string): Promise<ApiResult<null>>;
   };
   settings: {
     get(): Promise<ApiResult<SettingsDto>>;

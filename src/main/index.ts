@@ -18,6 +18,7 @@ import { createMainWindow, loadMainWindow } from './window/createMainWindow';
 import { FilmLibraryReadService } from './services/FilmLibraryReadService';
 import { MediaAssetService } from './services/MediaAssetService';
 import { LanAuthService } from './services/LanAuthService';
+import { AccountCredentialService } from './services/AccountCredentialService';
 import { FilmLibraryManagementService } from './services/FilmLibraryManagementService';
 import { PlaybackSessionService } from './services/PlaybackSessionService';
 import { lanServerConfigurationFromSettings, LanServer } from './server/LanServer';
@@ -110,7 +111,8 @@ if (hasSingleInstanceLock) void app.whenReady().then(() => {
       };
     },
   );
-  const lanAuth = new LanAuthService(lanDevices, logger);
+  const accountCredentials = new AccountCredentialService(path.join(app.getPath('userData'), 'account-credentials.json'));
+  const lanAuth = new LanAuthService(lanDevices, logger, accountCredentials);
   const management = new FilmLibraryManagementService(database, films, sources, libraryRead, scan, logger);
   const lanSettings = settings.get();
   lanServer = new LanServer(libraryRead, mediaAssets, logger, {
@@ -179,7 +181,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(() => {
       libraryRead,
       management,
       lanServer: lanServer!,
-      lanAuth,
+      accountCredentials,
       playback,
       scan,
       fileOpen,

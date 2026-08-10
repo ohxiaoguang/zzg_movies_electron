@@ -3,6 +3,7 @@ import type { IpcRendererEvent } from 'electron';
 import { IPC_CHANNELS } from '../shared/ipcChannels';
 import type {
   ApiResult,
+  AccountCredentialsInput,
   CreateSourceInput,
   FindDeletedSourceInput,
   FilmRecordDeleteBatchInput,
@@ -26,6 +27,12 @@ import type {
 import type { FilmLibraryApi } from './types';
 
 export const filmLibraryApi: FilmLibraryApi = {
+  account: {
+    status: () => invoke(IPC_CHANNELS.accountStatus),
+    setup: (input: AccountCredentialsInput) => invoke(IPC_CHANNELS.accountSetup, input),
+    login: (input: AccountCredentialsInput) => invoke(IPC_CHANNELS.accountLogin, input),
+    logout: () => invoke(IPC_CHANNELS.accountLogout),
+  },
   sources: {
     list: () => invoke(IPC_CHANNELS.sourcesList),
     chooseDirectory: () => invoke(IPC_CHANNELS.sourcesChooseDirectory),
@@ -93,9 +100,6 @@ export const filmLibraryApi: FilmLibraryApi = {
     status: () => invoke(IPC_CHANNELS.lanServerStatus),
     start: () => invoke(IPC_CHANNELS.lanServerStart),
     stop: () => invoke(IPC_CHANNELS.lanServerStop),
-    createPairingCode: (role: 'viewer' | 'admin' = 'viewer') => invoke(IPC_CHANNELS.lanServerCreatePairingCode, role),
-    listDevices: () => invoke(IPC_CHANNELS.lanDevicesList),
-    revokeDevice: (id: string) => invoke(IPC_CHANNELS.lanDevicesRevoke, id),
   },
   settings: {
     get: () => invoke(IPC_CHANNELS.settingsGet),

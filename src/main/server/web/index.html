@@ -78,7 +78,7 @@
             </div>
             <div class="heading-actions">
               <span id="role-badge" class="role-badge">访客</span>
-              <button id="device-revoke" type="button" hidden>解除本设备</button>
+              <button id="device-revoke" type="button" hidden>退出登录</button>
               <button id="refresh" class="primary-button" type="button">刷新</button>
             </div>
           </header>
@@ -139,7 +139,7 @@
           </header>
           <div class="settings-grid">
             <article class="settings-card"><h2>服务状态</h2><dl id="server-facts" class="settings-facts"></dl></article>
-            <article class="settings-card"><h2>当前设备</h2><dl id="device-facts" class="settings-facts"></dl><button id="settings-device-revoke" class="danger" type="button">解除本设备</button></article>
+            <article class="settings-card"><h2>当前账号</h2><dl id="device-facts" class="settings-facts"></dl><button id="settings-device-revoke" class="danger" type="button">退出登录</button></article>
             <article class="settings-card wide"><h2>安全边界</h2><p>仅限受信任私有局域网。管理员操作只修改服务器电脑上的 SQLite，不写回外部 NFO，也不会删除影片文件。不要将此端口转发到公网。</p></article>
           </div>
         </section>
@@ -153,16 +153,16 @@
       <div id="detail-content"></div>
     </dialog>
 
-    <dialog id="pairing-dialog" class="pairing-dialog">
-      <div class="pairing-panel">
-        <p class="eyebrow">TRUSTED LAN PAIRING</p>
-        <h2>配对此设备</h2>
-        <p class="muted">请在服务器电脑的 Electron 设置页生成访客或管理员短时配对码。</p>
-        <form id="pairing-form">
-          <label><span>设备名称</span><input id="device-name" maxlength="100" required /></label>
-          <label><span>六位配对码</span><input id="pairing-code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required /></label>
-          <p id="pairing-error" class="error-panel" hidden></p>
-          <button type="submit">完成配对</button>
+    <dialog id="login-dialog" class="login-dialog">
+      <div class="login-panel">
+        <p class="eyebrow">TRUSTED LAN SIGN IN</p>
+        <h2>登录影片库</h2>
+        <p class="muted">请输入服务器电脑客户端使用的同一套账号和密码。</p>
+        <form id="login-form">
+          <label><span>账号</span><input id="account-username" maxlength="64" autocomplete="username" required /></label>
+          <label><span>密码</span><input id="account-password" type="password" minlength="1" autocomplete="current-password" required /></label>
+          <p id="login-error" class="error-panel" hidden></p>
+          <button type="submit">登录</button>
         </form>
       </div>
     </dialog>

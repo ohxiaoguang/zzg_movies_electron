@@ -4,8 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import { FolderOpened, Setting, VideoCamera } from '@element-plus/icons-vue';
 import type {
   AppInfoDto,
-  LanPairedDeviceDto,
-  LanPairingCodeDto,
+  AccountAuthStatusDto,
   LanServerStatusDto,
   PlaybackCacheInfoDto,
   SettingsDto,
@@ -41,18 +40,18 @@ const saving = ref(false);
 const ffprobeResult = ref<string | null>(null);
 const lanStatus = ref<LanServerStatusDto | null>(null);
 const lanChanging = ref(false);
-const pairingCode = ref<LanPairingCodeDto | null>(null);
-const pairedDevices = ref<LanPairedDeviceDto[]>([]);
+const accountStatus = ref<AccountAuthStatusDto | null>(null);
 const playbackCache = ref<PlaybackCacheInfoDto | null>(null);
 const cacheChanging = ref(false);
 
 onMounted(async () => {
   try {
-    const [settings, appInfo, localWeb, cache] = await Promise.all([
+    const [settings, appInfo, localWeb, cache, account] = await Promise.all([
       window.filmLibrary.settings.get(),
       window.filmLibrary.app.info(),
       window.filmLibrary.lanServer.status(),
       window.filmLibrary.settings.cacheInfo(),
+      window.filmLibrary.account.status(),
     ]);
     if (settings.ok) Object.assign(form, settings.data);
     if (appInfo.ok) info.value = appInfo.data;
@@ -60,7 +59,7 @@ onMounted(async () => {
       lanStatus.value = localWeb.data;
     }
     if (cache.ok) playbackCache.value = cache.data;
-    await loadDevices();
+    if (account.ok) accountStatus.value = account.data;
   } catch (error) {
     console.error('[settings] load failed', error);
     ElMessage.error('设置加载失败，请查看日志');
@@ -147,23 +146,6 @@ async function refreshLanStatus(): Promise<void> {
   if (result.ok) {
     lanStatus.value = result.data;
     form.lanServerEnabled = result.data.enabled;
-  }
-}
-async function createPairingCode(role: 'viewer' | 'admin'): Promise<void> {
-  const result = await window.filmLibrary.lanServer.createPairingCode(role);
-  if (result.ok) pairingCode.value = result.data;
-  else ElMessage.error(result.error.message);
-}
-async function loadDevices(): Promise<void> {
-  const result = await window.filmLibrary.lanServer.listDevices();
-  if (result.ok) pairedDevices.value = result.data;
-}
-async function revokeDevice(device: LanPairedDeviceDto): Promise<void> {
-  const result = await window.filmLibrary.lanServer.revokeDevice(device.id);
-  if (!result.ok) ElMessage.error(result.error.message);
-  else {
-    ElMessage.success(`已撤销“${device.name}”`);
-    await Promise.all([loadDevices(), refreshLanStatus()]);
   }
 }
 async function openFolder(kind: 'data' | 'logs'): Promise<void> { const result = kind === 'data' ? await window.filmLibrary.app.openDataFolder() : await window.filmLibrary.app.openLogsFolder(); if (!result.ok) ElMessage.error(result.error.message); }
@@ -281,7 +263,7 @@ function updateIgnoredDirectories(value: string): void { form.ignoredDirectories
             <div class="setting-row"><label>监听模式</label><el-select v-model="form.lanServerBindMode" @change="form.lanRequireAuthentication = true"><el-option label="仅本机" value="localhost" /><el-option label="私有局域网" value="lan" /></el-select></div>
             <div class="setting-row"><label>端口</label><el-input-number v-model="form.lanServerPort" :min="1024" :max="65535" /></div>
             <div v-if="form.lanServerBindMode === 'lan'" class="setting-row"><label>指定网卡 IPv4</label><el-input v-model="form.lanServerHost" placeholder="留空监听全部私有网卡" /></div>
-            <div class="setting-row"><label>要求设备配对</label><el-switch v-model="form.lanRequireAuthentication" :disabled="form.lanServerBindMode === 'lan'" /><span v-if="form.lanServerBindMode === 'lan'" class="muted">局域网模式强制开启</span></div>
+            <div class="setting-row"><label>要求账号登录</label><el-switch v-model="form.lanRequireAuthentication" :disabled="form.lanServerBindMode === 'lan'" /><span v-if="form.lanServerBindMode === 'lan'" class="muted">局域网模式强制开启</span></div>
           </div>
           <div class="lan-diagnostics">
             <div class="data-row"><span>服务状态</span><strong>{{ lanStatus?.state === 'running' ? '运行中' : lanStatus?.state === 'error' ? '启动失败' : lanStatus?.state === 'starting' ? '正在启动' : '已停止' }}</strong></div>
@@ -289,11 +271,10 @@ function updateIgnoredDirectories(value: string): void { form.ignoredDirectories
             <div v-for="url in lanStatus?.baseUrls || []" :key="url" class="data-row"><span>访问地址</span><code>{{ url }}</code></div>
           </div>
         </div>
-        <p class="lan-warning">只允许受信任的私有局域网使用。不要在路由器中做端口转发，也不要把该端口暴露到公网。首次连接需要在桌面端生成短时配对码。</p>
+        <p class="lan-warning">网页端使用与客户端相同的账号密码。只允许受信任的私有局域网使用，不要在路由器中做端口转发，也不要把该端口暴露到公网。</p>
         <p v-if="lanStatus?.lastErrorCode" class="lan-error">诊断代码：{{ lanStatus.lastErrorCode }}。桌面功能不受影响；请检查端口占用、网卡地址及 Windows 防火墙。</p>
-        <div class="settings-actions"><el-button v-if="lanStatus?.state !== 'running'" size="small" type="primary" :loading="lanChanging" @click="changeLanServer('start')">启动网页服务</el-button><el-button v-else size="small" :loading="lanChanging" @click="changeLanServer('stop')">停止网页服务</el-button><el-button :disabled="lanStatus?.state !== 'running' || !lanStatus.authenticationRequired" @click="createPairingCode('viewer')">生成访客配对码</el-button><el-button type="warning" :disabled="lanStatus?.state !== 'running' || !lanStatus.authenticationRequired" @click="createPairingCode('admin')">生成管理员配对码</el-button></div>
-        <div v-if="pairingCode" class="pairing-code"><span>{{ pairingCode.role === 'admin' ? '管理员配对码' : '访客配对码' }}</span><strong>{{ pairingCode.code }}</strong><small>{{ new Date(pairingCode.expiresAt).toLocaleTimeString() }} 前有效，成功配对后立即失效</small></div>
-        <div class="paired-devices"><div class="section-label">已配对设备</div><div v-if="pairedDevices.length" class="device-list"><div v-for="device in pairedDevices" :key="device.id" class="device-row"><div><strong>{{ device.name }} · {{ device.role === 'admin' ? '管理员' : '访客' }}</strong><small>{{ device.revokedAt ? '已撤销' : `最近使用：${device.lastUsedAt ? new Date(device.lastUsedAt).toLocaleString() : '尚未访问'}` }}</small></div><el-button v-if="!device.revokedAt" text type="danger" @click="revokeDevice(device)">撤销</el-button></div></div><p v-else class="muted">尚无已配对设备</p></div>
+        <div class="settings-actions"><el-button v-if="lanStatus?.state !== 'running'" size="small" type="primary" :loading="lanChanging" @click="changeLanServer('start')">启动网页服务</el-button><el-button v-else size="small" :loading="lanChanging" @click="changeLanServer('stop')">停止网页服务</el-button></div>
+        <div v-if="accountStatus" class="credential-file"><span>账号凭据文件</span><code>{{ accountStatus.credentialFilePath }}</code><small>关闭应用并手动删除此文件，即可在下次启动时重新设置账号密码。文件中不保存明文密码。</small></div>
       </section>
       <section class="settings-card wide"><div class="settings-title"><span>扫描选项</span></div><div class="setting-row"><label>启动时自动扫描</label><el-switch v-model="form.autoScanOnStartup" /><span class="muted">默认关闭，避免外部磁盘未就绪时误判</span></div><el-form label-position="top"><el-form-item label="影片扩展名"><el-input :model-value="listText(form.videoExtensions)" @update:model-value="updateVideoExtensions" /></el-form-item><el-form-item label="图片扩展名"><el-input :model-value="listText(form.imageExtensions)" @update:model-value="updateImageExtensions" /></el-form-item><el-form-item label="忽略目录"><el-input type="textarea" :rows="3" :model-value="listText(form.ignoredDirectories)" @update:model-value="updateIgnoredDirectories" /></el-form-item></el-form></section>
       <section class="settings-card wide"><div class="settings-title"><span>可选 ffprobe / ffmpeg</span><span class="muted">MKV、MPG/MPEG、AVI、TS、FLV、WMV 兼容缓存会查找 ffprobe 同目录或系统 PATH 中的 ffmpeg</span></div><el-input v-model="form.ffprobePath" placeholder="留空则尝试使用 PATH 中的 ffprobe；兼容预览还需要 ffmpeg"><template #append><el-button @click="testFfprobe">测试 ffprobe</el-button></template></el-input><p v-if="ffprobeResult" class="test-result">{{ ffprobeResult }}</p></section>
@@ -306,6 +287,6 @@ function updateIgnoredDirectories(value: string): void { form.ignoredDirectories
 .cache-directory { grid-template-columns: 76px minmax(0, 1fr); }.cache-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 16px 0 12px; }.cache-metrics > div { padding: 12px; border: 1px solid var(--line); border-radius: 9px; background: rgba(12,15,21,.45); }.cache-metrics span, .cache-metrics strong { display: block; }.cache-metrics span { color: var(--muted); font-size: 11px; }.cache-metrics strong { margin-top: 7px; color: var(--ink); font-size: 18px; }.cache-limit { display: flex; align-items: center; gap: 7px; margin-top: 6px; }.cache-limit span { display: inline; }.cache-note { margin: 10px 0 0; font-size: 11px; line-height: 1.6; }
 .startup-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }.startup-option { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px; border: 1px solid var(--line); border-radius: 9px; background: rgba(12,15,21,.45); }.startup-option strong, .startup-option small { display: block; }.startup-option strong { color: var(--ink); font-size: 12px; }.startup-option small { margin-top: 5px; color: var(--muted); font-size: 10px; line-height: 1.5; }
 .lan-error { margin: 12px 0 0; color: #ffadad; font-size: 12px; }
-.lan-config-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, .8fr); gap: 24px; }.lan-settings-card .el-select { width: 180px; }.lan-settings-card .setting-row .el-input { width: min(360px, 100%); }.lan-diagnostics { min-height: 170px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: rgba(12,15,21,.55); }.lan-diagnostics .data-row { grid-template-columns: 72px minmax(0, 1fr); }.lan-warning { padding: 11px 13px; border: 1px solid rgba(255,193,94,.24); border-radius: 8px; color: #e8c582; background: rgba(255,193,94,.06); font-size: 12px; line-height: 1.6; }.pairing-code { display: flex; align-items: center; gap: 14px; margin-top: 16px; padding: 14px; border: 1px solid rgba(152,227,194,.3); border-radius: 10px; background: rgba(152,227,194,.07); }.pairing-code span, .pairing-code small { color: var(--muted); font-size: 11px; }.pairing-code strong { color: var(--accent); font: 700 28px/1 ui-monospace, monospace; letter-spacing: .22em; }.paired-devices { margin-top: 20px; }.section-label { margin-bottom: 9px; color: var(--ink); font-size: 12px; font-weight: 700; }.device-list { display: grid; gap: 7px; }.device-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; }.device-row strong, .device-row small { display: block; }.device-row strong { color: var(--ink); font-size: 12px; }.device-row small { margin-top: 3px; color: var(--muted); font-size: 10px; }
+.lan-config-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, .8fr); gap: 24px; }.lan-settings-card .el-select { width: 180px; }.lan-settings-card .setting-row .el-input { width: min(360px, 100%); }.lan-diagnostics { min-height: 170px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: rgba(12,15,21,.55); }.lan-diagnostics .data-row { grid-template-columns: 72px minmax(0, 1fr); }.lan-warning { padding: 11px 13px; border: 1px solid rgba(255,193,94,.24); border-radius: 8px; color: #e8c582; background: rgba(255,193,94,.06); font-size: 12px; line-height: 1.6; }.credential-file { display: grid; gap: 7px; margin-top: 16px; padding: 13px; border: 1px solid var(--line); border-radius: 9px; color: var(--muted); background: rgba(12,15,21,.45); font-size: 11px; }.credential-file code { overflow-wrap: anywhere; color: var(--ink); }.credential-file small { line-height: 1.6; }
 @media (max-width: 760px) { .settings-grid { grid-template-columns: 1fr; }.settings-card.wide { grid-column: auto; }.startup-options, .cache-metrics { grid-template-columns: 1fr; }.settings-actions { flex-wrap: wrap; }.lan-config-grid { grid-template-columns: 1fr; } }
 </style>

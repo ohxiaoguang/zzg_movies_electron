@@ -20,6 +20,8 @@ if (!page) throw new Error('DevTools page not found');
 const socket = new WebSocket(page.webSocketDebuggerUrl);
 let nextId = 0;
 const rootLiteral = JSON.stringify(rootPath);
+const smokeUsername = JSON.stringify(process.env.SMOKE_ACCOUNT_USERNAME || 'smoke-admin');
+const smokePassword = JSON.stringify(process.env.SMOKE_ACCOUNT_PASSWORD || 'smoke-test-password');
 await new Promise((resolve, reject) => {
   socket.addEventListener('open', resolve, { once: true });
   socket.addEventListener('error', () => reject(new Error('DevTools WebSocket error')), { once: true });
@@ -34,6 +36,12 @@ for (let attempt = 0; attempt < 200; attempt += 1) {
 if (!apiReady) throw new Error(`Dev preload API timeout page=${JSON.stringify(page)}`);
 
 const result = await evaluate(`(async () => {
+  const accountState = await window.filmLibrary.account.status();
+  const account = accountState.ok && accountState.data.authenticated
+    ? accountState
+    : accountState.ok && !accountState.data.configured
+      ? await window.filmLibrary.account.setup({ username: ${smokeUsername}, password: ${smokePassword} })
+      : await window.filmLibrary.account.login({ username: ${smokeUsername}, password: ${smokePassword} });
   const health = await window.filmLibrary.app.health();
   const before = await window.filmLibrary.sources.list();
   const created = await window.filmLibrary.sources.create({ name: 'Dev Smoke Source', rootPath: ${rootLiteral} });
@@ -70,11 +78,12 @@ const result = await evaluate(`(async () => {
   const removed = created.ok ? await window.filmLibrary.sources.remove({ id: created.data.id, mode: 'keep-records' }) : { ok: false };
   const allData = await window.filmLibrary.films.recordsPageAll({ page: 1, pageSize: 20 });
   const restored = created.ok ? await window.filmLibrary.sources.restore({ id: created.data.id }) : { ok: false };
-  return { health, before, created, started, scanStatus, after, page, detail, unorganizedBefore, classic, mystery, categorized, favorited, patched, patchedDetail, organizedAfter, ui, setting, removed, allData, restored };
+  return { account, health, before, created, started, scanStatus, after, page, detail, unorganizedBefore, classic, mystery, categorized, favorited, patched, patchedDetail, organizedAfter, ui, setting, removed, allData, restored };
 })()`);
 
 if (result.exceptionDetails) throw new Error(`Dev renderer evaluation failed: ${JSON.stringify(result.exceptionDetails)}`);
 const value = result.result?.value;
+if (!value?.account?.ok || !value.account.data?.authenticated) throw new Error(`Dev account setup/login failed: ${JSON.stringify(value?.account)}`);
 if (!value?.health?.ok || !value.health.data?.databaseReady || !value.health.data?.ipcReady) throw new Error(`Dev health failed: ${JSON.stringify(value?.health)}`);
 if (!value.created?.ok) throw new Error(`Dev source create failed: ${JSON.stringify(value.created)}`);
 if (!value.started?.ok || value.scanStatus?.data?.status !== 'completed') throw new Error(`Dev scan failed: ${JSON.stringify(value.scanStatus)}`);

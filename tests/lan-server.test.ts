@@ -15,6 +15,7 @@ import { LanServer } from '../src/main/server/LanServer';
 import { FilmLibraryReadService } from '../src/main/services/FilmLibraryReadService';
 import { MediaAssetService } from '../src/main/services/MediaAssetService';
 import { LanAuthService } from '../src/main/services/LanAuthService';
+import { AccountCredentialService } from '../src/main/services/AccountCredentialService';
 import { FilmLibraryManagementService } from '../src/main/services/FilmLibraryManagementService';
 import { PlaybackSessionService } from '../src/main/services/PlaybackSessionService';
 import { MediaCapabilityService } from '../src/main/media/MediaCapabilityService';
@@ -289,12 +290,19 @@ describe('localhost read-only web server', () => {
     expect(styles).toContain('@media (max-width: 760px)');
   });
 
-  it('requires pairing in LAN mode, rotates tokens and supports device revocation', async () => {
+  it('requires the shared account in LAN mode, rotates tokens and supports session revocation', async () => {
     const context = await createContext();
+    const accountCredentials = new AccountCredentialService(path.join(context.root, 'account-credentials.json'));
+    accountCredentials.setup({ username: 'movie-admin', password: 'correct-horse-42' }, 1);
+    const accountAuth = new LanAuthService(
+      new LanDeviceRepository(context.database.db),
+      context.logger,
+      accountCredentials,
+    );
     const secured = new LanServer(context.library, context.media, context.logger, {
       version: 'test',
       databaseReady: () => context.database.db.open,
-      auth: context.auth,
+      auth: accountAuth,
       configuration: {
         enabled: true,
         port: 0,
@@ -315,11 +323,10 @@ describe('localhost read-only web server', () => {
     expect((await fetch(`${baseUrl}/api/v1/films`)).status).toBe(401);
     expect((await fetch(`${baseUrl}/media/v1/originals/${context.filmId}`)).status).toBe(401);
 
-    const pairing = context.auth.createPairingCode();
-    const pairedResponse = await fetch(`${baseUrl}/api/v1/auth/pair`, {
+    const pairedResponse = await fetch(`${baseUrl}/api/v1/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Film-Library-Request': '1' },
-      body: JSON.stringify({ code: pairing.code, deviceName: 'Test Browser' }),
+      body: JSON.stringify({ username: 'movie-admin', password: 'correct-horse-42' }),
     });
     expect(pairedResponse.status).toBe(200);
     const paired = await pairedResponse.json() as ApiResult<{ token: string; device: { id: string } }>;
@@ -359,7 +366,7 @@ describe('localhost read-only web server', () => {
       headers: { Authorization: `Bearer ${refreshed.data.token}` },
     })).status).toBe(200);
 
-    context.auth.revokeDevice(refreshed.data.device.id);
+    accountAuth.revokeDevice(refreshed.data.device.id);
     expect((await fetch(`${baseUrl}/api/v1/films`, {
       headers: { Authorization: `Bearer ${refreshed.data.token}` },
     })).status).toBe(401);

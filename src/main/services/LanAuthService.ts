@@ -5,6 +5,7 @@ import {
   timingSafeEqual,
 } from 'node:crypto';
 import type {
+  AccountCredentialsInput,
   LanPairInput,
   LanDeviceRole,
   LanPairedDeviceDto,
@@ -13,6 +14,7 @@ import type {
 } from '../../shared/contracts';
 import type { LanDeviceRepository } from '../database/repositories/LanDeviceRepository';
 import type { AppLogger } from '../system/AppLogger';
+import type { AccountCredentialService } from './AccountCredentialService';
 
 const PAIRING_TTL_MS = 5 * 60_000;
 const PAIRING_RATE_WINDOW_MS = 60_000;
@@ -37,11 +39,29 @@ export class LanAuthService {
   private pairing: PairingSession | null = null;
   private readonly rateBuckets = new Map<string, RateBucket>();
   private readonly lastTouchedAt = new Map<string, number>();
+  private readonly accountSessions = new Map<string, { deviceId: string; credentialId: string }>();
 
   public constructor(
     private readonly devices: LanDeviceRepository,
     private readonly logger: AppLogger,
+    private readonly accountCredentials?: AccountCredentialService,
   ) {}
+
+  public login(input: AccountCredentialsInput, remoteAddress: string): LanPairResultDto {
+    if (!this.accountCredentials) throw new Error('LAN_AUTH_UNAVAILABLE');
+    this.checkRateLimit(remoteAddress);
+    const account = this.accountCredentials.verify(input);
+    const token = createToken();
+    const hash = tokenHash(token);
+    const device = this.devices.create(`账号 ${account.username}`, hash, 'admin');
+    this.accountSessions.set(hash, { deviceId: device.id, credentialId: account.id });
+    this.logger.info('LAN account signed in', { deviceId: device.id, remoteAddress });
+    return { token, device };
+  }
+
+  public accountConfigured(): boolean {
+    return Boolean(this.accountCredentials?.currentCredentialId());
+  }
 
   public createPairingCode(role: LanDeviceRole = 'viewer'): LanPairingCodeDto {
     const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
@@ -89,7 +109,16 @@ export class LanAuthService {
 
   public authenticate(token: string | null): LanPairedDeviceDto {
     if (!token || token.length < 32 || token.length > 256) throw new Error('UNAUTHORIZED');
-    const device = this.devices.findActiveByTokenHash(tokenHash(token));
+    const hash = tokenHash(token);
+    if (this.accountCredentials) {
+      const session = this.accountSessions.get(hash);
+      const credentialId = this.accountCredentials.currentCredentialId();
+      if (!session || !credentialId || session.credentialId !== credentialId) {
+        if (!credentialId) this.accountSessions.clear();
+        throw new Error('UNAUTHORIZED');
+      }
+    }
+    const device = this.devices.findActiveByTokenHash(hash);
     if (!device) throw new Error('UNAUTHORIZED');
     const now = Date.now();
     if ((this.lastTouchedAt.get(device.id) ?? 0) < now - 60_000) {
@@ -101,15 +130,24 @@ export class LanAuthService {
 
   public refresh(token: string): LanPairResultDto {
     const device = this.authenticate(token);
+    const previousHash = tokenHash(token);
+    const session = this.accountSessions.get(previousHash);
     const nextToken = createToken();
-    const updated = this.devices.rotateToken(device.id, tokenHash(nextToken));
+    const nextHash = tokenHash(nextToken);
+    const updated = this.devices.rotateToken(device.id, nextHash);
+    if (session) {
+      this.accountSessions.delete(previousHash);
+      this.accountSessions.set(nextHash, session);
+    }
     this.logger.info('LAN device token refreshed', { deviceId: device.id });
     return { token: nextToken, device: updated };
   }
 
   public revokeSelf(token: string): void {
     const device = this.authenticate(token);
-    this.devices.revokeByTokenHash(tokenHash(token));
+    const hash = tokenHash(token);
+    this.devices.revokeByTokenHash(hash);
+    this.accountSessions.delete(hash);
     this.lastTouchedAt.delete(device.id);
     this.logger.info('LAN device revoked itself', { deviceId: device.id });
   }
@@ -119,11 +157,20 @@ export class LanAuthService {
   }
 
   public activeDeviceCount(): number {
-    return this.devices.activeCount();
+    if (!this.accountCredentials) return this.devices.activeCount();
+    const credentialId = this.accountCredentials.currentCredentialId();
+    if (!credentialId) {
+      this.accountSessions.clear();
+      return 0;
+    }
+    return [...this.accountSessions.values()].filter((session) => session.credentialId === credentialId).length;
   }
 
   public revokeDevice(id: string): void {
     this.devices.revoke(id);
+    for (const [hash, session] of this.accountSessions) {
+      if (session.deviceId === id) this.accountSessions.delete(hash);
+    }
     this.lastTouchedAt.delete(id);
     this.logger.info('LAN device revoked from desktop', { deviceId: id });
   }

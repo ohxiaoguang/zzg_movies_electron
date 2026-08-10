@@ -5,6 +5,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import type { IpcMainInvokeEvent } from 'electron';
 import type {
   ApiResult,
+  AccountCredentialsInput,
   CreateSourceInput,
   FindDeletedSourceInput,
   RemoveSourceInput,
@@ -43,7 +44,7 @@ import type { DesktopIntegrationService } from '../system/DesktopIntegrationServ
 import { IPC_CHANNELS } from '../../shared/ipcChannels';
 import type { FilmLibraryReadService } from '../services/FilmLibraryReadService';
 import type { FilmLibraryManagementService } from '../services/FilmLibraryManagementService';
-import type { LanAuthService } from '../services/LanAuthService';
+import type { AccountCredentialService } from '../services/AccountCredentialService';
 import type { PlaybackSessionService } from '../services/PlaybackSessionService';
 import { lanServerConfigurationFromSettings, type LanServer } from '../server/LanServer';
 
@@ -56,7 +57,7 @@ interface IpcContext {
   libraryRead: FilmLibraryReadService;
   management: FilmLibraryManagementService;
   lanServer: LanServer;
-  lanAuth: LanAuthService;
+  accountCredentials: AccountCredentialService;
   playback: PlaybackSessionService;
   scan: ScanCoordinator;
   fileOpen: FileOpenService;
@@ -70,6 +71,10 @@ export function registerIpcHandlers(context: IpcContext): () => void {
     ipcMain.handle(channel, async (event, payload) => {
       if (!isTrustedSender(event.senderFrame?.url ?? '')) return failure('UNTRUSTED_SENDER', '请求来源不受信任');
       try {
+        if (!ACCOUNT_IPC_CHANNELS.has(channel) && !context.accountCredentials.isDesktopAuthenticated(event.sender.id)) {
+          const configured = context.accountCredentials.status(event.sender.id).configured;
+          throw new Error(configured ? 'DESKTOP_AUTH_REQUIRED' : 'ACCOUNT_SETUP_REQUIRED');
+        }
         return success(await callback(event, payload));
       } catch (error) {
         const code = error instanceof Error ? error.message : 'IPC_FAILED';
@@ -79,6 +84,15 @@ export function registerIpcHandlers(context: IpcContext): () => void {
     });
     registered.push(channel);
   };
+
+  handle(IPC_CHANNELS.accountStatus, (event) => context.accountCredentials.status(event.sender.id));
+  handle(IPC_CHANNELS.accountSetup, (event, payload) => (
+    context.accountCredentials.setup(validateAccountCredentials(payload), event.sender.id)
+  ));
+  handle(IPC_CHANNELS.accountLogin, (event, payload) => (
+    context.accountCredentials.login(validateAccountCredentials(payload), event.sender.id)
+  ));
+  handle(IPC_CHANNELS.accountLogout, (event) => context.accountCredentials.logout(event.sender.id));
 
   handle(IPC_CHANNELS.sourcesList, () => context.libraryRead.listSources());
   handle(IPC_CHANNELS.sourcesChooseDirectory, async () => {
@@ -268,19 +282,6 @@ export function registerIpcHandlers(context: IpcContext): () => void {
     const settings = context.settings.update({ lanServerEnabled: false });
     return context.lanServer.reconfigure(lanServerConfigurationFromSettings(settings));
   });
-  handle(IPC_CHANNELS.lanServerCreatePairingCode, (_event, payload) => {
-    const status = context.lanServer.status();
-    if (status.state !== 'running' || !status.authenticationRequired) throw new Error('PAIRING_NOT_AVAILABLE');
-    if (payload !== undefined && payload !== 'viewer' && payload !== 'admin') throw new Error('INVALID_DEVICE_ROLE');
-    return context.lanAuth.createPairingCode(payload ?? 'viewer');
-  });
-  handle(IPC_CHANNELS.lanDevicesList, () => context.lanAuth.listDevices());
-  handle(IPC_CHANNELS.lanDevicesRevoke, (_event, payload) => {
-    if (!isUuid(payload)) throw new Error('INVALID_DEVICE_ID');
-    context.lanAuth.revokeDevice(payload);
-    return null;
-  });
-
   handle(IPC_CHANNELS.settingsGet, () => context.settings.get());
   handle(IPC_CHANNELS.settingsUpdate, async (_event, payload) => {
     const input = validateSettingsUpdate(payload);
@@ -380,14 +381,36 @@ function publicMessage(code: string): string {
     INVALID_PLAYBACK_CACHE_LIMIT: '播放缓存上限必须是 1 到 500 GB 之间的整数',
     INVALID_PLAYBACK_CACHE_DIRECTORY: '播放缓存目录无效，请通过目录选择按钮设置应用专属缓存目录',
     PLAYBACK_CACHE_BUSY: '当前有网页播放或转码任务，停止播放后再清理缓存',
-    PAIRING_NOT_AVAILABLE: '请先启用需要配对的局域网服务',
-    LAN_DEVICE_NOT_FOUND: '配对设备不存在或已撤销',
     LAN_SERVER_DISABLED: '本机网页服务尚未启用',
     EADDRINUSE: '端口已被其他程序占用',
     DATABASE_MERGE_FAILED: '数据库合并失败，请查看扫描详情和日志',
     INCOMING_FILM_FILE_DUPLICATES: '扫描候选中发现同一个影片文件被重复关联',
+    ACCOUNT_SETUP_REQUIRED: '首次使用请先设置账号和密码',
+    ACCOUNT_ALREADY_CONFIGURED: '账号已经设置，请直接登录',
+    DESKTOP_AUTH_REQUIRED: '请先登录客户端',
+    INVALID_ACCOUNT_CREDENTIALS: '账号或密码错误',
+    INVALID_ACCOUNT_USERNAME: '账号不能为空，且不能超过 64 个字符',
+    INVALID_ACCOUNT_PASSWORD: '密码不能为空',
+    ACCOUNT_CREDENTIAL_FILE_INVALID: '账号凭据文件无效；请手动删除该文件后重新设置',
+    ACCOUNT_CREDENTIAL_READ_FAILED: '无法读取账号凭据文件',
+    ACCOUNT_CREDENTIAL_WRITE_FAILED: '无法写入账号凭据文件',
   };
   return messages[code] ?? '操作失败，请查看日志获取更多信息';
+}
+
+const ACCOUNT_IPC_CHANNELS = new Set<string>([
+  IPC_CHANNELS.accountStatus,
+  IPC_CHANNELS.accountSetup,
+  IPC_CHANNELS.accountLogin,
+  IPC_CHANNELS.accountLogout,
+  IPC_CHANNELS.appHealth,
+]);
+
+function validateAccountCredentials(payload: unknown): AccountCredentialsInput {
+  if (!isRecord(payload) || typeof payload.username !== 'string' || typeof payload.password !== 'string') {
+    throw new Error('INVALID_ACCOUNT_INPUT');
+  }
+  return { username: payload.username, password: payload.password };
 }
 
 function isTrustedSender(url: string): boolean {

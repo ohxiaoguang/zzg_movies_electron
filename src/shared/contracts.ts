@@ -472,6 +472,18 @@ export interface WebPlaybackSessionCreateInput {
   endSeconds?: number;
 }
 
+export interface AccountCredentialsInput {
+  username: string;
+  password: string;
+}
+
+export interface AccountAuthStatusDto {
+  configured: boolean;
+  authenticated: boolean;
+  username: string | null;
+  credentialFilePath: string;
+}
+
 export interface WebPlaybackProgressInput {
   positionSeconds: number;
   durationSeconds?: number;

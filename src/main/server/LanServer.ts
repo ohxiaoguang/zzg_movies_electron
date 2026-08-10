@@ -6,7 +6,6 @@ import type {
   ApiResult,
   LanAuthStatusDto,
   LanPairedDeviceDto,
-  LanPairInput,
   LanPairResultDto,
   LanServerBindMode,
   LanServerInfoDto,
@@ -308,11 +307,11 @@ export class LanServer {
       return;
     }
 
-    if (url.pathname === '/api/v1/auth/pair') {
-      await this.handlePair(request, response, url);
+    if (url.pathname === '/api/v1/auth/login') {
+      await this.handleLogin(request, response, url);
       return;
     }
-    if (url.pathname === '/api/v1/health' || url.pathname === '/api/v1/server-info') {
+    if (url.pathname === '/api/v1/health' || url.pathname === '/api/v1/server-info' || url.pathname === '/api/v1/auth/status') {
       if (method !== 'GET') return this.methodNotAllowed(response, 'GET');
       this.handlePublicApi(response, url);
       return;
@@ -337,7 +336,7 @@ export class LanServer {
       return;
     }
 
-    if (url.pathname === '/api/v1/auth/refresh' || url.pathname === '/api/v1/auth/revoke') {
+    if (url.pathname === '/api/v1/auth/refresh' || url.pathname === '/api/v1/auth/revoke' || url.pathname === '/api/v1/auth/logout') {
       await this.handleAuthenticatedAuth(request, response, url);
       return;
     }
@@ -389,7 +388,7 @@ export class LanServer {
     return auth.authenticate(token);
   }
 
-  private async handlePair(request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
+  private async handleLogin(request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
     if (request.method !== 'POST') {
       this.methodNotAllowed(response, 'POST');
       return;
@@ -398,11 +397,11 @@ export class LanServer {
       this.assertMutationRequest(request);
       this.assertNoQuery(url);
       const auth = this.options.auth;
-      if (!auth || !this.authenticationRequired()) throw new Error('PAIRING_NOT_AVAILABLE');
+      if (!auth || !this.authenticationRequired()) throw new Error('ACCOUNT_LOGIN_NOT_AVAILABLE');
       const payload = await readJsonObject(request);
-      if (typeof payload.code !== 'string' || typeof payload.deviceName !== 'string') throw new Error('INVALID_PAIRING_REQUEST');
-      const result = auth.pair(
-        { code: payload.code, deviceName: payload.deviceName } satisfies LanPairInput,
+      if (typeof payload.username !== 'string' || typeof payload.password !== 'string') throw new Error('INVALID_ACCOUNT_INPUT');
+      const result = auth.login(
+        { username: payload.username, password: payload.password },
         request.socket.remoteAddress ?? '',
       );
       this.sendJson(response, 200, success(result), {
@@ -456,6 +455,10 @@ export class LanServer {
           readOnly: !this.options.management,
         };
         this.sendJson(response, 200, success(health));
+        return;
+      }
+      if (url.pathname === '/api/v1/auth/status') {
+        this.sendJson(response, 200, success({ configured: this.options.auth?.accountConfigured() ?? false }));
         return;
       }
       this.sendJson(response, 200, success(this.serverInfo()));
@@ -661,7 +664,6 @@ export class LanServer {
         this.sendJson(response, 202, success(management.rescanSource(decodeURIComponent(sourceRescanMatch[1]))));
         return;
       }
-
       if (url.pathname === '/api/v1/films/batch') {
         if (method !== 'POST') return this.methodNotAllowed(response, 'POST');
         this.assertNoQuery(url);
@@ -954,11 +956,12 @@ function errorCode(error: unknown): string {
 }
 
 function errorStatus(code: string): number {
-  if (code === 'UNAUTHORIZED' || code === 'INVALID_PAIRING_CODE' || code === 'PAIRING_CODE_EXPIRED') return 401;
+  if (code === 'UNAUTHORIZED' || code === 'INVALID_ACCOUNT_CREDENTIALS') return 401;
   if (code === 'PAIRING_RATE_LIMITED' || code === 'PLAYBACK_BUSY') return 429;
   if (code === 'MEDIA_PATH_OUTSIDE_SOURCE' || code === 'NETWORK_SCOPE_DENIED' || code === 'UNTRUSTED_ORIGIN'
     || code === 'ADMIN_REQUIRED' || code === 'CSRF_CHECK_FAILED') return 403;
-  if (code === 'PAIRING_NOT_AVAILABLE' || code === 'LAN_SERVER_DISABLED' || code === 'MANAGEMENT_NOT_AVAILABLE'
+  if (code === 'PAIRING_NOT_AVAILABLE' || code === 'ACCOUNT_LOGIN_NOT_AVAILABLE' || code === 'ACCOUNT_SETUP_REQUIRED'
+    || code === 'LAN_SERVER_DISABLED' || code === 'MANAGEMENT_NOT_AVAILABLE'
     || code === 'PLAYBACK_NOT_AVAILABLE' || code === 'PLAYBACK_TOOLS_UNAVAILABLE') return 409;
   if (code.endsWith('_NOT_FOUND') || code === 'FILM_NOT_FOUND') return 404;
   if (code === 'CONFIRMATION_REQUIRED') return 409;
@@ -971,11 +974,13 @@ function publicErrorMessage(status: number, code: string): string {
   if (code === 'PLAYBACK_TOOLS_UNAVAILABLE') return '服务器未找到可用的 ffmpeg，无法处理该视频格式';
   if (code.startsWith('FFMPEG_') || code.startsWith('PLAYBACK_PREPARATION_')) return '服务器无法准备该视频的兼容播放流';
   if (status === 400) return '请求参数无效';
-  if (status === 401) return '设备尚未配对或凭据已失效';
+  if (code === 'INVALID_ACCOUNT_CREDENTIALS') return '账号或密码错误';
+  if (code === 'ACCOUNT_SETUP_REQUIRED') return '请先在服务器电脑的客户端中设置账号和密码';
+  if (status === 401) return '登录已失效，请重新输入账号和密码';
   if (status === 403) return '请求不在允许的安全范围内';
   if (status === 404) return '请求的资源不存在';
   if (status === 409) return '当前服务状态不允许此操作';
-  if (status === 429) return '配对尝试过于频繁，请稍后再试';
+  if (status === 429) return '登录尝试过于频繁，请稍后再试';
   return '服务暂时不可用';
 }
 
