@@ -182,6 +182,7 @@ describe('renderer regressions', () => {
     expect(detailPlayer).toContain('defineExpose({ playSegment, playPreview, playOriginal, selectPart, seekRelative, togglePlayback, stopPlayback, getPlaybackSnapshot })');
     expect(detailPlayer).toContain('window.filmLibrary.films.subtitleTracks(partId)');
     expect(detailPlayer).toContain('window.filmLibrary.films.subtitleContent(partId, Number(index))');
+    expect(detailPlayer).toContain('if (firstSupportedTrack) await selectSubtitle(String(firstSupportedTrack.index))');
     expect(detailPlayer).toMatch(/watch\(selectedPartId,[\s\S]*?\}, \{ immediate: true \}\);/);
     expect(detailPlayer).toContain("v-if=\"source\"");
     expect(detailPlayer).toContain("'无可用字幕'");

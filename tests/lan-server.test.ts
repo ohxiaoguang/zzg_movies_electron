@@ -228,6 +228,8 @@ describe('localhost read-only web server', () => {
     expect(script).not.toContain("'player-toggle'");
     expect(script).toContain('applyPlaybackPosition');
     expect(script).toContain('configureSubtitlePicker');
+    expect(script).toContain("select.value = supported.length ? String(supported[0].index) : ''");
+    expect(script).toContain('track.default = index === 0');
     expect(script).toContain("actionButton('后退'");
     expect(script).toContain("actionButton('前进'");
     expect(script).toContain('createDetailMediaNavigation');

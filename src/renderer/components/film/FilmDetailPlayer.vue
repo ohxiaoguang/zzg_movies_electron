@@ -255,6 +255,8 @@ async function loadSubtitleTracks(): Promise<void> {
     return;
   }
   subtitleTracks.value = result.data;
+  const firstSupportedTrack = supportedSubtitleTracks.value[0];
+  if (firstSupportedTrack) await selectSubtitle(String(firstSupportedTrack.index));
 }
 
 async function selectSubtitle(index: string): Promise<void> {

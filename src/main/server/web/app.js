@@ -1156,7 +1156,10 @@ async function startAdaptivePlayback(video, status, input, subtitleSelect = null
     status.textContent = playbackDescription(session);
     if (input.purpose !== 'segment-preview') {
       attachSubtitleTracks(video, session.subtitleTracks);
-      if (subtitleSelect) configureSubtitlePicker(subtitleSelect, session.subtitleTracks);
+      if (subtitleSelect) {
+        configureSubtitlePicker(subtitleSelect, session.subtitleTracks);
+        selectSubtitleTrack(video, subtitleSelect.value);
+      }
     }
     if (session.transport === 'direct') {
       video.src = session.url;
@@ -1243,13 +1246,14 @@ function playbackDescription(session) {
 
 function attachSubtitleTracks(video, tracks = []) {
   for (const existing of video.querySelectorAll('track')) existing.remove();
-  for (const item of tracks.filter((track) => track.supported)) {
+  for (const [index, item] of tracks.filter((track) => track.supported).entries()) {
     const track = document.createElement('track');
     track.kind = 'subtitles';
     track.src = item.url;
     track.srclang = item.language || 'und';
     track.label = item.title || [item.language, item.codec].filter(Boolean).join(' · ') || `字幕 ${item.index}`;
     track.dataset.streamIndex = String(item.index);
+    track.default = index === 0;
     video.append(track);
   }
 }
@@ -1267,7 +1271,7 @@ function configureSubtitlePicker(select, tracks = []) {
     const label = item.title || [item.language, item.codec].filter(Boolean).join(' · ') || `字幕 ${item.index}`;
     select.append(new Option(label, String(item.index)));
   }
-  select.value = '';
+  select.value = supported.length ? String(supported[0].index) : '';
   select.disabled = supported.length === 0;
 }
 
