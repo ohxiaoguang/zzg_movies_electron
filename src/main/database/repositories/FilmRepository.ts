@@ -584,7 +584,19 @@ export class FilmRepository {
   }
 
   public updateFavorite(id: string, favorite: boolean): FilmDetailDto {
-    const result = this.db.prepare('UPDATE film SET favorite = ?, updated_at = ? WHERE id = ?').run(favorite ? 1 : 0, new Date().toISOString(), id);
+    const value = favorite ? 1 : 0;
+    const now = new Date().toISOString();
+    const result = this.db.prepare(
+      `UPDATE film
+       SET favorite = ?,
+           favorited_at = CASE
+             WHEN ? = 0 THEN NULL
+             WHEN favorite = 0 OR favorited_at IS NULL THEN ?
+             ELSE favorited_at
+           END,
+           updated_at = ?
+       WHERE id = ?`,
+    ).run(value, value, now, now, id);
     if (!result.changes) throw new Error('FILM_NOT_FOUND');
     return this.detail(id)!;
   }
@@ -1527,6 +1539,13 @@ export class FilmRepository {
 
   private orderBy(sort: FilmPageQuery['sort']): string {
     switch (sort) {
+      case 'organized':
+        return `(SELECT MAX(organized_order.created_at)
+                 FROM film_custom_category organized_order
+                 WHERE organized_order.film_id = f.id) DESC NULLS LAST,
+                f.imported_at DESC, f.rowid DESC`;
+      case 'favorite':
+        return 'f.favorited_at DESC NULLS LAST, f.imported_at DESC, f.rowid DESC';
       case 'played':
         return `(SELECT playback.last_played_at
                  FROM film_playback_state playback

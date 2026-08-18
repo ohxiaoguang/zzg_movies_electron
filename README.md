@@ -69,7 +69,7 @@ git push origin v1.2.3
 app.getPath("userData")/film-library.db
 ~~~
 
-启动时启用 foreign_keys、WAL 和 5000ms busy timeout，并执行版本化事务迁移。当前 schema 版本为 v12；数据库只在 Main Process 中访问。
+启动时启用 foreign_keys、WAL 和 5000ms busy timeout，并执行版本化事务迁移。当前 schema 版本为 v13；数据库只在 Main Process 中访问。
 
 主要表：
 

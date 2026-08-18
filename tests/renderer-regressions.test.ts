@@ -34,6 +34,12 @@ describe('renderer regressions', () => {
     expect(app).not.toContain("if (!result.data.configured) form.password = ''");
   });
 
+  it('focuses the password field when the username is remembered', () => {
+    const app = fs.readFileSync(appPath, 'utf8');
+    expect(app).toContain(':autofocus="!form.username"');
+    expect(app).toContain(':autofocus="Boolean(form.username)"');
+  });
+
   it('shows image thumbnails and opens a navigable full-size image dialog', () => {
     expect(drawer).toContain('image-thumbnail-grid');
     expect(drawer).toContain('imageViewerVisible');

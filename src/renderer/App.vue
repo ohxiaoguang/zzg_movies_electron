@@ -86,11 +86,11 @@ async function submit(): Promise<void> {
       <form v-if="status" @submit.prevent="submit">
         <label>
           <span>账号</span>
-          <input v-model="form.username" name="username" autocomplete="username" maxlength="64" autofocus required />
+          <input v-model="form.username" name="username" autocomplete="username" maxlength="64" :autofocus="!form.username" required />
         </label>
         <label>
           <span>密码</span>
-          <input v-model="form.password" name="password" type="password" :autocomplete="needsSetup ? 'new-password' : 'current-password'" minlength="1" required />
+          <input v-model="form.password" name="password" type="password" :autocomplete="needsSetup ? 'new-password' : 'current-password'" :autofocus="Boolean(form.username)" minlength="1" required />
         </label>
         <label v-if="needsSetup">
           <span>确认密码</span>

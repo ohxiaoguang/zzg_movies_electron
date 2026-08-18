@@ -181,6 +181,8 @@ describe('localhost read-only web server', () => {
     expect(html).not.toContain('id="scan-all"');
     expect(html).not.toContain('id="scan-source"');
     expect(html).toContain('<option value="added">最近新增</option>');
+    expect(html).toContain('<option value="organized" hidden>整理顺序</option>');
+    expect(html).toContain('<option value="favorite" hidden>收藏顺序</option>');
     expect(html).toContain('<option value="played">最近观看</option>');
     expect(html).toContain('<script src="/vendor/hls.min.js" defer>');
     expect(html).toContain('<script src="/app.js" defer>');
@@ -188,6 +190,8 @@ describe('localhost read-only web server', () => {
     expect(script).toContain('class HttpFilmLibraryClient');
     expect(script).toContain('/api/v1/films');
     expect(script).toContain("state.libraryMode === 'favorite'");
+    expect(script).toContain("state.libraryMode === 'organized'\n    ? 'organized'");
+    expect(script).toContain(": state.libraryMode === 'favorite' ? 'favorite' : 'added'");
     expect(script).toContain("state.libraryMode === 'all-data'");
     expect(script).toContain('renderSources()');
     expect(script).toContain('renderCategories()');

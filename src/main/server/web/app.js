@@ -305,7 +305,13 @@ function resetLibraryFilters() {
   elements.tag.value = '';
   elements.genre.value = '';
   elements.actor.value = '';
-  elements.sort.value = 'added';
+  for (const option of elements.sort.options) {
+    if (option.value === 'organized') option.hidden = state.libraryMode !== 'organized';
+    if (option.value === 'favorite') option.hidden = state.libraryMode !== 'favorite';
+  }
+  elements.sort.value = state.libraryMode === 'organized'
+    ? 'organized'
+    : state.libraryMode === 'favorite' ? 'favorite' : 'added';
 }
 
 function openLibraryWithFilter(filter) {

@@ -37,7 +37,7 @@ function filmByTitle(context: Awaited<ReturnType<typeof scannedContext>>, title:
 describe('custom categories', () => {
   it('normalizes names, rejects empty/case duplicates, and persists ordering', async () => {
     const context = await scannedContext();
-    expect(context.database.schemaVersion).toBe(12);
+    expect(context.database.schemaVersion).toBe(13);
     expect(context.database.hasTable('genre')).toBe(true);
     expect(context.database.hasTable('film_genre')).toBe(true);
     expect((context.database.db.prepare("SELECT 1 AS present FROM pragma_table_info('film') WHERE name = 'status'").get() as { present: number }).present).toBe(1);
@@ -53,7 +53,7 @@ describe('custom categories', () => {
     databases.splice(databases.indexOf(context.database), 1);
     const reopened = new DatabaseManager(databasePath);
     databases.push(reopened);
-    expect(reopened.schemaVersion).toBe(12);
+    expect(reopened.schemaVersion).toBe(13);
     expect(new FilmRepository(reopened.db).listCategories().map((item) => item.name)).toEqual(['悬疑', 'Classic Films']);
   });
 
@@ -118,6 +118,29 @@ describe('custom categories', () => {
     await waitForScan(context.scan);
     expect(context.films.page({ page: 1, pageSize: 20 }).total).toBe(2);
     expect(context.films.page({ page: 1, pageSize: 20, allData: true }).total).toBe(3);
+  });
+
+  it('orders organized and favorite pages by their latest actions', async () => {
+    const context = await scannedContext();
+    const alpha = filmByTitle(context, 'Alpha');
+    const beta = filmByTitle(context, 'Beta');
+    const category = context.films.createCategory('排序');
+
+    context.films.updateCategories(alpha.id, [category.id]);
+    context.films.updateCategories(beta.id, [category.id]);
+    context.database.db.prepare('UPDATE film_custom_category SET created_at = ? WHERE film_id = ?').run('2026-01-01T00:00:00.000Z', alpha.id);
+    context.database.db.prepare('UPDATE film_custom_category SET created_at = ? WHERE film_id = ?').run('2026-01-02T00:00:00.000Z', beta.id);
+    expect(context.films.page({ page: 1, pageSize: 20, organizationState: 'organized', sort: 'organized' }).items.map((item) => item.title)).toEqual(['Beta', 'Alpha']);
+
+    context.films.updateFavorite(alpha.id, true);
+    context.films.updateFavorite(beta.id, true);
+    expect(context.database.db.prepare('SELECT favorited_at FROM film WHERE id = ?').get(alpha.id)).toMatchObject({ favorited_at: expect.any(String) });
+    context.database.db.prepare('UPDATE film SET favorited_at = ? WHERE id = ?').run('2026-01-01T00:00:00.000Z', alpha.id);
+    context.database.db.prepare('UPDATE film SET favorited_at = ? WHERE id = ?').run('2026-01-02T00:00:00.000Z', beta.id);
+    expect(context.films.page({ page: 1, pageSize: 20, favoriteOnly: true, sort: 'favorite' }).items.map((item) => item.title)).toEqual(['Beta', 'Alpha']);
+
+    context.films.updateFavorite(alpha.id, false);
+    expect(context.database.db.prepare('SELECT favorited_at FROM film WHERE id = ?').get(alpha.id)).toEqual({ favorited_at: null });
   });
 
   it('lists NFO actors, filters films by actor, and prepares only organized CSV rows', async () => {

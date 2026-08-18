@@ -39,6 +39,7 @@ interface FilmRow {
   director_json: string;
   actors_json: string;
   favorite: number;
+  favorited_at?: string | null;
   rating: number;
   notes: string;
   width: number | null;
@@ -92,10 +93,12 @@ interface SurvivorScore {
 export class FilmFileOwnershipRepairService {
   private readonly hasTitleUserEditColumn: boolean;
   private readonly hasTagUserEditColumn: boolean;
+  private readonly hasFavoriteOrderColumn: boolean;
 
   public constructor(private readonly db: Database.Database) {
     this.hasTitleUserEditColumn = this.hasColumn('title_user_edited');
     this.hasTagUserEditColumn = this.hasColumn('tags_user_edited');
+    this.hasFavoriteOrderColumn = this.hasColumn('favorited_at');
   }
 
   public repairExisting(now = new Date().toISOString()): FilmRepairReport {
@@ -197,6 +200,12 @@ export class FilmFileOwnershipRepairService {
         mergedFields.title_user_edited ?? 0,
         survivorFilmId,
       );
+    }
+    if (this.hasFavoriteOrderColumn) {
+      const favoritedAt = mergedFields.favorite
+        ? latestTimestamp(survivor.favorited_at, merged.favorited_at) ?? now
+        : null;
+      this.db.prepare('UPDATE film SET favorited_at = ? WHERE id = ?').run(favoritedAt, survivorFilmId);
     }
 
     const report = emptyMergeReport(survivorFilmId, mergedFilmId, sourceId, groupKey);
@@ -439,6 +448,12 @@ function relationMergeMode(survivorEdited: number | undefined, mergedEdited: num
 
 function firstNonEmpty<T extends string | null>(first: T, second: T): T {
   return first && first.trim() ? first : second;
+}
+
+function latestTimestamp(first: string | null | undefined, second: string | null | undefined): string | null {
+  if (!first) return second ?? null;
+  if (!second) return first;
+  return first.localeCompare(second) >= 0 ? first : second;
 }
 
 function unionJsonArrays(first: string, second: string): string[] {

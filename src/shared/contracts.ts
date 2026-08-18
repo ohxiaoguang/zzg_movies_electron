@@ -220,7 +220,7 @@ export interface FilmPageQuery {
   playbackCompatibility?: 'all' | 'non-native';
   allData?: boolean;
   availability?: FilmAvailability | 'all';
-  sort?: 'added' | 'played' | 'recent' | 'title' | 'year' | 'rating' | 'file';
+  sort?: 'added' | 'organized' | 'favorite' | 'played' | 'recent' | 'title' | 'year' | 'rating' | 'file';
 }
 
 export interface FilmPageDto {

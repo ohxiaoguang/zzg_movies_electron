@@ -130,6 +130,7 @@ describe('film-file ownership repair', () => {
     expect(context.database.db.prepare('SELECT COUNT(*) AS count FROM film_file WHERE film_id = ?').get(film.id)).toEqual({ count: 3 });
     const repaired = context.films.detail(film.id)!;
     expect(repaired.favorite).toBe(true);
+    expect(context.database.db.prepare('SELECT favorited_at FROM film WHERE id = ?').get(film.id)).toMatchObject({ favorited_at: expect.any(String) });
     expect(repaired.notes).toBe('survivor notes');
     expect(repaired.nfoTags.map((item) => item.name)).toEqual(['Merged Tag', 'Repair Tag']);
     expect(context.database.db.prepare('SELECT COUNT(*) AS count FROM film_merge_audit WHERE notes_conflict = 1').get()).toEqual({ count: 2 });
