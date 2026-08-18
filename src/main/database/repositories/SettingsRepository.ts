@@ -16,6 +16,7 @@ export class SettingsRepository {
     const settings = { ...DEFAULT_SETTINGS } as {
       cardSize: number;
       hoverDelayMs: number;
+      hoverCloseDelayMs: number;
       slideshowIntervalMs: number;
       detailPlayerSeekStepSeconds: number;
       detailPlayerFineSeekStepSeconds: number;
@@ -48,6 +49,7 @@ export class SettingsRepository {
     return {
       cardSize: clamp(settings.cardSize, 140, 320, DEFAULT_SETTINGS.cardSize),
       hoverDelayMs: clamp(settings.hoverDelayMs, 100, 3000, DEFAULT_SETTINGS.hoverDelayMs),
+      hoverCloseDelayMs: clampInteger(settings.hoverCloseDelayMs, 0, 5000, DEFAULT_SETTINGS.hoverCloseDelayMs),
       slideshowIntervalMs: clamp(settings.slideshowIntervalMs, 500, 10_000, DEFAULT_SETTINGS.slideshowIntervalMs),
       detailPlayerSeekStepSeconds: clampInteger(
         settings.detailPlayerSeekStepSeconds,
@@ -91,6 +93,12 @@ export class SettingsRepository {
     const current = this.get();
     if (input.cardSize !== undefined && (!Number.isFinite(input.cardSize) || input.cardSize < 140 || input.cardSize > 320)) throw new Error('INVALID_CARD_SIZE');
     if (
+      input.hoverCloseDelayMs !== undefined
+      && (!Number.isInteger(input.hoverCloseDelayMs) || input.hoverCloseDelayMs < 0 || input.hoverCloseDelayMs > 5000)
+    ) {
+      throw new Error('INVALID_HOVER_CLOSE_DELAY');
+    }
+    if (
       input.detailPlayerSeekStepSeconds !== undefined
       && (!Number.isInteger(input.detailPlayerSeekStepSeconds) || input.detailPlayerSeekStepSeconds < 1 || input.detailPlayerSeekStepSeconds > 60)
     ) {
@@ -128,6 +136,7 @@ export class SettingsRepository {
     const next: SettingsDto = {
       cardSize: input.cardSize ?? current.cardSize,
       hoverDelayMs: input.hoverDelayMs ?? current.hoverDelayMs,
+      hoverCloseDelayMs: input.hoverCloseDelayMs ?? current.hoverCloseDelayMs,
       slideshowIntervalMs: input.slideshowIntervalMs ?? current.slideshowIntervalMs,
       detailPlayerSeekStepSeconds: input.detailPlayerSeekStepSeconds ?? current.detailPlayerSeekStepSeconds,
       detailPlayerFineSeekStepSeconds: input.detailPlayerFineSeekStepSeconds ?? current.detailPlayerFineSeekStepSeconds,

@@ -78,6 +78,7 @@ interface LanServerOptions {
   port?: number;
   version: string;
   databaseReady: () => boolean;
+  hoverCloseDelayMs?: () => number;
   detailPlayerSeekStepSeconds?: () => number;
   detailPlayerFineSeekStepSeconds?: () => number;
   configuration?: Partial<LanServerConfiguration>;
@@ -803,6 +804,7 @@ export class LanServer {
       service: 'local-film-library',
       version: this.options.version,
       apiVersion: 'v1',
+      hoverCloseDelayMs: this.hoverCloseDelayMs(),
       detailPlayerSeekStepSeconds: this.detailPlayerSeekStepSeconds(),
       detailPlayerFineSeekStepSeconds: this.detailPlayerFineSeekStepSeconds(),
       bindAddress: status.bindAddress,
@@ -814,6 +816,11 @@ export class LanServer {
       networkScope: status.bindMode,
       authenticationRequired: status.authenticationRequired,
     };
+  }
+
+  private hoverCloseDelayMs(): number {
+    const value = this.options.hoverCloseDelayMs?.();
+    return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 5000 ? value : 180;
   }
 
   private detailPlayerSeekStepSeconds(): number {

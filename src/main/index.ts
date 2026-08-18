@@ -118,6 +118,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(() => {
   lanServer = new LanServer(libraryRead, mediaAssets, logger, {
     version: app.getVersion(),
     databaseReady: () => Boolean(database?.db.open),
+    hoverCloseDelayMs: () => settings.get().hoverCloseDelayMs,
     detailPlayerSeekStepSeconds: () => settings.get().detailPlayerSeekStepSeconds,
     detailPlayerFineSeekStepSeconds: () => settings.get().detailPlayerFineSeekStepSeconds,
     configuration: lanServerConfigurationFromSettings(lanSettings),

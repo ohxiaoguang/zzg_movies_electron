@@ -471,7 +471,7 @@ function validateCategoryReorder(payload: unknown): CustomCategoryReorderInput {
 function validateSettingsUpdate(payload: unknown): SettingsUpdateInput {
   if (!isRecord(payload)) throw new Error('INVALID_SETTINGS');
   const input: SettingsUpdateInput = {};
-  for (const key of ['cardSize', 'hoverDelayMs', 'slideshowIntervalMs', 'detailPlayerSeekStepSeconds', 'detailPlayerFineSeekStepSeconds', 'pageSize'] as const) {
+  for (const key of ['cardSize', 'hoverDelayMs', 'hoverCloseDelayMs', 'slideshowIntervalMs', 'detailPlayerSeekStepSeconds', 'detailPlayerFineSeekStepSeconds', 'pageSize'] as const) {
     if (payload[key] !== undefined) input[key] = Number(payload[key]);
   }
   for (const key of ['videoExtensions', 'imageExtensions', 'ignoredDirectories'] as const) {

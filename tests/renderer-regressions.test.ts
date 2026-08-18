@@ -120,6 +120,10 @@ describe('renderer regressions', () => {
     expect(card).not.toContain('<video');
     expect(card).not.toContain('transform: scale');
     expect(card).toContain('createHoverPopupController');
+    expect(card).toContain('closeDelay: props.hoverCloseDelay');
+    expect(card).toContain('aria-label="打开本地文件夹"');
+    expect(card).toContain('window.filmLibrary.films.showInFolder(props.film.id)');
+    expect(card).toContain('<FolderOpened />');
     expect(popup).toContain('<Teleport to="body">');
     expect(popup).toContain('position: fixed');
     expect(popup).toContain('aspect-ratio: 16 / 9');
@@ -154,6 +158,7 @@ describe('renderer regressions', () => {
     expect(drawer).toContain('overflow-x: auto');
     expect(library).toContain('library.filters.commentImages');
     expect(library).toContain('placeholder="精彩评论截图"');
+    expect(library).toContain(':hover-close-delay="library.settings.hoverCloseDelayMs"');
     expect(popup).toContain('class="preview-pagination" aria-label="预览图片切换"');
     expect(popup).toContain('class="preview-pagination" aria-label="预览片段切换"');
     expect(popup).toContain('@click.stop="selectImage(index)"');
@@ -233,6 +238,8 @@ describe('renderer regressions', () => {
     expect(drawer).toContain("window.addEventListener('keydown', handleKeydown, true)");
     expect(drawer).toContain('event.stopPropagation()');
     expect(settings).toContain('快进/快退步进');
+    expect(settings).toContain('预览弹窗消失延迟');
+    expect(settings).toContain('form.hoverCloseDelayMs');
     expect(settings).toContain('form.detailPlayerSeekStepSeconds');
     expect(settings).toContain('form.detailPlayerFineSeekStepSeconds');
   });

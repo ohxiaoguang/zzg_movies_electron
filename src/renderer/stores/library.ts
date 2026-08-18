@@ -11,6 +11,7 @@ export const useLibraryStore = defineStore('library', () => {
   const settings = ref<SettingsDto>({
     cardSize: DEFAULT_SETTINGS.cardSize,
     hoverDelayMs: DEFAULT_SETTINGS.hoverDelayMs,
+    hoverCloseDelayMs: DEFAULT_SETTINGS.hoverCloseDelayMs,
     slideshowIntervalMs: DEFAULT_SETTINGS.slideshowIntervalMs,
     detailPlayerSeekStepSeconds: DEFAULT_SETTINGS.detailPlayerSeekStepSeconds,
     detailPlayerFineSeekStepSeconds: DEFAULT_SETTINGS.detailPlayerFineSeekStepSeconds,

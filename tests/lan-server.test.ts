@@ -47,8 +47,9 @@ describe('localhost read-only web server', () => {
     expect(first.baseUrl).toBe(`http://127.0.0.1:${first.port}`);
     expect(await context.server.start()).toEqual(first);
 
-    context.settings.update({ detailPlayerSeekStepSeconds: 12, detailPlayerFineSeekStepSeconds: 0.25 });
+    context.settings.update({ hoverCloseDelayMs: 650, detailPlayerSeekStepSeconds: 12, detailPlayerFineSeekStepSeconds: 0.25 });
     const serverInfo = await api<LanServerInfoDto>(`${first.baseUrl}/api/v1/server-info`);
+    expect(serverInfo.ok && serverInfo.data.hoverCloseDelayMs).toBe(650);
     expect(serverInfo.ok && serverInfo.data.detailPlayerSeekStepSeconds).toBe(12);
     expect(serverInfo.ok && serverInfo.data.detailPlayerFineSeekStepSeconds).toBe(0.25);
 
@@ -224,6 +225,7 @@ describe('localhost read-only web server', () => {
     expect(script).toContain("trigger.dataset.previewChannel = channel");
     expect(script).not.toContain('film-comment-badge');
     expect(script).toContain('attachFilmCardPreview');
+    expect(script).toContain('configuredHoverCloseDelayMs()');
     expect(script).toMatch(/\['highlights', '▶', '精彩片段',[\s\S]*?\['stills', '▧', '剧照',[\s\S]*?\['comments', '💬', '评论图',/);
     expect(script).toContain("card.querySelectorAll('.film-preview-trigger:not(:disabled)')");
     expect(script).not.toContain('web-card-preview-channels');
@@ -774,6 +776,7 @@ async function createContext() {
     port: 0,
     version: 'test',
     databaseReady: () => database.db.open,
+    hoverCloseDelayMs: () => settings.get().hoverCloseDelayMs,
     detailPlayerSeekStepSeconds: () => settings.get().detailPlayerSeekStepSeconds,
     detailPlayerFineSeekStepSeconds: () => settings.get().detailPlayerFineSeekStepSeconds,
   });

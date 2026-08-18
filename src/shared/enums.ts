@@ -16,6 +16,7 @@ export const DEFAULT_IGNORED_DIRECTORIES = [
 export const DEFAULT_SETTINGS = {
   cardSize: 200,
   hoverDelayMs: 450,
+  hoverCloseDelayMs: 180,
   slideshowIntervalMs: 1200,
   detailPlayerSeekStepSeconds: 1,
   detailPlayerFineSeekStepSeconds: 0.1,

@@ -147,7 +147,7 @@ function changePage(page: number): void { library.filters.page = page; void libr
       <el-radio-group v-if="!allData" v-model="library.viewMode" size="small"><el-radio-button value="grid"><Grid /></el-radio-button><el-radio-button value="table"><List /></el-radio-button></el-radio-group>
     </div>
     <div v-if="library.error" class="error-banner">{{ library.error }}</div>
-    <FilmGrid v-if="!allData && library.viewMode === 'grid'" :films="library.items" :hover-delay="library.settings.hoverDelayMs" :slideshow-interval="library.settings.slideshowIntervalMs" :card-width="library.settings.cardSize" @select="selectFilm" @updated="refresh" />
+    <FilmGrid v-if="!allData && library.viewMode === 'grid'" :films="library.items" :hover-delay="library.settings.hoverDelayMs" :hover-close-delay="library.settings.hoverCloseDelayMs" :slideshow-interval="library.settings.slideshowIntervalMs" :card-width="library.settings.cardSize" @select="selectFilm" @updated="refresh" />
     <FilmTable v-else :films="library.items" :all-data="allData" @select="selectFilm" @selection-change="selectionChanged" @delete-row="deleteRecords([$event.id])" />
     <el-pagination v-if="library.pageData.total" background layout="prev, pager, next, ->, total" :current-page="library.pageData.page" :page-size="library.pageData.pageSize" :total="library.pageData.total" @current-change="changePage" />
     <FilmDetailDrawer v-model="detailVisible" :film-id="selectedFilmId" @updated="refresh" />

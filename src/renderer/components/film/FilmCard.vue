@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
-import { ChatLineSquare, Film, Picture, Star, VideoCamera } from '@element-plus/icons-vue';
+import { ChatLineSquare, Film, FolderOpened, Picture, Star, VideoCamera } from '@element-plus/icons-vue';
 import type { FilmSummaryDto } from '../../../shared/contracts';
 import { mediaUrl } from '../../api';
 import { createHoverPopupController } from '../../composables/hoverPopupController';
@@ -11,6 +11,7 @@ import FilmHoverPopup from './FilmHoverPopup.vue';
 const props = defineProps<{
   film: FilmSummaryDto;
   hoverDelay: number;
+  hoverCloseDelay: number;
   slideshowInterval: number;
 }>();
 
@@ -25,6 +26,7 @@ const previewChannel = ref<PreviewChannel>('highlights');
 const posterFailed = ref(false);
 const favorite = ref(props.film.favorite);
 const favoriteSaving = ref(false);
+const folderOpening = ref(false);
 let observer: IntersectionObserver | null = null;
 
 type PreviewChannel = 'highlights' | 'stills' | 'comments';
@@ -49,7 +51,7 @@ function openPopup(): void {
 
 const hoverController = createHoverPopupController({
   openDelay: props.hoverDelay,
-  closeDelay: 180,
+  closeDelay: props.hoverCloseDelay,
   onOpen: openPopup,
   onClose: closePopup,
 });
@@ -85,6 +87,16 @@ async function toggleFavorite(): Promise<void> {
   } else emit('updated');
   favoriteSaving.value = false;
 }
+async function showInFolder(): Promise<void> {
+  if (folderOpening.value) return;
+  folderOpening.value = true;
+  try {
+    const result = await window.filmLibrary.films.showInFolder(props.film.id);
+    if (!result.ok) ElMessage.error(result.error.message);
+  } finally {
+    folderOpening.value = false;
+  }
+}
 
 watch(() => props.film.favorite, (value) => { favorite.value = value; });
 
@@ -115,7 +127,10 @@ onBeforeUnmount(() => {
         <div class="film-card-badges">
           <el-tag v-if="film.availability !== 'available'" size="small" type="warning">{{ availabilityLabel }}</el-tag>
         </div>
-        <button class="favorite-button" :class="{ active: favorite }" :disabled="favoriteSaving" :aria-label="favorite ? '取消收藏' : '收藏'" @click.stop="toggleFavorite"><Star /></button>
+        <div class="film-card-actions">
+          <button class="favorite-button" :class="{ active: favorite }" :disabled="favoriteSaving" :aria-label="favorite ? '取消收藏' : '收藏'" :title="favorite ? '取消收藏' : '收藏'" @click.stop="toggleFavorite"><Star /></button>
+          <button class="folder-button" :disabled="folderOpening" aria-label="打开本地文件夹" title="打开本地文件夹" @click.stop="showInFolder"><FolderOpened /></button>
+        </div>
       </div>
       <div class="film-card-bottomline">
         <span v-if="film.organizationState === 'unorganized'" class="organization-chip">未整理</span>
@@ -157,6 +172,7 @@ onBeforeUnmount(() => {
 .film-card-topline, .film-card-bottomline { position: absolute; right: 10px; left: 10px; display: flex; align-items: center; justify-content: space-between; }
 .film-card-topline { top: 10px; }
 .film-card-badges { display: grid; justify-items: start; gap: 6px; }
+.film-card-actions { display: flex; margin-left: auto; flex-direction: column; align-items: center; gap: 6px; }
 .film-card-bottomline { right: 48px; bottom: 10px; }
 .preview-trigger-stack { position: absolute; z-index: 3; right: 9px; bottom: 9px; display: flex; flex-direction: column; gap: 5px; }
 .preview-trigger-stack button { display: grid; width: 30px; height: 30px; padding: 0; place-items: center; border: 1px solid rgba(255,255,255,.2); border-radius: 8px; color: #e7edf4; background: rgba(9,12,16,.78); cursor: pointer; backdrop-filter: blur(8px); }
@@ -164,7 +180,7 @@ onBeforeUnmount(() => {
 .preview-trigger-stack button:disabled { cursor: not-allowed; opacity: .28; }
 .preview-trigger-stack svg { width: 15px; height: 15px; }
 @media (hover: none), (pointer: coarse) { .preview-trigger-stack { display: none; } }
-.favorite-button { display: grid; width: 30px; height: 30px; padding: 0; margin-left: auto; place-items: center; border: 1px solid rgba(255,255,255,.16); border-radius: 50%; color: #e8edf4; background: rgba(9,12,16,.72); cursor: pointer; backdrop-filter: blur(8px); }.favorite-button svg { width: 15px; }.favorite-button.active { border-color: rgba(255,217,139,.55); color: #ffd98b; background: rgba(62,45,15,.78); }.favorite-button:disabled { cursor: wait; opacity: .65; }
+.favorite-button, .folder-button { display: grid; width: 30px; height: 30px; padding: 0; place-items: center; border: 1px solid rgba(255,255,255,.16); border-radius: 50%; color: #e8edf4; background: rgba(9,12,16,.72); cursor: pointer; backdrop-filter: blur(8px); }.favorite-button svg, .folder-button svg { width: 15px; }.favorite-button.active { border-color: rgba(255,217,139,.55); color: #ffd98b; background: rgba(62,45,15,.78); }.favorite-button:hover, .favorite-button:focus-visible, .folder-button:hover, .folder-button:focus-visible { border-color: var(--accent); color: var(--accent); outline: 2px solid rgba(152,227,194,.25); }.favorite-button:disabled, .folder-button:disabled { cursor: wait; opacity: .65; }
 .organization-chip, .category-chips > span { padding: 4px 7px; border-radius: 6px; color: #eef3f1; background: rgba(9, 12, 16, .68); font-size: 10px; backdrop-filter: blur(8px); }.category-chips { display: flex; min-width: 0; gap: 4px; overflow: hidden; }.category-chips > span { max-width: 76px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.organization-chip { color: #ffd19e; }
 .film-card-info { padding: 10px 2px 4px; }
 .film-card-title { overflow: hidden; color: var(--ink); font-size: 14px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }

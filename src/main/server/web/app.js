@@ -559,7 +559,7 @@ function attachFilmCardPreview(card, film) {
   };
   const scheduleClose = () => {
     cancelClose();
-    closeTimer = window.setTimeout(close, 180);
+    closeTimer = window.setTimeout(close, configuredHoverCloseDelayMs());
   };
   const ensureDetail = () => {
     detailPromise ||= client.film(film.id);
@@ -1590,6 +1590,11 @@ function seekVideoBy(video, deltaSeconds) {
 function configuredSeekStepSeconds() {
   const value = Number(state.server?.detailPlayerSeekStepSeconds);
   return Number.isInteger(value) && value >= 1 && value <= 60 ? value : 1;
+}
+
+function configuredHoverCloseDelayMs() {
+  const value = Number(state.server?.hoverCloseDelayMs);
+  return Number.isInteger(value) && value >= 0 && value <= 5000 ? value : 180;
 }
 
 function configuredFineSeekStepSeconds() {

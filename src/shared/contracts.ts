@@ -369,6 +369,7 @@ export interface LanServerInfoDto {
   service: 'local-film-library';
   version: string;
   apiVersion: 'v1';
+  hoverCloseDelayMs: number;
   detailPlayerSeekStepSeconds: number;
   detailPlayerFineSeekStepSeconds: number;
   bindAddress: string;
@@ -550,6 +551,7 @@ export interface PlaybackCacheInfoDto {
 export interface SettingsDto {
   cardSize: number;
   hoverDelayMs: number;
+  hoverCloseDelayMs: number;
   slideshowIntervalMs: number;
   detailPlayerSeekStepSeconds: number;
   detailPlayerFineSeekStepSeconds: number;

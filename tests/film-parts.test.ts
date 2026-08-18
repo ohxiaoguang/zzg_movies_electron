@@ -165,6 +165,10 @@ describe('multi-part films and availability', () => {
     expect(() => context.settings.update({ cardSize: 139 })).toThrow('INVALID_CARD_SIZE');
     expect(context.settings.update({ cardSize: 280 }).cardSize).toBe(280);
     expect(context.settings.get().cardSize).toBe(280);
+    expect(context.settings.update({ hoverCloseDelayMs: 750 }).hoverCloseDelayMs).toBe(750);
+    expect(context.settings.get().hoverCloseDelayMs).toBe(750);
+    expect(() => context.settings.update({ hoverCloseDelayMs: -1 })).toThrow('INVALID_HOVER_CLOSE_DELAY');
+    expect(() => context.settings.update({ hoverCloseDelayMs: 5001 })).toThrow('INVALID_HOVER_CLOSE_DELAY');
     expect(context.settings.update({ detailPlayerSeekStepSeconds: 10 }).detailPlayerSeekStepSeconds).toBe(10);
     expect(context.settings.get().detailPlayerSeekStepSeconds).toBe(10);
     expect(() => context.settings.update({ detailPlayerSeekStepSeconds: 0 })).toThrow('INVALID_DETAIL_PLAYER_SEEK_STEP');
