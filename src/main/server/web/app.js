@@ -480,8 +480,9 @@ function renderFilms(films) {
   }
   for (const film of films) {
     const card = createElement('article', 'film-card');
-    const open = createElement('button', 'film-open');
-    open.type = 'button';
+    const open = createElement('div', 'film-open');
+    open.tabIndex = 0;
+    open.setAttribute('role', 'button');
     const poster = document.createElement('img');
     poster.alt = `${film.title} 海报`;
     poster.loading = 'lazy';
@@ -495,10 +496,33 @@ function renderFilms(films) {
       createElement('small', 'film-flags', film.customCategories.map((item) => item.name).join(' · ') || '未分类'),
     );
     const posterFrame = createElement('span', 'film-poster-frame');
-    posterFrame.append(poster);
-    if (film.commentImageCount) posterFrame.append(createElement('span', 'film-comment-badge', `评论 ${film.commentImageCount}`));
+    const previewTriggers = createElement('span', 'film-preview-triggers');
+    for (const [channel, icon, label, count] of [
+      ['highlights', '▶', '精彩片段', film.highlightSegmentCount],
+      ['stills', '▧', '剧照', film.previewImageAssetIds.length],
+      ['comments', '💬', '评论图', film.commentImageCount],
+    ]) {
+      const trigger = document.createElement('button');
+      trigger.type = 'button';
+      trigger.className = 'film-preview-trigger';
+      trigger.dataset.previewChannel = channel;
+      trigger.textContent = icon;
+      trigger.title = `${label} ${count}`;
+      trigger.setAttribute('aria-label', `预览${label}`);
+      trigger.disabled = !count;
+      trigger.addEventListener('click', (event) => event.stopPropagation());
+      previewTriggers.append(trigger);
+    }
+    posterFrame.append(poster, previewTriggers);
     open.append(posterFrame, copy);
     open.addEventListener('click', () => void showDetail(film.id));
+    open.addEventListener('keydown', (event) => {
+      if (event.target !== open) return;
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        void showDetail(film.id);
+      }
+    });
     card.append(open);
     attachFilmCardPreview(card, film);
     elements.filmGrid.append(card);
@@ -513,6 +537,7 @@ function attachFilmCardPreview(card, film) {
   let slideshowTimer = null;
   let mediaGeneration = 0;
   let detailPromise = null;
+  let activeChannel = null;
 
   const cancelClose = () => {
     if (closeTimer) window.clearTimeout(closeTimer);
@@ -529,6 +554,7 @@ function attachFilmCardPreview(card, film) {
     if (popup?.querySelector('video') === state.playback?.video) releaseActivePlayback();
     popup?.remove();
     popup = null;
+    activeChannel = null;
     if (activeCardPreviewClose === close) activeCardPreviewClose = null;
   };
   const scheduleClose = () => {
@@ -539,75 +565,101 @@ function attachFilmCardPreview(card, film) {
     detailPromise ||= client.film(film.id);
     return detailPromise;
   };
-  const show = () => {
+  const show = (channel) => {
     if (popup) return;
     activeCardPreviewClose?.();
     activeCardPreviewClose = close;
+    activeChannel = channel;
     popup = createElement('section', 'web-card-preview');
     popup.addEventListener('mouseenter', cancelClose);
     popup.addEventListener('mouseleave', scheduleClose);
     const media = createElement('div', 'web-card-preview-media');
-    const channelBar = createElement('div', 'web-card-preview-channels');
     const body = createElement('div', 'web-card-preview-body');
     body.append(createElement('strong', '', film.title), createElement('small', 'muted', [film.year, film.sourceName].filter(Boolean).join(' · ')));
-    popup.append(media, channelBar, body);
+    popup.append(media, body);
     document.body.append(popup);
     positionFilmCardPreview(popup, card);
 
-    const channels = [
-      ['highlights', '精彩片段', film.highlightSegmentCount],
-      ['comments', '评论', film.commentImageCount],
-      ['stills', '剧照', film.previewImageAssetIds.length],
-    ];
-    const buttons = new Map();
     const activate = async (channel) => {
-      const count = channels.find(([name]) => name === channel)?.[2] || 0;
-      if (!count || !popup) return;
+      if (!popup) return;
       const generation = ++mediaGeneration;
       if (slideshowTimer) window.clearInterval(slideshowTimer);
       slideshowTimer = null;
       if (media.querySelector('video') === state.playback?.video) releaseActivePlayback();
-      media.replaceChildren(channelBar);
+      media.replaceChildren();
       media.classList.toggle('is-comment', channel === 'comments');
       media.style.removeProperty('aspect-ratio');
       positionFilmCardPreview(popup, card);
-      for (const [name, button] of buttons) button.classList.toggle('active', name === channel);
       if (channel !== 'highlights') {
         const ids = channel === 'comments' ? film.commentImageAssetIds : film.previewImageAssetIds;
         const image = document.createElement('img');
         image.alt = channel === 'comments' ? `${film.title} 精彩评论` : `${film.title} 剧照`;
         let index = 0;
-        const renderImage = () => { image.src = client.media('assets', ids[index]); };
+        const pagination = ids.length > 1
+          ? createPreviewPagination(ids.length, (nextIndex) => {
+            index = nextIndex;
+            renderImage();
+            scheduleImageSlideshow();
+          }, '预览图片切换')
+          : null;
+        const renderImage = () => {
+          image.src = client.media('assets', ids[index]);
+          pagination?.setActive(index);
+        };
+        const scheduleImageSlideshow = () => {
+          if (slideshowTimer) window.clearInterval(slideshowTimer);
+          slideshowTimer = ids.length > 1
+            ? window.setInterval(() => { index = (index + 1) % ids.length; renderImage(); }, 1800)
+            : null;
+        };
         image.addEventListener('load', () => {
-          if (channel !== 'comments' || !image.naturalWidth || !image.naturalHeight || !popup) return;
+          if (channel !== 'comments' || generation !== mediaGeneration || !image.naturalWidth || !image.naturalHeight || !popup) return;
           const aspectRatio = image.naturalWidth / image.naturalHeight;
           media.style.aspectRatio = String(aspectRatio);
           positionFilmCardPreview(popup, card, aspectRatio);
         });
         renderImage();
         media.append(image);
-        if (ids.length > 1) slideshowTimer = window.setInterval(() => { index = (index + 1) % ids.length; renderImage(); }, 1800);
+        if (pagination) media.append(pagination.element);
+        scheduleImageSlideshow();
         return;
       }
       const status = createElement('span', 'web-card-preview-status', '正在准备精彩片段…');
+      const segmentLabel = createElement('div', 'web-segment-preview-label');
       const video = document.createElement('video');
       video.playsInline = true;
       video.preload = 'metadata';
       video.muted = true;
-      media.append(video, status);
+      media.append(video, segmentLabel, status);
       try {
         const detail = await ensureDetail();
         if (!popup || generation !== mediaGeneration) return;
         const segments = detail.segments.filter((segment) => segment.includeInPreview);
+        if (!segments.length) {
+          status.textContent = '暂无可用的精彩片段';
+          return;
+        }
         let segmentIndex = 0;
         let activeSegment = null;
         let activeSession = null;
         let advancing = false;
+        const pagination = segments.length > 1
+          ? createPreviewPagination(segments.length, (nextIndex) => { void play(nextIndex); }, '预览片段切换')
+          : null;
+        if (pagination) {
+          media.append(pagination.element);
+          status.classList.add('above-pagination');
+        }
         const play = async (nextIndex) => {
           if (!popup || generation !== mediaGeneration || !segments.length) return;
           segmentIndex = nextIndex % segments.length;
           activeSegment = segments[segmentIndex];
-          status.textContent = activeSegment.title || `精彩片段 ${segmentIndex + 1}`;
+          segmentLabel.replaceChildren(
+            createElement('strong', '', activeSegment.title || `精彩片段 ${segmentIndex + 1}`),
+            createElement('span', '', `${formatPlaybackTime(activeSegment.startSeconds)} → ${formatPlaybackTime(activeSegment.endSeconds)}`),
+          );
+          pagination?.setActive(segmentIndex);
+          status.textContent = '正在准备精彩片段…';
           activeSession = await startAdaptivePlayback(video, status, {
             partId: activeSegment.filmFileId,
             purpose: 'segment-preview',
@@ -635,21 +687,61 @@ function attachFilmCardPreview(card, film) {
         if (popup && generation === mediaGeneration) status.textContent = errorMessage(error);
       }
     };
-    for (const [name, label, count] of channels) {
-      const button = actionButton(label, () => void activate(name));
-      button.disabled = !count;
-      buttons.set(name, button);
-      channelBar.append(button);
-    }
-    const initial = film.highlightSegmentCount ? 'highlights' : film.commentImageCount ? 'comments' : 'stills';
-    void activate(initial);
+    void activate(channel);
   };
 
-  card.addEventListener('mouseenter', () => {
-    cancelClose();
-    if (!popup && !openTimer) openTimer = window.setTimeout(() => { openTimer = null; show(); }, 420);
-  });
-  card.addEventListener('mouseleave', scheduleClose);
+  for (const trigger of card.querySelectorAll('.film-preview-trigger:not(:disabled)')) {
+    trigger.addEventListener('mouseenter', () => {
+      cancelClose();
+      const channel = trigger.dataset.previewChannel;
+      if (!channel || activeChannel === channel) return;
+      if (popup) {
+        close();
+        show(channel);
+        return;
+      }
+      if (openTimer) window.clearTimeout(openTimer);
+      openTimer = window.setTimeout(() => { openTimer = null; show(channel); }, 420);
+    });
+    trigger.addEventListener('mouseleave', scheduleClose);
+    trigger.addEventListener('focus', () => {
+      cancelClose();
+      const channel = trigger.dataset.previewChannel;
+      if (!channel || activeChannel === channel) return;
+      if (popup) close();
+      show(channel);
+    });
+    trigger.addEventListener('blur', scheduleClose);
+  }
+}
+
+function createPreviewPagination(count, onSelect, label) {
+  const element = createElement('div', 'web-card-preview-pagination');
+  element.setAttribute('aria-label', label);
+  const dots = [];
+  for (let index = 0; index < count; index += 1) {
+    const dot = document.createElement('button');
+    dot.type = 'button';
+    dot.className = 'web-preview-dot';
+    dot.setAttribute('aria-label', `显示第 ${index + 1} 项预览`);
+    dot.addEventListener('click', (event) => {
+      event.stopPropagation();
+      onSelect(index);
+    });
+    dots.push(dot);
+    element.append(dot);
+  }
+  return {
+    element,
+    setActive(index) {
+      dots.forEach((dot, dotIndex) => {
+        const active = dotIndex === index;
+        dot.classList.toggle('active', active);
+        if (active) dot.setAttribute('aria-current', 'true');
+        else dot.removeAttribute('aria-current');
+      });
+    },
+  };
 }
 
 function positionFilmCardPreview(popup, card, commentAspectRatio = null) {
@@ -657,14 +749,17 @@ function positionFilmCardPreview(popup, card, commentAspectRatio = null) {
   const gap = 10;
   const rect = card.getBoundingClientRect();
   const available = window.innerWidth - margin * 2;
+  if (!popup.dataset.side) {
+    const baseWidth = Math.min(500, available);
+    popup.dataset.side = rect.right + gap + baseWidth <= window.innerWidth - margin ? 'right' : 'left';
+  }
   const width = commentAspectRatio
     ? Math.min(1000, available, Math.max(500, commentAspectRatio * 220))
     : Math.min(500, available);
   popup.style.width = `${width}px`;
   const height = popup.offsetHeight || 360;
-  let left = rect.right + gap;
-  if (left + width > window.innerWidth - margin) left = rect.left - width - gap;
-  if (left < margin) left = Math.max(margin, (window.innerWidth - width) / 2);
+  let left = popup.dataset.side === 'right' ? rect.right + gap : rect.left - width - gap;
+  left = Math.max(margin, Math.min(left, window.innerWidth - width - margin));
   popup.style.left = `${left}px`;
   popup.style.top = `${Math.min(window.innerHeight - height - margin, Math.max(margin, rect.top))}px`;
 }

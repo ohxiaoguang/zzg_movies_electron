@@ -19,18 +19,25 @@ export interface PopupPosition {
   top: number;
 }
 
+export type PopupSide = 'left' | 'right';
+
 export function calculatePopupPosition(
   anchor: PopupAnchorRect,
   popup: PopupSize,
   viewport: PopupViewport,
   gap = 14,
   padding = 12,
+  preferredSide: PopupSide | null = null,
 ): PopupPosition {
   const rightCandidate = anchor.right + gap;
   const leftCandidate = anchor.left - gap - popup.width;
-  let left = rightCandidate + popup.width <= viewport.width - padding
+  let left = preferredSide === 'right'
     ? rightCandidate
-    : leftCandidate;
+    : preferredSide === 'left'
+      ? leftCandidate
+      : rightCandidate + popup.width <= viewport.width - padding
+        ? rightCandidate
+        : leftCandidate;
   left = Math.max(padding, Math.min(left, Math.max(padding, viewport.width - popup.width - padding)));
 
   const bottomLimit = Math.max(padding, viewport.height - popup.height - padding);

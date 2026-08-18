@@ -492,6 +492,8 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', handleKeydown, tru
 .media-section { padding-top: 8px; }
 .image-groups-row { display: flex; min-width: 0; gap: 16px; }
 .image-groups-row .tab-section { min-width: 0; padding-top: 8px; flex: 1 1 0; border-top: 0; }
+.image-groups-row .comment-image-section:not(:only-child) { width: max-content; max-width: calc(100% - 152px); flex: 0 1 auto; }
+.image-groups-row .comment-image-section:not(:only-child) .image-thumbnail-grid { width: max-content; max-width: 100%; }
 .image-groups-row .tab-section + .tab-section { padding-left: 16px; border-left: 1px solid var(--line); }
 .image-thumbnail-grid { display: flex; min-width: 0; padding: 2px; overflow-x: auto; gap: 8px; scrollbar-width: thin; }
 .image-thumbnail-grid button { width: 120px; min-width: 120px; padding: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 7px; background: #090b0f; cursor: zoom-in; aspect-ratio: 16 / 9; }

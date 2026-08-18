@@ -41,6 +41,15 @@ describe('film hover popup behavior', () => {
     expect(calculatePopupPosition({ left: 0, right: 400, top: 700 }, { width: 520, height: 340 }, { width: 800, height: 800 })).toEqual({ left: 12, top: 448 });
   });
 
+  it('keeps the requested popup side while its width changes', () => {
+    const anchor = { left: 800, right: 1000, top: 100 };
+    const viewport = { width: 1800, height: 900 };
+    expect(calculatePopupPosition(anchor, { width: 520, height: 340 }, viewport, 14, 12, 'right').left).toBe(1014);
+    expect(calculatePopupPosition(anchor, { width: 760, height: 240 }, viewport, 14, 12, 'right').left).toBe(1014);
+    expect(calculatePopupPosition(anchor, { width: 520, height: 340 }, viewport, 14, 12, 'left').left).toBe(266);
+    expect(calculatePopupPosition(anchor, { width: 760, height: 240 }, viewport, 14, 12, 'left').left).toBe(26);
+  });
+
   it('keeps one video and releases the old element resources before reuse', () => {
     const first = fakeVideo();
     const second = fakeVideo();

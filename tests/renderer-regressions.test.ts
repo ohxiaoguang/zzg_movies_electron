@@ -113,7 +113,7 @@ describe('renderer regressions', () => {
     expect(drawer).not.toContain("importNfo('force')");
   });
 
-  it('uses annotated segments for hover preview and falls back to images', () => {
+  it('uses card-level preview triggers for annotated segments and image channels', () => {
     const card = fs.readFileSync(cardPath, 'utf8');
     const popup = fs.readFileSync(popupPath, 'utf8');
     const library = fs.readFileSync(libraryPath, 'utf8');
@@ -127,19 +127,30 @@ describe('renderer regressions', () => {
     expect(popup).toContain('commentAspectRatio');
     expect(popup).toContain('element.naturalWidth / element.naturalHeight');
     expect(popup).toContain('Math.min(1000, available, Math.max(520, commentAspectRatio.value * 220))');
+    expect(popup).toMatch(/if \(channel !== 'highlights'\) \{[\s\S]*?startSlideshow\(\);[\s\S]*?await positionPopup\(\);/);
     expect(popup).toContain('@load="onPreviewImageLoad"');
     expect(popup).toContain('aspect-ratio: 800 / 537');
     expect(popup).toContain('.popup-media-image img');
     expect(popup).toContain('object-fit: cover');
     expect(popup).toContain('object-fit: contain');
-    expect(popup).toContain('精彩片段</button>');
-    expect(popup).toContain('评论</button>');
-    expect(popup).toContain('剧照</button>');
-    expect(card).toContain('comment-badge');
+    expect(popup).toContain('channel: PreviewChannel');
+    expect(popup).toContain('await activateChannel(props.channel)');
+    expect(popup).not.toContain('class="preview-channels"');
+    expect(popup).toMatch(/function fallbackToImages\(\)[\s\S]*?videoPreparing\.value = false;[\s\S]*?mode\.value = 'empty';/);
+    expect(popup).toContain('const popupSide = ref<PopupSide | null>(null)');
+    expect(popup).toContain('popupSide.value,');
+    expect(card).toContain('class="preview-trigger-stack"');
+    expect(card).toMatch(/enterPreview\('highlights'\)[\s\S]*?enterPreview\('stills'\)[\s\S]*?enterPreview\('comments'\)/);
+    expect(card).toContain(':channel="previewChannel"');
+    expect(card).toContain('flex-direction: column');
+    expect(card).not.toContain('comment-badge');
+    expect(card).not.toContain('rating-chip');
+    expect(card).not.toContain('film.rating.toFixed');
     expect(drawer).toContain('<span>精彩评论</span>');
     expect(drawer).toContain('<span>剧照</span>');
     expect(drawer).toContain('class="image-groups-row"');
     expect(drawer).toContain('.image-groups-row { display: flex');
+    expect(drawer).toContain('.comment-image-section:not(:only-child) { width: max-content');
     expect(drawer).toContain('overflow-x: auto');
     expect(library).toContain('library.filters.commentImages');
     expect(library).toContain('placeholder="精彩评论截图"');

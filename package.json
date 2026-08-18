@@ -1,7 +1,7 @@
 {
   "name": "local-film-library-desktop",
   "productName": "Local Film Library",
-  "version": "1.2.8",
+  "version": "1.2.9",
   "description": "A private, local-first Windows film library desktop application.",
   "main": ".vite/build/main.js",
   "author": "Local Film Library",

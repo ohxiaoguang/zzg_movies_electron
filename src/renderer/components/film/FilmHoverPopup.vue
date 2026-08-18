@@ -3,12 +3,13 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus';
 import type { FilmSegmentDto, FilmSummaryDto } from '../../../shared/contracts';
 import { mediaUrl } from '../../api';
-import { calculatePopupPosition, type PopupPosition } from '../../composables/hoverPopupGeometry';
+import { calculatePopupPosition, type PopupPosition, type PopupSide } from '../../composables/hoverPopupGeometry';
 import { claimPreview, releasePreview } from '../../composables/usePreviewManager';
 
 const props = defineProps<{
   film: FilmSummaryDto;
   anchor: HTMLElement | null;
+  channel: PreviewChannel;
   slideshowInterval: number;
 }>();
 
@@ -26,16 +27,16 @@ type PreviewChannel = 'highlights' | 'comments' | 'stills';
 const popup = ref<HTMLElement | null>(null);
 const video = ref<HTMLVideoElement | null>(null);
 const hasVideoPreview = computed(() => props.film.highlightSegmentCount > 0);
-const initialChannel = (): PreviewChannel => hasVideoPreview.value ? 'highlights' : props.film.commentImageCount ? 'comments' : 'stills';
-const activeChannel = ref<PreviewChannel>(initialChannel());
+const activeChannel = ref<PreviewChannel>(props.channel);
 const mode = ref<PreviewMode>('empty');
 const imageIndex = ref(0);
 const popupWidth = ref(520);
 const commentAspectRatio = ref<number | null>(null);
 const position = ref<PopupPosition>({ left: 12, top: 12 });
+const popupSide = ref<PopupSide | null>(null);
 const favorite = ref(props.film.favorite);
 const favoriteSaving = ref(false);
-const videoPreparing = ref(hasVideoPreview.value);
+const videoPreparing = ref(props.channel === 'highlights' && hasVideoPreview.value);
 const highlightSegments = ref<FilmSegmentDto[]>([]);
 const segmentIndex = ref(-1);
 const activeHighlight = computed(() => highlightSegments.value[segmentIndex.value] ?? null);
@@ -62,6 +63,9 @@ function closeForViewportChange(): void {
   emit('close');
 }
 
+const POPUP_GAP = 14;
+const VIEWPORT_PADDING = 12;
+
 function calculateWidth(): number {
   const available = window.innerWidth - 24;
   if (activeChannel.value === 'comments' && commentAspectRatio.value) {
@@ -72,15 +76,27 @@ function calculateWidth(): number {
 
 async function positionPopup(): Promise<void> {
   if (!popup.value || !props.anchor) return;
+  const rect = props.anchor.getBoundingClientRect();
+  if (!popupSide.value) {
+    const baseWidth = Math.min(520, Math.max(360, window.innerWidth - VIEWPORT_PADDING * 2));
+    popupSide.value = rect.right + POPUP_GAP + baseWidth <= window.innerWidth - VIEWPORT_PADDING ? 'right' : 'left';
+  }
   popupWidth.value = calculateWidth();
   await nextTick();
-  const rect = props.anchor.getBoundingClientRect();
   const size = { width: popup.value.offsetWidth || popupWidth.value, height: popup.value.offsetHeight };
-  position.value = calculatePopupPosition(rect, size, { width: window.innerWidth, height: window.innerHeight });
+  const nextPosition = calculatePopupPosition(
+    rect,
+    size,
+    { width: window.innerWidth, height: window.innerHeight },
+    POPUP_GAP,
+    VIEWPORT_PADDING,
+    popupSide.value,
+  );
+  position.value = nextPosition;
 }
 
 async function startPreview(): Promise<void> {
-  await activateChannel(initialChannel());
+  await activateChannel(props.channel);
 }
 
 async function activateChannel(channel: PreviewChannel): Promise<void> {
@@ -93,11 +109,13 @@ async function activateChannel(channel: PreviewChannel): Promise<void> {
   if (channel !== 'comments') commentAspectRatio.value = null;
   if (channel !== 'highlights') {
     startSlideshow();
+    await positionPopup();
     return;
   }
   mode.value = 'video';
   videoPreparing.value = true;
   await nextTick();
+  await positionPopup();
   if (!video.value) return;
   claimPreview(props.film.id, video.value);
   const result = await window.filmLibrary.films.detail(props.film.id);
@@ -150,9 +168,8 @@ function onVideoTimeUpdate(): void {
 
 function fallbackToImages(): void {
   stopVideo();
-  if (props.film.commentImageCount) void activateChannel('comments');
-  else if (props.film.previewImageAssetIds.length) void activateChannel('stills');
-  else mode.value = 'empty';
+  videoPreparing.value = false;
+  mode.value = 'empty';
 }
 
 function startSlideshow(): void {
@@ -305,11 +322,6 @@ onBeforeUnmount(() => {
         <video v-if="mode === 'video'" ref="video" muted :loop="!highlightSegments.length" playsinline preload="metadata" @playing="onVideoPlaying" @waiting="onVideoWaiting" @timeupdate="onVideoTimeUpdate" @error="onVideoError" />
         <img v-else-if="mode === 'slideshow' && currentImageUrl" :src="currentImageUrl" :alt="film.title" @load="onPreviewImageLoad" />
         <div v-else class="popup-empty">暂无预览</div>
-        <div class="preview-channels" aria-label="预览内容切换">
-          <button type="button" :class="{ active: activeChannel === 'highlights' }" :disabled="!film.highlightSegmentCount" @click.stop="activateChannel('highlights')">精彩片段</button>
-          <button type="button" :class="{ active: activeChannel === 'comments' }" :disabled="!film.commentImageCount" @click.stop="activateChannel('comments')">评论</button>
-          <button type="button" :class="{ active: activeChannel === 'stills' }" :disabled="!film.previewImageAssetIds.length" @click.stop="activateChannel('stills')">剧照</button>
-        </div>
         <div v-if="mode === 'video' && activeHighlight" class="segment-preview-label">
           <strong>{{ activeHighlight.title || '未命名片段' }}</strong>
           <span>{{ formatTime(activeHighlight.startSeconds) }} → {{ formatTime(activeHighlight.endSeconds) }}</span>
@@ -345,10 +357,6 @@ onBeforeUnmount(() => {
 .popup-media video, .popup-media img { display: block; width: 100%; height: 100%; object-fit: contain; background: #000; }
 .popup-media-image img { object-fit: cover; }
 .popup-media-comment img { object-fit: contain; }
-.preview-channels { position: absolute; z-index: 5; top: 10px; left: 50%; display: flex; padding: 3px; border-radius: 8px; background: rgba(0,0,0,.62); transform: translateX(-50%); backdrop-filter: blur(6px); gap: 2px; }
-.preview-channels button { padding: 5px 8px; border: 0; border-radius: 6px; color: rgba(255,255,255,.68); background: transparent; cursor: pointer; font-size: 10px; white-space: nowrap; }
-.preview-channels button.active { color: #0a1a13; background: var(--accent); }
-.preview-channels button:disabled { cursor: not-allowed; opacity: .32; }
 .preview-pagination { position: absolute; z-index: 3; bottom: 10px; left: 50%; display: flex; align-items: center; max-width: calc(100% - 28px); padding: 6px 8px; border-radius: 999px; background: rgba(0, 0, 0, .46); transform: translateX(-50%); gap: 7px; }
 .preview-dot { width: 8px; height: 8px; padding: 0; border: 1px solid rgba(255, 255, 255, .5); border-radius: 50%; background: rgba(255, 255, 255, .3); cursor: pointer; transition: border-color .15s ease, background-color .15s ease, transform .15s ease; }
 .preview-dot:hover, .preview-dot:focus-visible { border-color: #fff; background: rgba(255, 255, 255, .72); outline: none; transform: scale(1.2); }
