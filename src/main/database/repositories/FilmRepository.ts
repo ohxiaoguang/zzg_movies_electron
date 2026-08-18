@@ -348,7 +348,7 @@ export class FilmRepository {
     const parts = this.partsForFilm(id);
     const segments = this.segmentsForFilm(id);
     const images = assets
-      .filter((asset): asset is FilmImageDto => ['poster', 'fanart', 'thumb', 'extra_fanart'].includes(asset.assetType) && !asset.missing)
+      .filter((asset): asset is FilmImageDto => ['poster', 'fanart', 'thumb', 'extra_fanart', 'comment'].includes(asset.assetType) && !asset.missing)
       .sort((left, right) => imagePriority(left.assetType) - imagePriority(right.assetType) || left.sortOrder - right.sortOrder)
       .filter((asset, index, all) => all.findIndex((candidate) => candidate.relativePath.toLowerCase() === asset.relativePath.toLowerCase()) === index);
     return {
@@ -1389,6 +1389,10 @@ export class FilmRepository {
       .filter((asset) => asset.assetType === 'fanart' || asset.assetType === 'extra_fanart')
       .sort((left, right) => assetImagePriority(left.assetType) - assetImagePriority(right.assetType) || left.sortOrder - right.sortOrder)
       .map((asset) => asset.id);
+    const commentImages = available
+      .filter((asset) => asset.assetType === 'comment')
+      .sort((left, right) => left.sortOrder - right.sortOrder)
+      .map((asset) => asset.id);
     const totalFileCount = Number(row.total_file_count) || (row.relative_path ? 1 : 0);
     const existingFileCount = Number(row.existing_file_count);
     const missingFileCount = Math.max(0, totalFileCount - existingFileCount);
@@ -1423,6 +1427,8 @@ export class FilmRepository {
       previewAssetId: preview?.id ?? null,
       allowOriginalPreview: Boolean(row.source_allow_original_preview),
       previewImageAssetIds: images,
+      commentImageAssetIds: commentImages,
+      commentImageCount: commentImages.length,
       highlightSegmentCount: Number(row.segment_count) || 0,
       updatedAt: row.updated_at,
       availability,
@@ -1499,6 +1505,12 @@ export class FilmRepository {
       params.push(Math.max(0, Math.min(10, query.minRating)));
     }
     if (query.favoriteOnly) clauses.push('f.favorite = 1');
+    if (query.commentImages === 'with') {
+      clauses.push("EXISTS (SELECT 1 FROM film_asset comment_filter WHERE comment_filter.film_id = f.id AND comment_filter.asset_type = 'comment' AND comment_filter.missing = 0)");
+    }
+    if (query.commentImages === 'without') {
+      clauses.push("NOT EXISTS (SELECT 1 FROM film_asset comment_filter WHERE comment_filter.film_id = f.id AND comment_filter.asset_type = 'comment' AND comment_filter.missing = 0)");
+    }
     if (query.missingOnly) clauses.push('f.missing = 1');
     if (query.recordIssue === 'title-mismatch') {
       clauses.push(`f.nfo_status = 'missing'

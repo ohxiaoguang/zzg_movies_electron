@@ -100,7 +100,10 @@ onBeforeUnmount(() => {
       </div>
       <img v-else class="poster-image" :src="posterSource" :alt="film.title" @error="onPosterError" />
       <div class="film-card-topline">
-        <el-tag v-if="film.availability !== 'available'" size="small" type="warning">{{ availabilityLabel }}</el-tag>
+        <div class="film-card-badges">
+          <el-tag v-if="film.availability !== 'available'" size="small" type="warning">{{ availabilityLabel }}</el-tag>
+          <span v-if="film.commentImageCount" class="comment-badge">评论 {{ film.commentImageCount }}</span>
+        </div>
         <button class="favorite-button" :class="{ active: favorite }" :disabled="favoriteSaving" :aria-label="favorite ? '取消收藏' : '收藏'" @click.stop="toggleFavorite"><Star /></button>
       </div>
       <div class="film-card-bottomline">
@@ -137,6 +140,8 @@ onBeforeUnmount(() => {
 .poster-placeholder span { color: #9fa7b8; font-size: 38px; font-weight: 800; }
 .film-card-topline, .film-card-bottomline { position: absolute; right: 10px; left: 10px; display: flex; align-items: center; justify-content: space-between; }
 .film-card-topline { top: 10px; }
+.film-card-badges { display: grid; justify-items: start; gap: 6px; }
+.comment-badge { padding: 4px 7px; border: 1px solid rgba(152,227,194,.38); border-radius: 6px; color: #c9f4df; background: rgba(10,36,28,.78); font-size: 10px; font-weight: 700; backdrop-filter: blur(8px); }
 .film-card-bottomline { bottom: 10px; }
 .favorite-button { display: grid; width: 30px; height: 30px; padding: 0; margin-left: auto; place-items: center; border: 1px solid rgba(255,255,255,.16); border-radius: 50%; color: #e8edf4; background: rgba(9,12,16,.72); cursor: pointer; backdrop-filter: blur(8px); }.favorite-button svg { width: 15px; }.favorite-button.active { border-color: rgba(255,217,139,.55); color: #ffd98b; background: rgba(62,45,15,.78); }.favorite-button:disabled { cursor: wait; opacity: .65; }
 .organization-chip, .category-chips > span, .rating-chip { padding: 4px 7px; border-radius: 6px; color: #eef3f1; background: rgba(9, 12, 16, .68); font-size: 10px; backdrop-filter: blur(8px); }.category-chips { display: flex; min-width: 0; gap: 4px; overflow: hidden; }.category-chips > span { max-width: 76px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.organization-chip { color: #ffd19e; }

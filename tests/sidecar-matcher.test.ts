@@ -68,6 +68,22 @@ describe('sidecar matcher', () => {
     expect(result.assets.filter((asset) => asset.assetType === 'extra_fanart').map((asset) => asset.entry.name)).toEqual(['1.jpg', '2.jpg', '10.jpg']);
   });
 
+  it('recognizes naturally sorted comment-folder images without using extrafanart prefixes', () => {
+    const main = entry('MovieA.mkv');
+    const result = matchSidecars(
+      main,
+      [main],
+      [entry('comment-01.jpg', 'Movies/extrafanart')],
+      1,
+      undefined,
+      undefined,
+      undefined,
+      [entry('10.jpg', 'Movies/comment'), entry('2.jpg', 'Movies/comment'), entry('1.jpg', 'Movies/comment')],
+    );
+    expect(result.assets.filter((asset) => asset.assetType === 'comment').map((asset) => asset.entry.name)).toEqual(['1.jpg', '2.jpg', '10.jpg']);
+    expect(result.assets.find((asset) => asset.entry.name === 'comment-01.jpg')?.assetType).toBe('extra_fanart');
+  });
+
   it('ignores unsupported sidecar extensions', () => {
     const main = entry('MovieA.mkv');
     const result = matchSidecars(main, [main, entry('MovieA-poster.bmp'), entry('MovieA.llc'), entry('MovieA-proj.llc')], [], 1);

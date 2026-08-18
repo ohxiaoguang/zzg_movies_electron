@@ -1,4 +1,4 @@
-export const ASSET_TYPES = ['poster', 'fanart', 'thumb', 'extra_fanart', 'preview', 'trailer', 'sample'] as const;
+export const ASSET_TYPES = ['poster', 'fanart', 'thumb', 'extra_fanart', 'comment', 'preview', 'trailer', 'sample'] as const;
 export type AssetType = (typeof ASSET_TYPES)[number];
 
 export const SCAN_STATUSES = ['running', 'completed', 'failed', 'database_failed', 'cancelled'] as const;

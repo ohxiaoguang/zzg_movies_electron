@@ -55,6 +55,10 @@ export function validateFilmPageQuery(
   if (payload.favoriteOnly !== undefined) {
     query.favoriteOnly = booleanValue(payload.favoriteOnly, strict);
   }
+  if (payload.commentImages !== undefined) {
+    if (!['all', 'with', 'without'].includes(String(payload.commentImages))) throw new Error('INVALID_PAGE_QUERY');
+    query.commentImages = payload.commentImages as FilmPageQuery['commentImages'];
+  }
   if (payload.missingOnly !== undefined) {
     query.missingOnly = booleanValue(payload.missingOnly, strict);
   }

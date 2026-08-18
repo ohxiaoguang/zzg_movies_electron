@@ -15,12 +15,13 @@ const assetSuffixes: Record<AssetType, string[]> = {
   fanart: ['fanart'],
   thumb: ['thumb'],
   extra_fanart: [],
+  comment: [],
   preview: ['preview'],
   trailer: ['trailer'],
   sample: ['sample'],
 };
 
-const genericNames: Record<Exclude<AssetType, 'extra_fanart'>, string[]> = {
+const genericNames: Record<Exclude<AssetType, 'extra_fanart' | 'comment'>, string[]> = {
   poster: ['poster', 'folder', 'cover'],
   fanart: ['fanart', 'backdrop'],
   thumb: ['thumb'],
@@ -39,6 +40,7 @@ export function matchSidecars(
   imageExtensions: readonly string[] = DEFAULT_IMAGE_EXTENSIONS,
   videoExtensions: readonly string[] = DEFAULT_VIDEO_EXTENSIONS,
   logicalBaseName?: string,
+  commentFiles: ScanFileEntry[] = [],
 ): SidecarMatch {
   const baseNames = [...new Set([logicalBaseName, path.parse(mainFile.name).name].filter(Boolean).map((value) => value!.toLowerCase()))];
   const normalizedImages = new Set(imageExtensions.map((extension) => extension.toLowerCase().replace(/^\./, '')));
@@ -51,7 +53,7 @@ export function matchSidecars(
   let ambiguousAssets = 0;
 
   for (const [assetType, suffixes] of Object.entries(assetSuffixes) as Array<[AssetType, string[]]>) {
-    if (assetType === 'extra_fanart') continue;
+    if (assetType === 'extra_fanart' || assetType === 'comment') continue;
     const exactMatches = sidecarFiles.filter((entry) => {
       const extension = extensionOf(entry.name);
       if (!normalizedImages.has(extension) && !normalizedVideos.has(extension)) return false;
@@ -76,13 +78,13 @@ export function matchSidecars(
           ? sidecarFiles.filter((entry) => {
               const extension = extensionOf(entry.name);
               const stem = path.parse(entry.name).name.toLowerCase();
-              return genericNames[assetType as Exclude<AssetType, 'extra_fanart'>].includes(stem)
+              return genericNames[assetType as Exclude<AssetType, 'extra_fanart' | 'comment'>].includes(stem)
                 && isCompatibleAsset(assetType, extension, normalizedImages, normalizedVideos);
             })
           : [];
 
     if (exactMatches.length === 0 && mainFilmCount > 1) {
-      const hasGeneric = sidecarFiles.some((entry) => genericNames[assetType as Exclude<AssetType, 'extra_fanart'>].includes(path.parse(entry.name).name.toLowerCase()));
+      const hasGeneric = sidecarFiles.some((entry) => genericNames[assetType as Exclude<AssetType, 'extra_fanart' | 'comment'>].includes(path.parse(entry.name).name.toLowerCase()));
       if (hasGeneric) ambiguousAssets += 1;
     }
     matches.sort((left, right) => naturalCompare(left.name, right.name));
@@ -95,6 +97,15 @@ export function matchSidecars(
       .sort((left, right) => naturalCompare(left.name, right.name));
     images.forEach((entry, index) => assets.push({ assetType: 'extra_fanart', entry, sortOrder: index }));
   } else if (extraFanartFiles.length > 0) {
+    ambiguousAssets += 1;
+  }
+
+  if (mainFilmCount === 1) {
+    const images = commentFiles
+      .filter((entry) => normalizedImages.has(extensionOf(entry.name)))
+      .sort((left, right) => naturalCompare(left.name, right.name));
+    images.forEach((entry, index) => assets.push({ assetType: 'comment', entry, sortOrder: index }));
+  } else if (commentFiles.length > 0) {
     ambiguousAssets += 1;
   }
 

@@ -89,6 +89,7 @@ describe('localhost read-only web server', () => {
 
     expect((await fetch(`${baseUrl}/api/v1/films?page=invalid`)).status).toBe(400);
     expect((await fetch(`${baseUrl}/api/v1/films?pageSize=201`)).status).toBe(400);
+    expect((await fetch(`${baseUrl}/api/v1/films?commentImages=invalid`)).status).toBe(400);
     expect((await fetch(`${baseUrl}/api/v1/films?path=C%3A%5Csecret`)).status).toBe(400);
     expect((await fetch(`${baseUrl}/api/v1/films/not-a-uuid`)).status).toBe(400);
     expect((await fetch(`${baseUrl}/api/v1/films`, { method: 'POST' })).status).toBe(405);
@@ -215,7 +216,16 @@ describe('localhost read-only web server', () => {
     expect(script).toContain("createElement('div', 'player-control-row')");
     expect(script).toContain("actionButton('播放 / 继续原片'");
     expect(script).not.toContain("actionButton('预览视频'");
-    expect(script.match(/document\.createElement\('video'\)/g)).toHaveLength(1);
+    expect(script.match(/document\.createElement\('video'\)/g)).toHaveLength(2);
+    expect(html).toContain('id="comment-images"');
+    expect(script).toContain('commentImages: elements.commentImages.value');
+    expect(script).toContain('film-comment-badge');
+    expect(script).toContain('attachFilmCardPreview');
+    expect(script).toContain("['comments', '评论', film.commentImageCount]");
+    expect(script).toContain('image.naturalWidth / image.naturalHeight');
+    expect(script).toContain('Math.min(1000, available, Math.max(500, commentAspectRatio * 220))');
+    expect(script).toContain("appendGroup('精彩评论'");
+    expect(script).toContain("appendGroup('剧照'");
     expect(script).toContain('web-segment-timeline');
     expect(script).toContain('选择或输入新分类，回车添加');
     expect(script).toContain('newCategoryNames: [name]');
@@ -290,6 +300,8 @@ describe('localhost read-only web server', () => {
     expect(styles).toContain('.detail-navigation-button');
     expect(styles).toContain('grid-template-columns: minmax(0, 1fr) 82px');
     expect(styles).toContain('.gallery-thumbnail-grid');
+    expect(styles).toContain('.detail-gallery { display: flex');
+    expect(styles).toContain('overflow-x: auto');
     expect(styles).toContain('.gallery-lightbox-stage');
     expect(styles).toContain('.player-control-row');
     expect(styles).toContain('max-height: 100%');

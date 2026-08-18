@@ -101,6 +101,7 @@ const FILM_QUERY_KEYS = new Set([
   'genreMatch',
   'minRating',
   'favoriteOnly',
+  'commentImages',
   'missingOnly',
   'recordIssue',
   'allData',

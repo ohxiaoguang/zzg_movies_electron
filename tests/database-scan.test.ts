@@ -21,6 +21,7 @@ function fixtureRoot(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'film-library-fixture-'));
   tempRoots.push(root);
   fs.mkdirSync(path.join(root, 'extrafanart'));
+  fs.mkdirSync(path.join(root, 'comment'));
   fs.writeFileSync(path.join(root, 'Movie A.mkv'), 'small fake media file for tests');
   fs.writeFileSync(path.join(root, 'Movie A.nfo'), '<movie><title>测试电影</title><year>2026</year><genre>科幻</genre><actor>演员</actor></movie>');
   fs.writeFileSync(path.join(root, 'Movie A-poster.jpg'), 'poster');
@@ -28,6 +29,8 @@ function fixtureRoot(): string {
   fs.writeFileSync(path.join(root, 'Movie A-preview.mp4'), 'preview');
   fs.writeFileSync(path.join(root, 'extrafanart', '2.jpg'), 'two');
   fs.writeFileSync(path.join(root, 'extrafanart', '10.jpg'), 'ten');
+  fs.writeFileSync(path.join(root, 'comment', '1.jpg'), 'comment one');
+  fs.writeFileSync(path.join(root, 'comment', '2.png'), 'comment two');
   fs.writeFileSync(path.join(root, 'ignored.llc'), 'ignore');
   return root;
 }
@@ -76,10 +79,21 @@ describe('SQLite migrations and scanning', () => {
     expect(page.items[0].previewAssetId).not.toBeNull();
     expect(page.items[0].allowOriginalPreview).toBe(false);
     expect(page.items[0].previewImageAssetIds).toHaveLength(3);
+    expect(page.items[0].commentImageAssetIds).toHaveLength(2);
+    expect(page.items[0].commentImageCount).toBe(2);
+    expect(context.films.detail(page.items[0].id)?.images.filter((image) => image.assetType === 'comment')).toHaveLength(2);
+    expect(context.films.page({ page: 1, pageSize: 60, commentImages: 'with' }).total).toBe(1);
+    expect(context.films.page({ page: 1, pageSize: 60, commentImages: 'without' }).total).toBe(0);
     context.sources.update({ id: context.source.id, allowOriginalPreview: true });
     expect(context.films.page({ page: 1, pageSize: 60 }).items[0].allowOriginalPreview).toBe(true);
     expect(context.films.previewLocation(page.items[0].id)?.relativePath).toBe('Movie A-preview.mp4');
     expect(context.database.db.prepare('SELECT COUNT(*) AS count FROM film_genre').get()).toEqual({ count: 0 });
+
+    fs.rmSync(path.join(root, 'comment'), { recursive: true });
+    context.scan.start({});
+    expect((await waitForScan(context.scan)).status).toBe('completed');
+    expect(context.films.page({ page: 1, pageSize: 60 }).items[0].commentImageCount).toBe(0);
+    expect(context.films.page({ page: 1, pageSize: 60, commentImages: 'without' }).total).toBe(1);
   });
 
   it('filters non-native playback records with the same rules as the player', async () => {

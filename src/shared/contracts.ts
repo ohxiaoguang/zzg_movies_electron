@@ -115,7 +115,7 @@ export interface FilmSegmentDeleteInput {
 }
 
 export interface FilmImageDto extends FilmAssetDto {
-  assetType: 'poster' | 'fanart' | 'thumb' | 'extra_fanart';
+  assetType: 'poster' | 'fanart' | 'thumb' | 'extra_fanart' | 'comment';
 }
 
 export type FilmAvailability =
@@ -158,6 +158,8 @@ export interface FilmSummaryDto {
   previewAssetId: string | null;
   allowOriginalPreview: boolean;
   previewImageAssetIds: string[];
+  commentImageAssetIds: string[];
+  commentImageCount: number;
   highlightSegmentCount: number;
   updatedAt: string;
   availability: FilmAvailability;
@@ -215,6 +217,7 @@ export interface FilmPageQuery {
   genreMatch?: 'any' | 'all';
   minRating?: number;
   favoriteOnly?: boolean;
+  commentImages?: 'all' | 'with' | 'without';
   missingOnly?: boolean;
   recordIssue?: 'all' | 'title-mismatch' | 'invalid-multipart';
   playbackCompatibility?: 'all' | 'non-native';

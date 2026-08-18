@@ -127,7 +127,7 @@ NFO `<tag>` 只作为只读元数据展示和筛选，Renderer 不提供新增�
 
 旁路资源优先匹配同名资源，例如 MovieA-poster.jpg、MovieA-preview.mp4。单影片目录还可匹配 movie.nfo、poster.jpg、folder.jpg、cover.jpg、fanart.jpg、backdrop.jpg、thumb.jpg、preview.mp4、trailer.mp4 和 sample.mp4。同一目录有多部主影片时，MovieA.jpg 或 MovieA.jpeg 会作为 MovieA 视频的海报；MovieA-poster.jpg 仍具有更高优先级，并且不会把 poster.jpg 等通用资源随机分给某一部。
 
-extrafanart/ 中的图片会按自然排序识别。所有资源始终保留在原目录，不复制到应用数据目录。
+extrafanart/ 中的图片会按自然排序识别为剧照；与 extrafanart 同级的 comment/ 文件夹中的图片会按自然排序识别为精彩评论截图。不会根据 extrafanart 文件名前缀推断评论图片。所有资源始终保留在原目录，不复制到应用数据目录。
 
 ## 悬浮预览
 
@@ -138,7 +138,7 @@ extrafanart/ 中的图片会按自然排序识别。所有资源始终保留在�
 - 视频静音、循环、无控件；离开卡片和悬浮窗 180ms 后关闭并释放 src。
 - 全局管理器保证同一时间最多一个悬浮窗和一个视频播放器。
 - 视频加载失败回退到图片轮播。
-- 没有视频时在 fanart 和 extrafanart 中默认每 1200ms 切换一张。
+- 悬浮预览可在“精彩片段 / 评论 / 剧照”之间切换；评论来自 comment/，剧照来自 fanart 和 extrafanart。没有精彩片段时优先显示评论截图，再回退到剧照轮播。
 - 卡片销毁、离开可视区域或鼠标移出时清理定时器和媒体资源。
 - 没有精彩片段时回退到 fanart 和 extrafanart 图片轮播，不再使用独立 preview、trailer、sample 或完整原片预览。
 

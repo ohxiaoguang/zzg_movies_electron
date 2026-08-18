@@ -49,7 +49,9 @@ let lastSavedPatch: FilmUpdatePatch = {};
 let rescanJobId: string | null = null;
 
 const poster = computed(() => assetOf('poster') ?? assetOf('thumb'));
-const images = computed(() => (detail.value?.images ?? []).filter((image) => !image.missing && !brokenImageIds.value.has(image.id)));
+const commentImages = computed(() => (detail.value?.images ?? []).filter((image) => image.assetType === 'comment' && !image.missing && !brokenImageIds.value.has(image.id)));
+const stillImages = computed(() => (detail.value?.images ?? []).filter((image) => image.assetType !== 'comment' && !image.missing && !brokenImageIds.value.has(image.id)));
+const images = computed(() => [...commentImages.value, ...stillImages.value]);
 const currentImage = computed(() => images.value[imageIndex.value] ?? null);
 const currentImageUrl = computed(() => currentImage.value ? mediaUrl('asset', currentImage.value.id) : null);
 const selectedCategories = computed<SelectedCategoryItem[]>(() => {
@@ -433,8 +435,11 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', handleKeydown, tru
         </el-tab-pane>
 
         <el-tab-pane label="图片" name="images">
-          <section v-if="images.length" class="tab-section media-section"><div class="section-heading"><span>图片图库</span><small>点击缩略图查看大图</small></div><div class="image-thumbnail-grid"><button v-for="(image, index) in images" :key="image.id" type="button" @click="openImage(index)"><img :src="mediaUrl('asset', image.id)" :alt="`图片 ${index + 1}`" loading="lazy" /></button></div></section>
-          <div v-else class="media-empty">暂无图片</div>
+          <div v-if="images.length" class="image-groups-row">
+            <section v-if="commentImages.length" class="tab-section media-section comment-image-section"><div class="section-heading"><span>精彩评论</span><small>{{ commentImages.length }} 张 · 点击缩略图查看大图</small></div><div class="image-thumbnail-grid"><button v-for="(image, index) in commentImages" :key="image.id" type="button" @click="openImage(index)"><img :src="mediaUrl('asset', image.id)" :alt="`精彩评论 ${index + 1}`" loading="lazy" /></button></div></section>
+            <section v-if="stillImages.length" class="tab-section media-section"><div class="section-heading"><span>剧照</span><small>{{ stillImages.length }} 张 · 点击缩略图查看大图</small></div><div class="image-thumbnail-grid"><button v-for="(image, index) in stillImages" :key="image.id" type="button" @click="openImage(commentImages.length + index)"><img :src="mediaUrl('asset', image.id)" :alt="`剧照 ${index + 1}`" loading="lazy" /></button></div></section>
+          </div>
+          <div v-if="!images.length" class="media-empty">暂无图片</div>
         </el-tab-pane>
 
           </el-tabs>
@@ -485,10 +490,15 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', handleKeydown, tru
 .tab-section { padding: 10px 0; border-top: 1px solid var(--line); }
 .tab-section:first-child { border-top: 0; }
 .media-section { padding-top: 8px; }
-.image-thumbnail-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
-.image-thumbnail-grid button { min-width: 0; padding: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 7px; background: #090b0f; cursor: zoom-in; aspect-ratio: 16 / 9; }
+.image-groups-row { display: flex; min-width: 0; gap: 16px; }
+.image-groups-row .tab-section { min-width: 0; padding-top: 8px; flex: 1 1 0; border-top: 0; }
+.image-groups-row .tab-section + .tab-section { padding-left: 16px; border-left: 1px solid var(--line); }
+.image-thumbnail-grid { display: flex; min-width: 0; padding: 2px; overflow-x: auto; gap: 8px; scrollbar-width: thin; }
+.image-thumbnail-grid button { width: 120px; min-width: 120px; padding: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 7px; background: #090b0f; cursor: zoom-in; aspect-ratio: 16 / 9; }
 .image-thumbnail-grid button:hover, .image-thumbnail-grid button:focus-visible { border-color: var(--accent); outline: 2px solid rgba(152,227,194,.3); }
 .image-thumbnail-grid img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.comment-image-section .image-thumbnail-grid button { aspect-ratio: 4 / 3; }
+.comment-image-section .image-thumbnail-grid img { object-fit: contain; background: #050609; }
 :global(.image-viewer-dialog) { height: 96vh; margin-bottom: 0; overflow: hidden; background: #080a0e; }
 :global(.image-viewer-dialog .el-dialog__header) { height: 30px; margin: 0; padding: 0; }
 :global(.image-viewer-dialog .el-dialog__body) { box-sizing: border-box; height: calc(100% - 30px); padding: 0 12px 12px; }

@@ -21,13 +21,17 @@ const emit = defineEmits<{
 }>();
 
 type PreviewMode = 'video' | 'slideshow' | 'empty';
+type PreviewChannel = 'highlights' | 'comments' | 'stills';
 
 const popup = ref<HTMLElement | null>(null);
 const video = ref<HTMLVideoElement | null>(null);
 const hasVideoPreview = computed(() => props.film.highlightSegmentCount > 0);
-const mode = ref<PreviewMode>(hasVideoPreview.value ? 'video' : props.film.previewImageAssetIds.length ? 'slideshow' : 'empty');
+const initialChannel = (): PreviewChannel => hasVideoPreview.value ? 'highlights' : props.film.commentImageCount ? 'comments' : 'stills';
+const activeChannel = ref<PreviewChannel>(initialChannel());
+const mode = ref<PreviewMode>('empty');
 const imageIndex = ref(0);
 const popupWidth = ref(520);
+const commentAspectRatio = ref<number | null>(null);
 const position = ref<PopupPosition>({ left: 12, top: 12 });
 const favorite = ref(props.film.favorite);
 const favoriteSaving = ref(false);
@@ -38,7 +42,7 @@ const activeHighlight = computed(() => highlightSegments.value[segmentIndex.valu
 let slideshowTimer: ReturnType<typeof setInterval> | null = null;
 let highlightPlaybackGeneration = 0;
 
-const imageIds = computed(() => props.film.previewImageAssetIds);
+const imageIds = computed(() => activeChannel.value === 'comments' ? props.film.commentImageAssetIds : props.film.previewImageAssetIds);
 const currentImageUrl = computed(() => {
   const id = imageIds.value[imageIndex.value];
   return id ? mediaUrl('asset', id) : null;
@@ -48,6 +52,9 @@ const popupStyle = computed(() => ({
   top: `${position.value.top}px`,
   width: `${popupWidth.value}px`,
 }));
+const mediaStyle = computed(() => activeChannel.value === 'comments' && commentAspectRatio.value
+  ? { aspectRatio: String(commentAspectRatio.value) }
+  : undefined);
 
 watch(() => props.film.favorite, (value) => { favorite.value = value; });
 
@@ -57,6 +64,9 @@ function closeForViewportChange(): void {
 
 function calculateWidth(): number {
   const available = window.innerWidth - 24;
+  if (activeChannel.value === 'comments' && commentAspectRatio.value) {
+    return Math.min(1000, available, Math.max(520, commentAspectRatio.value * 220));
+  }
   return Math.min(520, Math.max(360, available));
 }
 
@@ -70,25 +80,35 @@ async function positionPopup(): Promise<void> {
 }
 
 async function startPreview(): Promise<void> {
-  await nextTick();
-  if (hasVideoPreview.value && video.value) {
-    mode.value = 'video';
-    videoPreparing.value = true;
-    claimPreview(props.film.id, video.value);
-    if (props.film.highlightSegmentCount) {
-      const result = await window.filmLibrary.films.detail(props.film.id);
-      if (result.ok) {
-        highlightSegments.value = result.data.segments.filter((segment) => segment.includeInPreview);
-        if (highlightSegments.value.length) {
-          await playHighlight(0).catch(fallbackToImages);
-          return;
-        }
-      }
-    }
-    fallbackToImages();
+  await activateChannel(initialChannel());
+}
+
+async function activateChannel(channel: PreviewChannel): Promise<void> {
+  if (channel === 'highlights' && !hasVideoPreview.value) return;
+  if (channel === 'comments' && !props.film.commentImageCount) return;
+  if (channel === 'stills' && !props.film.previewImageAssetIds.length) return;
+  stopSlideshow();
+  stopVideo();
+  activeChannel.value = channel;
+  if (channel !== 'comments') commentAspectRatio.value = null;
+  if (channel !== 'highlights') {
+    startSlideshow();
     return;
   }
-  startSlideshow();
+  mode.value = 'video';
+  videoPreparing.value = true;
+  await nextTick();
+  if (!video.value) return;
+  claimPreview(props.film.id, video.value);
+  const result = await window.filmLibrary.films.detail(props.film.id);
+  if (result.ok) {
+    highlightSegments.value = result.data.segments.filter((segment) => segment.includeInPreview);
+    if (highlightSegments.value.length) {
+      await playHighlight(0).catch(fallbackToImages);
+      return;
+    }
+  }
+  fallbackToImages();
 }
 
 async function playHighlight(index: number): Promise<void> {
@@ -130,7 +150,8 @@ function onVideoTimeUpdate(): void {
 
 function fallbackToImages(): void {
   stopVideo();
-  if (imageIds.value.length) startSlideshow();
+  if (props.film.commentImageCount) void activateChannel('comments');
+  else if (props.film.previewImageAssetIds.length) void activateChannel('stills');
   else mode.value = 'empty';
 }
 
@@ -161,6 +182,14 @@ function selectImage(index: number): void {
   imageIndex.value = index;
   preloadImages();
   scheduleSlideshow();
+}
+
+function onPreviewImageLoad(event: Event): void {
+  if (activeChannel.value !== 'comments') return;
+  const element = event.currentTarget as HTMLImageElement;
+  if (!element.naturalWidth || !element.naturalHeight) return;
+  commentAspectRatio.value = element.naturalWidth / element.naturalHeight;
+  void positionPopup();
 }
 
 function selectHighlight(index: number): void {
@@ -272,10 +301,15 @@ onBeforeUnmount(() => {
 <template>
   <Teleport to="body">
     <section ref="popup" class="film-hover-popup" :style="popupStyle" @mouseenter="$emit('enter')" @mouseleave="$emit('leave')">
-      <div class="popup-media" :class="{ 'popup-media-image': mode !== 'video' }">
+      <div class="popup-media" :class="{ 'popup-media-image': mode !== 'video', 'popup-media-comment': activeChannel === 'comments' }" :style="mediaStyle">
         <video v-if="mode === 'video'" ref="video" muted :loop="!highlightSegments.length" playsinline preload="metadata" @playing="onVideoPlaying" @waiting="onVideoWaiting" @timeupdate="onVideoTimeUpdate" @error="onVideoError" />
-        <img v-else-if="mode === 'slideshow' && currentImageUrl" :src="currentImageUrl" :alt="film.title" />
+        <img v-else-if="mode === 'slideshow' && currentImageUrl" :src="currentImageUrl" :alt="film.title" @load="onPreviewImageLoad" />
         <div v-else class="popup-empty">暂无预览</div>
+        <div class="preview-channels" aria-label="预览内容切换">
+          <button type="button" :class="{ active: activeChannel === 'highlights' }" :disabled="!film.highlightSegmentCount" @click.stop="activateChannel('highlights')">精彩片段</button>
+          <button type="button" :class="{ active: activeChannel === 'comments' }" :disabled="!film.commentImageCount" @click.stop="activateChannel('comments')">评论</button>
+          <button type="button" :class="{ active: activeChannel === 'stills' }" :disabled="!film.previewImageAssetIds.length" @click.stop="activateChannel('stills')">剧照</button>
+        </div>
         <div v-if="mode === 'video' && activeHighlight" class="segment-preview-label">
           <strong>{{ activeHighlight.title || '未命名片段' }}</strong>
           <span>{{ formatTime(activeHighlight.startSeconds) }} → {{ formatTime(activeHighlight.endSeconds) }}</span>
@@ -310,11 +344,16 @@ onBeforeUnmount(() => {
 .popup-media-image { aspect-ratio: 800 / 537; }
 .popup-media video, .popup-media img { display: block; width: 100%; height: 100%; object-fit: contain; background: #000; }
 .popup-media-image img { object-fit: cover; }
+.popup-media-comment img { object-fit: contain; }
+.preview-channels { position: absolute; z-index: 5; top: 10px; left: 50%; display: flex; padding: 3px; border-radius: 8px; background: rgba(0,0,0,.62); transform: translateX(-50%); backdrop-filter: blur(6px); gap: 2px; }
+.preview-channels button { padding: 5px 8px; border: 0; border-radius: 6px; color: rgba(255,255,255,.68); background: transparent; cursor: pointer; font-size: 10px; white-space: nowrap; }
+.preview-channels button.active { color: #0a1a13; background: var(--accent); }
+.preview-channels button:disabled { cursor: not-allowed; opacity: .32; }
 .preview-pagination { position: absolute; z-index: 3; bottom: 10px; left: 50%; display: flex; align-items: center; max-width: calc(100% - 28px); padding: 6px 8px; border-radius: 999px; background: rgba(0, 0, 0, .46); transform: translateX(-50%); gap: 7px; }
 .preview-dot { width: 8px; height: 8px; padding: 0; border: 1px solid rgba(255, 255, 255, .5); border-radius: 50%; background: rgba(255, 255, 255, .3); cursor: pointer; transition: border-color .15s ease, background-color .15s ease, transform .15s ease; }
 .preview-dot:hover, .preview-dot:focus-visible { border-color: #fff; background: rgba(255, 255, 255, .72); outline: none; transform: scale(1.2); }
 .preview-dot.active { border-color: #fff; background: #fff; transform: scale(1.2); }
-.segment-preview-label { position: absolute; z-index: 2; top: 10px; left: 50%; display: flex; max-width: calc(100% - 28px); padding: 5px 10px; border-radius: 6px; color: rgba(255,255,255,.9); background: rgba(0,0,0,.48); font-size: 11px; line-height: 1.35; transform: translateX(-50%); backdrop-filter: blur(3px); gap: 8px; pointer-events: none; }
+.segment-preview-label { position: absolute; z-index: 2; top: 48px; left: 50%; display: flex; max-width: calc(100% - 28px); padding: 5px 10px; border-radius: 6px; color: rgba(255,255,255,.9); background: rgba(0,0,0,.48); font-size: 11px; line-height: 1.35; transform: translateX(-50%); backdrop-filter: blur(3px); gap: 8px; pointer-events: none; }
 .segment-preview-label strong, .segment-preview-label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .segment-preview-label strong { max-width: 250px; }
 .segment-preview-label span { color: rgba(255,255,255,.72); font-variant-numeric: tabular-nums; }

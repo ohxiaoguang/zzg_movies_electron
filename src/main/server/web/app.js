@@ -84,6 +84,7 @@ const state = {
   playbackCapabilities: null,
   playback: null,
 };
+let activeCardPreviewClose = null;
 const elements = Object.fromEntries([
   'menu-toggle', 'sidebar-backdrop', 'app-sidebar', 'mobile-role-badge', 'sidebar-status',
   'count-all', 'count-unorganized', 'count-organized', 'count-favorite', 'count-all-data',
@@ -92,7 +93,7 @@ const elements = Object.fromEntries([
   'actors-view', 'actors-caption', 'actor-search', 'actor-count', 'actor-grid', 'actors-refresh',
   'settings-view', 'server-facts', 'device-facts', 'settings-device-revoke',
   'role-badge', 'result-summary', 'error', 'film-grid', 'search', 'source',
-  'category', 'tag', 'genre', 'actor', 'sort', 'refresh', 'previous-page', 'next-page',
+  'category', 'tag', 'genre', 'actor', 'comment-images', 'sort', 'refresh', 'previous-page', 'next-page',
   'page-summary', 'film-detail', 'detail-content', 'close-detail', 'login-dialog',
   'login-form', 'login-error', 'account-username', 'account-password', 'device-revoke',
   'create-category',
@@ -143,7 +144,7 @@ function bindEvents() {
   elements.sourcesRefresh.addEventListener('click', () => void reloadLibrary());
   elements.actorsRefresh.addEventListener('click', () => void reloadLibrary());
   elements.actorSearch.addEventListener('input', renderActors);
-  for (const select of [elements.source, elements.category, elements.tag, elements.genre, elements.actor, elements.sort]) {
+  for (const select of [elements.source, elements.category, elements.tag, elements.genre, elements.actor, elements.commentImages, elements.sort]) {
     select.addEventListener('change', () => { state.page = 1; void loadFilms(); });
   }
   elements.search.addEventListener('input', () => {
@@ -170,6 +171,8 @@ function bindEvents() {
   elements.deviceRevoke.addEventListener('click', () => void revokeDevice());
   elements.settingsDeviceRevoke.addEventListener('click', () => void revokeDevice());
   elements.createCategory.addEventListener('click', () => void createCategory());
+  window.addEventListener('scroll', () => activeCardPreviewClose?.(), true);
+  window.addEventListener('resize', () => activeCardPreviewClose?.());
 }
 
 function closeFilmDetail() {
@@ -214,6 +217,7 @@ function currentQuery() {
     actor: elements.actor.value,
     organizationState,
     favoriteOnly: state.libraryMode === 'favorite',
+    commentImages: elements.commentImages.value,
     allData: state.libraryMode === 'all-data',
     sort: elements.sort.value,
   };
@@ -305,6 +309,7 @@ function resetLibraryFilters() {
   elements.tag.value = '';
   elements.genre.value = '';
   elements.actor.value = '';
+  elements.commentImages.value = 'all';
   for (const option of elements.sort.options) {
     if (option.value === 'organized') option.hidden = state.libraryMode !== 'organized';
     if (option.value === 'favorite') option.hidden = state.libraryMode !== 'favorite';
@@ -467,6 +472,7 @@ function availabilityLabel(value) {
 }
 
 function renderFilms(films) {
+  activeCardPreviewClose?.();
   elements.filmGrid.replaceChildren();
   if (!films.length) {
     elements.filmGrid.append(createElement('p', 'empty', '没有符合当前条件的影片'));
@@ -488,14 +494,183 @@ function renderFilms(films) {
       createElement('small', '', [film.year, film.sourceName].filter(Boolean).join(' · ')),
       createElement('small', 'film-flags', film.customCategories.map((item) => item.name).join(' · ') || '未分类'),
     );
-    open.append(poster, copy);
+    const posterFrame = createElement('span', 'film-poster-frame');
+    posterFrame.append(poster);
+    if (film.commentImageCount) posterFrame.append(createElement('span', 'film-comment-badge', `评论 ${film.commentImageCount}`));
+    open.append(posterFrame, copy);
     open.addEventListener('click', () => void showDetail(film.id));
     card.append(open);
+    attachFilmCardPreview(card, film);
     elements.filmGrid.append(card);
   }
 }
 
+function attachFilmCardPreview(card, film) {
+  if (!window.matchMedia('(hover: hover) and (pointer: fine)').matches) return;
+  let openTimer = null;
+  let closeTimer = null;
+  let popup = null;
+  let slideshowTimer = null;
+  let mediaGeneration = 0;
+  let detailPromise = null;
+
+  const cancelClose = () => {
+    if (closeTimer) window.clearTimeout(closeTimer);
+    closeTimer = null;
+  };
+  const close = () => {
+    if (openTimer) window.clearTimeout(openTimer);
+    if (closeTimer) window.clearTimeout(closeTimer);
+    if (slideshowTimer) window.clearInterval(slideshowTimer);
+    openTimer = null;
+    closeTimer = null;
+    slideshowTimer = null;
+    mediaGeneration += 1;
+    if (popup?.querySelector('video') === state.playback?.video) releaseActivePlayback();
+    popup?.remove();
+    popup = null;
+    if (activeCardPreviewClose === close) activeCardPreviewClose = null;
+  };
+  const scheduleClose = () => {
+    cancelClose();
+    closeTimer = window.setTimeout(close, 180);
+  };
+  const ensureDetail = () => {
+    detailPromise ||= client.film(film.id);
+    return detailPromise;
+  };
+  const show = () => {
+    if (popup) return;
+    activeCardPreviewClose?.();
+    activeCardPreviewClose = close;
+    popup = createElement('section', 'web-card-preview');
+    popup.addEventListener('mouseenter', cancelClose);
+    popup.addEventListener('mouseleave', scheduleClose);
+    const media = createElement('div', 'web-card-preview-media');
+    const channelBar = createElement('div', 'web-card-preview-channels');
+    const body = createElement('div', 'web-card-preview-body');
+    body.append(createElement('strong', '', film.title), createElement('small', 'muted', [film.year, film.sourceName].filter(Boolean).join(' · ')));
+    popup.append(media, channelBar, body);
+    document.body.append(popup);
+    positionFilmCardPreview(popup, card);
+
+    const channels = [
+      ['highlights', '精彩片段', film.highlightSegmentCount],
+      ['comments', '评论', film.commentImageCount],
+      ['stills', '剧照', film.previewImageAssetIds.length],
+    ];
+    const buttons = new Map();
+    const activate = async (channel) => {
+      const count = channels.find(([name]) => name === channel)?.[2] || 0;
+      if (!count || !popup) return;
+      const generation = ++mediaGeneration;
+      if (slideshowTimer) window.clearInterval(slideshowTimer);
+      slideshowTimer = null;
+      if (media.querySelector('video') === state.playback?.video) releaseActivePlayback();
+      media.replaceChildren(channelBar);
+      media.classList.toggle('is-comment', channel === 'comments');
+      media.style.removeProperty('aspect-ratio');
+      positionFilmCardPreview(popup, card);
+      for (const [name, button] of buttons) button.classList.toggle('active', name === channel);
+      if (channel !== 'highlights') {
+        const ids = channel === 'comments' ? film.commentImageAssetIds : film.previewImageAssetIds;
+        const image = document.createElement('img');
+        image.alt = channel === 'comments' ? `${film.title} 精彩评论` : `${film.title} 剧照`;
+        let index = 0;
+        const renderImage = () => { image.src = client.media('assets', ids[index]); };
+        image.addEventListener('load', () => {
+          if (channel !== 'comments' || !image.naturalWidth || !image.naturalHeight || !popup) return;
+          const aspectRatio = image.naturalWidth / image.naturalHeight;
+          media.style.aspectRatio = String(aspectRatio);
+          positionFilmCardPreview(popup, card, aspectRatio);
+        });
+        renderImage();
+        media.append(image);
+        if (ids.length > 1) slideshowTimer = window.setInterval(() => { index = (index + 1) % ids.length; renderImage(); }, 1800);
+        return;
+      }
+      const status = createElement('span', 'web-card-preview-status', '正在准备精彩片段…');
+      const video = document.createElement('video');
+      video.playsInline = true;
+      video.preload = 'metadata';
+      video.muted = true;
+      media.append(video, status);
+      try {
+        const detail = await ensureDetail();
+        if (!popup || generation !== mediaGeneration) return;
+        const segments = detail.segments.filter((segment) => segment.includeInPreview);
+        let segmentIndex = 0;
+        let activeSegment = null;
+        let activeSession = null;
+        let advancing = false;
+        const play = async (nextIndex) => {
+          if (!popup || generation !== mediaGeneration || !segments.length) return;
+          segmentIndex = nextIndex % segments.length;
+          activeSegment = segments[segmentIndex];
+          status.textContent = activeSegment.title || `精彩片段 ${segmentIndex + 1}`;
+          activeSession = await startAdaptivePlayback(video, status, {
+            partId: activeSegment.filmFileId,
+            purpose: 'segment-preview',
+            startSeconds: activeSegment.startSeconds,
+            endSeconds: activeSegment.endSeconds,
+          }, null, { muted: true, controls: false });
+          video.muted = true;
+          advancing = false;
+        };
+        const advance = () => {
+          if (advancing || !activeSegment) return;
+          advancing = true;
+          void play(segmentIndex + 1);
+        };
+        video.addEventListener('timeupdate', () => {
+          if (!activeSegment || !activeSession) return;
+          const end = activeSession.transport === 'direct'
+            ? activeSegment.endSeconds
+            : activeSegment.endSeconds - activeSegment.startSeconds;
+          if (video.currentTime + .05 >= end) advance();
+        });
+        video.addEventListener('ended', advance);
+        await play(0);
+      } catch (error) {
+        if (popup && generation === mediaGeneration) status.textContent = errorMessage(error);
+      }
+    };
+    for (const [name, label, count] of channels) {
+      const button = actionButton(label, () => void activate(name));
+      button.disabled = !count;
+      buttons.set(name, button);
+      channelBar.append(button);
+    }
+    const initial = film.highlightSegmentCount ? 'highlights' : film.commentImageCount ? 'comments' : 'stills';
+    void activate(initial);
+  };
+
+  card.addEventListener('mouseenter', () => {
+    cancelClose();
+    if (!popup && !openTimer) openTimer = window.setTimeout(() => { openTimer = null; show(); }, 420);
+  });
+  card.addEventListener('mouseleave', scheduleClose);
+}
+
+function positionFilmCardPreview(popup, card, commentAspectRatio = null) {
+  const margin = 12;
+  const gap = 10;
+  const rect = card.getBoundingClientRect();
+  const available = window.innerWidth - margin * 2;
+  const width = commentAspectRatio
+    ? Math.min(1000, available, Math.max(500, commentAspectRatio * 220))
+    : Math.min(500, available);
+  popup.style.width = `${width}px`;
+  const height = popup.offsetHeight || 360;
+  let left = rect.right + gap;
+  if (left + width > window.innerWidth - margin) left = rect.left - width - gap;
+  if (left < margin) left = Math.max(margin, (window.innerWidth - width) / 2);
+  popup.style.left = `${left}px`;
+  popup.style.top = `${Math.min(window.innerHeight - height - margin, Math.max(margin, rect.top))}px`;
+}
+
 async function showDetail(id) {
+  activeCardPreviewClose?.();
   elements.detailContent.replaceChildren(createElement('p', 'muted', '正在读取详情…'));
   elements.filmDetail.showModal();
   try {
@@ -708,7 +883,10 @@ function createMediaSection(film, playback, navigation) {
 
 function createGallery(film) {
   const gallery = createElement('div', 'detail-gallery');
-  const thumbnails = createElement('div', 'gallery-thumbnail-grid');
+  const commentImages = film.images.filter((item) => item.assetType === 'comment');
+  const stillImages = film.images.filter((item) => item.assetType !== 'comment');
+  const images = [...commentImages, ...stillImages];
+  const thumbnailButtons = [];
   const lightbox = createElement('div', 'gallery-lightbox');
   const stage = createElement('div', 'gallery-lightbox-stage');
   const image = document.createElement('img');
@@ -722,11 +900,10 @@ function createGallery(film) {
   image.alt = `${film.title} 图片`;
   let index = 0;
   const show = (next) => {
-    index = (next + film.images.length) % film.images.length;
-    image.src = client.media('assets', film.images[index].id);
-    count.textContent = `${index + 1} / ${film.images.length}`;
-    const items = [...thumbnails.children];
-    items.forEach((item, itemIndex) => item.classList.toggle('active', itemIndex === index));
+    index = (next + images.length) % images.length;
+    image.src = client.media('assets', images[index].id);
+    count.textContent = `${index + 1} / ${images.length}`;
+    thumbnailButtons.forEach((item, itemIndex) => item.classList.toggle('active', itemIndex === index));
     lightbox.hidden = false;
     window.requestAnimationFrame(() => lightbox.focus());
   };
@@ -734,7 +911,7 @@ function createGallery(film) {
     lightbox.hidden = true;
   }
   stage.append(image, close, count);
-  if (film.images.length > 1) {
+  if (images.length > 1) {
     stage.append(
       actionButton('‹', () => show(index - 1), 'gallery-arrow left'),
       actionButton('›', () => show(index + 1), 'gallery-arrow right'),
@@ -746,26 +923,39 @@ function createGallery(film) {
       event.preventDefault();
       event.stopPropagation();
       closeViewer();
-    } else if (event.key === 'ArrowLeft' && film.images.length > 1) {
+    } else if (event.key === 'ArrowLeft' && images.length > 1) {
       event.preventDefault();
       show(index - 1);
-    } else if (event.key === 'ArrowRight' && film.images.length > 1) {
+    } else if (event.key === 'ArrowRight' && images.length > 1) {
       event.preventDefault();
       show(index + 1);
     }
   });
-  film.images.forEach((item, itemIndex) => {
-    const button = actionButton('', () => show(itemIndex));
-    const thumbnail = document.createElement('img');
-    thumbnail.src = client.media('assets', item.id);
-    thumbnail.alt = `缩略图 ${itemIndex + 1}`;
-    button.append(thumbnail);
-    thumbnails.append(button);
-  });
-  gallery.append(thumbnails, lightbox);
+  const appendGroup = (title, items, offset, className = '') => {
+    if (!items.length) return;
+    const group = createElement('section', `gallery-group${className ? ` ${className}` : ''}`);
+    const heading = createElement('div', 'section-heading');
+    heading.append(createElement('span', '', title), createElement('small', '', `${items.length} 张 · 点击缩略图查看大图`));
+    const thumbnails = createElement('div', 'gallery-thumbnail-grid');
+    items.forEach((item, itemIndex) => {
+      const absoluteIndex = offset + itemIndex;
+      const button = actionButton('', () => show(absoluteIndex));
+      const thumbnail = document.createElement('img');
+      thumbnail.src = client.media('assets', item.id);
+      thumbnail.alt = `${title}缩略图 ${itemIndex + 1}`;
+      button.append(thumbnail);
+      thumbnails.append(button);
+      thumbnailButtons[absoluteIndex] = button;
+    });
+    group.append(heading, thumbnails);
+    gallery.append(group);
+  };
+  appendGroup('精彩评论', commentImages, 0, 'comment-gallery-group');
+  appendGroup('剧照', stillImages, commentImages.length);
+  gallery.append(lightbox);
   return {
     section: gallery,
-    canStep: film.images.length > 1,
+    canStep: images.length > 1,
     step(delta) {
       show(index + delta);
     },
@@ -1133,10 +1323,10 @@ function createUnifiedPlayback(film) {
   };
 }
 
-async function startAdaptivePlayback(video, status, input, subtitleSelect = null) {
+async function startAdaptivePlayback(video, status, input, subtitleSelect = null, options = {}) {
   releaseActivePlayback();
   if (subtitleSelect) resetSubtitlePicker(subtitleSelect);
-  video.controls = true;
+  video.controls = options.controls !== false;
   state.playback = {
     video,
     hls: null,
@@ -1149,7 +1339,7 @@ async function startAdaptivePlayback(video, status, input, subtitleSelect = null
     completionReloadAttempts: 0,
     completionReloadInProgress: false,
   };
-  video.muted = false;
+  video.muted = options.muted === true;
   status.textContent = '正在检测视频并准备播放…';
   try {
     const session = await client.createPlaybackSession(input);

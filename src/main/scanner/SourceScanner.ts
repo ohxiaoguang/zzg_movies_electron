@@ -66,6 +66,7 @@ export class SourceScanner {
 
     const directories = new Map<string, ScanFileEntry[]>();
     const extraFanartByDirectory = new Map<string, ScanFileEntry[]>();
+    const commentsByDirectory = new Map<string, ScanFileEntry[]>();
     let complete = true;
 
     const visit = async (directory: string): Promise<void> => {
@@ -103,6 +104,12 @@ export class SourceScanner {
           const collection = extraFanartByDirectory.get(ownerDirectory) ?? [];
           collection.push(scanEntry);
           extraFanartByDirectory.set(ownerDirectory, collection);
+        }
+        if (this.imageExtensions.has(extension) && path.basename(directory).toLowerCase() === 'comment') {
+          const ownerDirectory = path.dirname(directory);
+          const collection = commentsByDirectory.get(ownerDirectory) ?? [];
+          collection.push(scanEntry);
+          commentsByDirectory.set(ownerDirectory, collection);
         }
       }
       this.options.onProgress?.({
@@ -144,6 +151,7 @@ export class SourceScanner {
             [...this.imageExtensions],
             [...this.videoExtensions],
             group.baseName,
+            commentsByDirectory.get(directory) ?? [],
           );
           const primary = group.files[0]!;
           const fileEntries: FilmFileCandidate[] = [];
