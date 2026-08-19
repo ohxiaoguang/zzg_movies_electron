@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 import { Refresh, Star } from '@element-plus/icons-vue';
 import type { CustomCategoryDto, FilmDetailDto } from '../../../shared/contracts';
 
@@ -9,7 +9,7 @@ export interface SelectedCategoryItem {
   name: string;
 }
 
-withDefaults(defineProps<{
+const props = withDefaults(defineProps<{
   detail: FilmDetailDto;
   poster: string | null;
   favorite: boolean;
@@ -33,6 +33,8 @@ const emit = defineEmits<{
 }>();
 
 const pickerValue = ref('');
+const posterFailed = ref(false);
+watch(() => props.poster, () => { posterFailed.value = false; });
 function picked(value: string | undefined): void {
   const normalized = value?.trim() ?? '';
   pickerValue.value = '';
@@ -42,7 +44,7 @@ function picked(value: string | undefined): void {
 
 <template>
   <header class="detail-sticky-header">
-    <div class="header-poster"><img v-if="poster" :src="poster" alt="" /><div v-else>{{ detail.title.slice(0, 1) }}</div></div>
+    <div class="header-poster"><img v-if="poster && !posterFailed" :src="poster" alt="" @error="posterFailed = true" /><div v-else>{{ detail.title.slice(0, 1) }}</div></div>
     <div class="header-content">
       <div class="header-title-row">
         <div class="header-title"><div class="eyebrow">FILM PROFILE</div><h2>{{ detail.title }}</h2><p>{{ detail.originalTitle || '暂无原标题' }} · {{ detail.year || '年份未知' }}</p><small>{{ detail.sourceName }} · 可用文件 {{ detail.existingFileCount }}/{{ detail.totalFileCount }}</small></div>

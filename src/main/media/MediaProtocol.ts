@@ -9,6 +9,7 @@ import { resolveMimeType } from './MimeTypeResolver';
 import { parseRangeHeader } from './RangeResponse';
 import { isUuid } from '../../shared/validation';
 import { PreviewTranscoder } from './PreviewTranscoder';
+import type { PosterThumbnailer } from './PosterThumbnailer';
 
 export class MediaProtocol {
   private readonly previewTranscoder: PreviewTranscoder;
@@ -19,6 +20,7 @@ export class MediaProtocol {
     configuredFfprobePath: () => string = () => '',
     previewCacheDirectory = path.join(process.cwd(), '.preview-cache'),
     previewTranscoder?: PreviewTranscoder,
+    private readonly posterThumbnailer?: PosterThumbnailer,
   ) {
     this.previewTranscoder = previewTranscoder
       ?? new PreviewTranscoder(logger, configuredFfprobePath, previewCacheDirectory);
@@ -33,14 +35,23 @@ export class MediaProtocol {
       if (request.method !== 'GET' && request.method !== 'HEAD') return new Response('Method Not Allowed', { status: 405 });
       const route = parseMediaUrl(request.url);
       if (!route) return new Response('Not Found', { status: 404 });
-      const location = this.resolveLocation(route.kind, route.id);
+      const preferredPoster = route.kind === 'poster'
+        ? this.films.preferredAssetLocation(route.id, ['poster', 'thumb'])
+        : null;
+      const generatedPoster = route.kind === 'poster' && !preferredPoster;
+      const location = preferredPoster ?? this.resolveLocation(route.kind, route.id);
       if (!location) return new Response('Not Found', { status: 404 });
       if (!fs.existsSync(location.rootPath)) return new Response('Source Offline', { status: 409 });
       const sourceFilePath = await resolveExistingSafeMediaPath(location.rootPath, location.relativePath);
       const sourceStat = await fs.promises.stat(sourceFilePath);
       if (!sourceStat.isFile()) return new Response('Not Found', { status: 404 });
       let filePath = sourceFilePath;
-      if (route.kind === 'preview' || route.kind === 'part') {
+      if (generatedPoster) {
+        const generatedPath = await this.posterThumbnailer?.prepare(sourceFilePath, request.signal);
+        if (request.signal.aborted) return new Response(null, { status: 204 });
+        if (!generatedPath) return new Response('Not Found', { status: 404 });
+        filePath = generatedPath;
+      } else if (route.kind === 'preview' || route.kind === 'part') {
         const cachedPath = await this.previewTranscoder.preparePlayableFile(sourceFilePath, request.signal);
         if (request.signal.aborted) return new Response(null, { status: 204 });
         filePath = cachedPath;
@@ -83,7 +94,7 @@ export class MediaProtocol {
   private resolveLocation(kind: string, id: string): MediaLocation | null {
     if (kind === 'asset') return this.films.assetLocation(id);
     if (kind === 'preview') return this.films.previewLocation(id);
-    if (kind === 'poster') return this.films.preferredAssetLocation(id, ['poster']);
+    if (kind === 'poster') return this.films.filmLocation(id);
     if (kind === 'part') return this.films.partLocation(id);
     return null;
   }

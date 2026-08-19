@@ -31,7 +31,9 @@ let observer: IntersectionObserver | null = null;
 
 type PreviewChannel = 'highlights' | 'stills' | 'comments';
 
-const posterSource = computed(() => (props.film.posterAssetId ? mediaUrl('asset', props.film.posterAssetId) : null));
+const posterSource = computed(() => props.film.posterAssetId
+  ? mediaUrl('asset', props.film.posterAssetId)
+  : mediaUrl('poster', props.film.id));
 const visibleCategories = computed(() => props.film.customCategories.slice(0, 2));
 const hiddenCategoryCount = computed(() => Math.max(0, props.film.customCategories.length - visibleCategories.value.length));
 const availabilityLabel = computed(() => props.film.availability === 'partial_missing'
@@ -99,6 +101,7 @@ async function showInFolder(): Promise<void> {
 }
 
 watch(() => props.film.favorite, (value) => { favorite.value = value; });
+watch(posterSource, () => { posterFailed.value = false; });
 
 onMounted(() => {
   observer = new IntersectionObserver((entries) => {

@@ -10,6 +10,7 @@ import { registerIpcHandlers } from './ipc/registerIpcHandlers';
 import { MediaProtocol } from './media/MediaProtocol';
 import { MediaCapabilityService } from './media/MediaCapabilityService';
 import { PreviewTranscoder } from './media/PreviewTranscoder';
+import { PosterThumbnailer } from './media/PosterThumbnailer';
 import { ScanCoordinator } from './scanner/ScanCoordinator';
 import { AppLogger } from './system/AppLogger';
 import { DesktopIntegrationService } from './system/DesktopIntegrationService';
@@ -97,7 +98,12 @@ if (hasSingleInstanceLock) void app.whenReady().then(() => {
     path.join(app.getPath('userData'), 'preview-cache'),
     mediaCapabilities,
   );
-  const mediaAssets = new MediaAssetService(films, previewTranscoder);
+  const posterThumbnailer = new PosterThumbnailer(
+    logger,
+    mediaCapabilities,
+    path.join(app.getPath('userData'), 'poster-cache'),
+  );
+  const mediaAssets = new MediaAssetService(films, previewTranscoder, posterThumbnailer);
   const playback = new PlaybackSessionService(
     mediaAssets,
     films,
@@ -146,6 +152,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(() => {
     () => settings.get().ffprobePath,
     path.join(app.getPath('userData'), 'preview-cache'),
     previewTranscoder,
+    posterThumbnailer,
   );
   mediaProtocol.registerHandler();
   logger.info('Media protocol registered', { scheme: 'film-media' });

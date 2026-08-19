@@ -48,7 +48,7 @@ let pendingSave: PendingSave = {};
 let lastSavedPatch: FilmUpdatePatch = {};
 let rescanJobId: string | null = null;
 
-const poster = computed(() => assetOf('poster') ?? assetOf('thumb'));
+const poster = computed(() => assetOf('poster') ?? assetOf('thumb') ?? (detail.value ? mediaUrl('poster', detail.value.id) : null));
 const commentImages = computed(() => (detail.value?.images ?? []).filter((image) => image.assetType === 'comment' && !image.missing && !brokenImageIds.value.has(image.id)));
 const stillImages = computed(() => (detail.value?.images ?? []).filter((image) => image.assetType !== 'comment' && !image.missing && !brokenImageIds.value.has(image.id)));
 const images = computed(() => [...commentImages.value, ...stillImages.value]);

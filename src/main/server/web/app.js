@@ -486,9 +486,13 @@ function renderFilms(films) {
     const poster = document.createElement('img');
     poster.alt = `${film.title} 海报`;
     poster.loading = 'lazy';
-    if (film.posterAssetId) poster.src = client.media('assets', film.posterAssetId);
-    else poster.className = 'poster-placeholder';
-    poster.addEventListener('error', () => poster.classList.add('poster-placeholder'));
+    poster.src = film.posterAssetId
+      ? client.media('assets', film.posterAssetId)
+      : client.media('posters', film.id);
+    poster.addEventListener('error', () => {
+      poster.removeAttribute('src');
+      poster.className = 'poster-placeholder';
+    });
     const copy = createElement('span', 'film-copy');
     copy.append(
       createElement('strong', '', `${film.favorite ? '★ ' : ''}${film.title}`),
@@ -792,14 +796,15 @@ function renderDetail(film) {
 function createDetailHeader(film, mediaNavigation, playback) {
   const header = createElement('header', 'detail-header');
   const poster = createElement('div', 'detail-poster');
-  if (film.posterAssetId) {
-    const image = document.createElement('img');
-    image.src = client.media('assets', film.posterAssetId);
-    image.alt = `${film.title} 海报`;
-    poster.append(image);
-  } else {
-    poster.append(createElement('span', 'detail-poster-placeholder', '无海报'));
-  }
+  const image = document.createElement('img');
+  image.src = film.posterAssetId
+    ? client.media('assets', film.posterAssetId)
+    : client.media('posters', film.id);
+  image.alt = `${film.title} 海报`;
+  image.addEventListener('error', () => {
+    poster.replaceChildren(createElement('span', 'detail-poster-placeholder', '无海报'));
+  });
+  poster.append(image);
   const main = createElement('div', 'detail-header-main');
   const titleRow = createElement('div', 'detail-title-row');
   const titleBlock = createElement('div', 'detail-title-copy');

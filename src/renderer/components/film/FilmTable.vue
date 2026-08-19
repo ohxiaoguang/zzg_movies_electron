@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { FilmSummaryDto } from '../../../shared/contracts';
+import { mediaUrl } from '../../api';
 
 defineProps<{ films: FilmSummaryDto[]; allData?: boolean }>();
 const emit = defineEmits<{
@@ -9,6 +10,9 @@ const emit = defineEmits<{
 }>();
 function selectRow(row: FilmSummaryDto): void { emit('select', row); }
 function categoryNames(row: FilmSummaryDto): string { return row.customCategories.map((item) => item.name).join(' · '); }
+function setPosterVisibility(event: Event, visible: boolean): void {
+  if (event.target instanceof HTMLImageElement) event.target.style.display = visible ? '' : 'none';
+}
 function availabilityLabel(value: FilmSummaryDto['availability']): string {
   return { available: '正常', partial_missing: '部分缺失', missing: '完全缺失', source_offline: '来源离线', source_removed: '来源已删除', archived: '已归档' }[value];
 }
@@ -18,7 +22,7 @@ function availabilityLabel(value: FilmSummaryDto['availability']): string {
   <el-table :data="films" class="film-table" @row-click="selectRow" @selection-change="emit('selectionChange', $event)">
     <el-table-column v-if="allData" type="selection" width="48" />
     <el-table-column label="影片" min-width="320">
-      <template #default="{ row }"><div class="table-title"><div class="table-thumb"><img v-if="row.posterAssetId" :src="`film-media://asset/${row.posterAssetId}`" alt="" /></div><div><strong>{{ row.title }}</strong><small>{{ row.filename }}</small></div></div></template>
+      <template #default="{ row }"><div class="table-title"><div class="table-thumb"><img :src="row.posterAssetId ? mediaUrl('asset', row.posterAssetId) : mediaUrl('poster', row.id)" alt="" @load="setPosterVisibility($event, true)" @error="setPosterVisibility($event, false)" /></div><div><strong>{{ row.title }}</strong><small>{{ row.filename }}</small></div></div></template>
     </el-table-column>
     <el-table-column prop="year" label="年份" width="90" />
     <el-table-column label="我的分类" min-width="180"><template #default="{ row }"><span v-if="row.customCategories.length">{{ categoryNames(row) }}</span><el-tag v-else size="small" type="warning">未整理</el-tag></template></el-table-column>
