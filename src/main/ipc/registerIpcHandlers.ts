@@ -6,12 +6,14 @@ import type { IpcMainInvokeEvent } from 'electron';
 import type {
   ApiResult,
   AccountCredentialsInput,
+  CorrectSourceTransferInput,
   CreateSourceInput,
   FindDeletedSourceInput,
   RemoveSourceInput,
   RestoreSourceInput,
   SettingsUpdateInput,
   CustomCategoryReorderInput,
+  TransferSourceInput,
   UpdateSourceInput,
 } from '../../shared/contracts';
 import { isRecord, isUuid } from '../../shared/validation';
@@ -46,6 +48,7 @@ import type { FilmLibraryReadService } from '../services/FilmLibraryReadService'
 import type { FilmLibraryManagementService } from '../services/FilmLibraryManagementService';
 import type { AccountCredentialService } from '../services/AccountCredentialService';
 import type { PlaybackSessionService } from '../services/PlaybackSessionService';
+import type { SourceTransferService } from '../services/SourceTransferService';
 import { lanServerConfigurationFromSettings, type LanServer } from '../server/LanServer';
 
 interface IpcContext {
@@ -59,6 +62,7 @@ interface IpcContext {
   lanServer: LanServer;
   accountCredentials: AccountCredentialService;
   playback: PlaybackSessionService;
+  sourceTransfer: SourceTransferService;
   scan: ScanCoordinator;
   fileOpen: FileOpenService;
   logger: AppLogger;
@@ -189,6 +193,23 @@ export function registerIpcHandlers(context: IpcContext): () => void {
     if (!isUuid(payload)) throw new Error('INVALID_PART_ID');
     await context.fileOpen.showPartInFolder(payload);
     return null;
+  });
+  handle(IPC_CHANNELS.sourcesTransfer, async (_event, payload) => {
+    if (context.scan.status()?.status === 'running') throw new Error('SOURCE_TRANSFER_SCAN_RUNNING');
+    const input = validateTransferSource(payload);
+    context.logger.info('Source transfer requested', { sourceId: input.sourceId, targetSourceId: input.targetSourceId });
+    return context.sourceTransfer.transfer(input);
+  });
+  handle(IPC_CHANNELS.sourcesTransferHistory, () => context.sourceTransfer.listRecentTransfers());
+  handle(IPC_CHANNELS.sourcesTransferCorrect, async (_event, payload) => {
+    if (context.scan.status()?.status === 'running') throw new Error('SOURCE_TRANSFER_SCAN_RUNNING');
+    const input = validateCorrectSourceTransfer(payload);
+    context.logger.info('Source transfer correction requested', {
+      sourceId: input.sourceId,
+      currentTargetSourceId: input.currentTargetSourceId,
+      newTargetSourceId: input.newTargetSourceId,
+    });
+    return context.sourceTransfer.correctTransfer(input);
   });
   handle(IPC_CHANNELS.playbackSubtitleTracks, (_event, payload) => {
     if (!isUuid(payload)) throw new Error('INVALID_PART_ID');
@@ -367,6 +388,18 @@ function publicMessage(code: string): string {
     INVALID_DETAIL_PLAYER_SEEK_STEP: '详情页播放器快进/快退步进必须是 1 到 60 秒之间的整数',
     INVALID_DETAIL_PLAYER_FINE_SEEK_STEP: '详情页播放器 Shift 微调步进必须在 0.01 到 5 秒之间',
     SOURCE_PATH_EXISTS: '该目录已经存在活动来源',
+    SOURCE_TRANSFER_SAME_SOURCE: '不能转移到同一个来源',
+    SOURCE_TRANSFER_TARGET_NOT_FOUND: '目标来源不存在',
+    SOURCE_TRANSFER_SOURCE_OFFLINE: '待转移来源当前离线',
+    SOURCE_TRANSFER_TARGET_OFFLINE: '目标来源当前离线',
+    SOURCE_TRANSFER_PATH_OVERLAP: '两个来源目录存在包含关系，无法安全转移',
+    SOURCE_TRANSFER_SCAN_RUNNING: '扫描进行中，完成或取消扫描后再转移',
+    SOURCE_TRANSFER_ALREADY_RUNNING: '已有来源转移任务正在进行',
+    SOURCE_TRANSFER_FILE_MISSING: '部分已扫描影片文件不存在，请先重新扫描来源',
+    SOURCE_TRANSFER_ASSET_MISSING: '部分已扫描旁路资源不存在，请先重新扫描来源',
+    SOURCE_TRANSFER_INVALID_PATH: '来源中存在不安全的文件路径，已停止转移',
+    SOURCE_TRANSFER_ROLLBACK_FAILED: '转移失败且部分文件无法还原，请查看日志',
+    SOURCE_TRANSFER_RECORD_NOT_FOUND: '找不到这次转移的完整记录，未进行任何修改',
     CATEGORY_NOT_FOUND: '分类不存在',
     CATEGORY_EXISTS: '同名分类已经存在',
     INVALID_CATEGORY_NAME: '分类名称不能为空',
@@ -451,6 +484,30 @@ function validateUpdateSource(payload: unknown): UpdateSourceInput {
 function validateRemoveSource(payload: unknown): RemoveSourceInput {
   if (!isRecord(payload) || !isUuid(payload.id) || (payload.mode !== 'keep-records' && payload.mode !== 'delete-records')) throw new Error('INVALID_REMOVE_SOURCE');
   return { id: payload.id, mode: payload.mode };
+}
+
+function validateTransferSource(payload: unknown): TransferSourceInput {
+  if (!isRecord(payload) || !isUuid(payload.sourceId) || !isUuid(payload.targetSourceId)) {
+    throw new Error('INVALID_SOURCE_TRANSFER');
+  }
+  return { sourceId: payload.sourceId, targetSourceId: payload.targetSourceId };
+}
+
+function validateCorrectSourceTransfer(payload: unknown): CorrectSourceTransferInput {
+  if (!isRecord(payload)
+    || !isUuid(payload.sourceId)
+    || !isUuid(payload.currentTargetSourceId)
+    || !isUuid(payload.newTargetSourceId)
+    || typeof payload.destinationFolderName !== 'string'
+    || !payload.destinationFolderName.trim()) {
+    throw new Error('INVALID_SOURCE_TRANSFER');
+  }
+  return {
+    sourceId: payload.sourceId,
+    currentTargetSourceId: payload.currentTargetSourceId,
+    newTargetSourceId: payload.newTargetSourceId,
+    destinationFolderName: payload.destinationFolderName.trim(),
+  };
 }
 
 function validateRestoreSource(payload: unknown): RestoreSourceInput {

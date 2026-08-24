@@ -47,6 +47,38 @@ export interface RemoveSourceInput {
   mode: 'keep-records' | 'delete-records';
 }
 
+export interface TransferSourceInput {
+  sourceId: string;
+  targetSourceId: string;
+}
+
+export interface TransferSourceResultDto {
+  sourceId: string;
+  targetSourceId: string;
+  destinationFolderName: string;
+  destinationPath: string;
+  movedFilmCount: number;
+  movedFileCount: number;
+  movedAssetCount: number;
+}
+
+export interface SourceTransferRecordDto {
+  sourceId: string;
+  sourceName: string;
+  targetSourceId: string;
+  targetSourceName: string;
+  destinationFolderName: string;
+  filmCount: number;
+  movedAt: string;
+}
+
+export interface CorrectSourceTransferInput {
+  sourceId: string;
+  currentTargetSourceId: string;
+  newTargetSourceId: string;
+  destinationFolderName: string;
+}
+
 export interface RestoreSourceInput {
   id: string;
 }

@@ -22,6 +22,7 @@ import { LanAuthService } from './services/LanAuthService';
 import { AccountCredentialService } from './services/AccountCredentialService';
 import { FilmLibraryManagementService } from './services/FilmLibraryManagementService';
 import { PlaybackSessionService } from './services/PlaybackSessionService';
+import { SourceTransferService } from './services/SourceTransferService';
 import { lanServerConfigurationFromSettings, LanServer } from './server/LanServer';
 
 if (!app.isPackaged) {
@@ -89,6 +90,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(() => {
   const settings = new SettingsRepository(database.db);
   const lanDevices = new LanDeviceRepository(database.db);
   const scan = new ScanCoordinator(database, sources, films, settings, logger);
+  const sourceTransfer = new SourceTransferService(database, sources, logger);
   const fileOpen = new FileOpenService(films);
   const libraryRead = new FilmLibraryReadService(films, sources, settings);
   const mediaCapabilities = new MediaCapabilityService(() => settings.get().ffprobePath);
@@ -191,6 +193,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(() => {
       lanServer: lanServer!,
       accountCredentials,
       playback,
+      sourceTransfer,
       scan,
       fileOpen,
       logger,

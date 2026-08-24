@@ -5,6 +5,7 @@ import type {
   ActorDto,
   AppHealthDto,
   AppInfoDto,
+  CorrectSourceTransferInput,
   CreateSourceInput,
   DesktopSubtitleTrackDto,
   FilmPartDto,
@@ -39,7 +40,10 @@ import type {
   ScanStatusDto,
   SettingsDto,
   SettingsUpdateInput,
+  SourceTransferRecordDto,
   TagDto,
+  TransferSourceInput,
+  TransferSourceResultDto,
   UpdateSourceInput,
 } from '../shared/contracts';
 
@@ -56,6 +60,9 @@ export interface FilmLibraryApi {
     create(input: CreateSourceInput): Promise<ApiResult<MediaSourceDto>>;
     update(input: UpdateSourceInput): Promise<ApiResult<MediaSourceDto>>;
     remove(input: RemoveSourceInput): Promise<ApiResult<null>>;
+    transfer(input: TransferSourceInput): Promise<ApiResult<TransferSourceResultDto>>;
+    transferHistory(): Promise<ApiResult<SourceTransferRecordDto[]>>;
+    correctTransfer(input: CorrectSourceTransferInput): Promise<ApiResult<TransferSourceResultDto>>;
     restore(input: RestoreSourceInput): Promise<ApiResult<MediaSourceDto>>;
     findDeleted(input: FindDeletedSourceInput): Promise<ApiResult<MediaSourceDto | null>>;
   };

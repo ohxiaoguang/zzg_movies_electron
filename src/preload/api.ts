@@ -4,6 +4,7 @@ import { IPC_CHANNELS } from '../shared/ipcChannels';
 import type {
   ApiResult,
   AccountCredentialsInput,
+  CorrectSourceTransferInput,
   CreateSourceInput,
   FindDeletedSourceInput,
   FilmRecordDeleteBatchInput,
@@ -22,6 +23,7 @@ import type {
   RestoreSourceInput,
   ScanStartInput,
   SettingsUpdateInput,
+  TransferSourceInput,
   UpdateSourceInput,
 } from '../shared/contracts';
 import type { FilmLibraryApi } from './types';
@@ -39,6 +41,9 @@ export const filmLibraryApi: FilmLibraryApi = {
     create: (input: CreateSourceInput) => invoke(IPC_CHANNELS.sourcesCreate, input),
     update: (input: UpdateSourceInput) => invoke(IPC_CHANNELS.sourcesUpdate, input),
     remove: (input: RemoveSourceInput) => invoke(IPC_CHANNELS.sourcesRemove, input),
+    transfer: (input: TransferSourceInput) => invoke(IPC_CHANNELS.sourcesTransfer, input),
+    transferHistory: () => invoke(IPC_CHANNELS.sourcesTransferHistory),
+    correctTransfer: (input: CorrectSourceTransferInput) => invoke(IPC_CHANNELS.sourcesTransferCorrect, input),
     restore: (input: RestoreSourceInput) => invoke(IPC_CHANNELS.sourcesRestore, input),
     findDeleted: (input: FindDeletedSourceInput) => invoke(IPC_CHANNELS.sourcesFindDeleted, input),
   },
