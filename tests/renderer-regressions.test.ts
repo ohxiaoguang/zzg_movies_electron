@@ -25,6 +25,24 @@ const resonancePath = path.resolve(process.cwd(), 'src/renderer/components/reson
 const appPath = path.resolve(process.cwd(), 'src/renderer/App.vue');
 
 describe('renderer regressions', () => {
+  it('shows startup cloud backup status at the bottom and blocks shutdown with a loading overlay', () => {
+    const layout = fs.readFileSync(layoutPath, 'utf8');
+    expect(layout).toContain('启动自动备份：正在同步到 GitHub…');
+    expect(layout).toContain('class="cloud-backup-status"');
+    expect(layout).toContain("shutdownBackupActivity?.phase === 'running'");
+    expect(layout).toContain('正在同步到 GitHub，完成后会自动退出…');
+  });
+
+  it('offers duplicate filename filtering and file-location actions in all-data mode', () => {
+    const library = fs.readFileSync(libraryPath, 'utf8');
+    const table = fs.readFileSync(tablePath, 'utf8');
+    expect(library).toContain('v-model="library.filters.duplicateFilenameOnly"');
+    expect(library).toContain('label="仅看同名影片"');
+    expect(library).toContain('@show-in-folder="showInFolder"');
+    expect(table).toContain('打开文件位置');
+    expect(table).toContain("emit('showInFolder', row)");
+  });
+
   const drawer = fs.readFileSync(drawerPath, 'utf8');
 
   it('does not clear first-time account passwords during status polling', () => {
@@ -316,7 +334,7 @@ describe('renderer regressions', () => {
     expect(library).not.toContain('label="已归档" value="archived"');
     expect(table).not.toContain('label="评分"');
     expect(table).not.toContain('row.rating');
-    expect(table).toContain('label="操作" width="96"');
+    expect(table).toContain('label="操作" width="190"');
     expect(library).not.toContain('自动标题与单文件名不一致');
     expect(library).not.toContain('非原生播放');
   });

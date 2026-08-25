@@ -6,6 +6,14 @@ import type {
   AppHealthDto,
   AppInfoDto,
   CorrectSourceTransferInput,
+  CloudBackupConfigUpdateInput,
+  CloudBackupActivityDto,
+  CloudBackupRestoreInput,
+  CloudBackupRestorePreviewDto,
+  CloudBackupRestoreResultDto,
+  CloudBackupRunResultDto,
+  CloudBackupStatusDto,
+  CloudBackupVersionDto,
   CreateSourceInput,
   DesktopSubtitleTrackDto,
   FilmPartDto,
@@ -129,6 +137,16 @@ export interface FilmLibraryApi {
     chooseCacheDirectory(): Promise<ApiResult<string | null>>;
     openCacheDirectory(): Promise<ApiResult<null>>;
     clearCache(): Promise<ApiResult<PlaybackCacheInfoDto>>;
+  };
+  cloudBackup: {
+    status(): Promise<ApiResult<CloudBackupStatusDto>>;
+    updateConfig(input: CloudBackupConfigUpdateInput): Promise<ApiResult<CloudBackupStatusDto>>;
+    testConnection(): Promise<ApiResult<CloudBackupStatusDto>>;
+    run(force?: boolean): Promise<ApiResult<CloudBackupRunResultDto>>;
+    versions(): Promise<ApiResult<CloudBackupVersionDto[]>>;
+    previewRestore(commitSha: string): Promise<ApiResult<CloudBackupRestorePreviewDto>>;
+    restore(input: CloudBackupRestoreInput): Promise<ApiResult<CloudBackupRestoreResultDto>>;
+    onActivity(listener: (activity: CloudBackupActivityDto) => void): () => void;
   };
 }
 

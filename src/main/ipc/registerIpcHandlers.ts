@@ -6,6 +6,8 @@ import type { IpcMainInvokeEvent } from 'electron';
 import type {
   ApiResult,
   AccountCredentialsInput,
+  CloudBackupConfigUpdateInput,
+  CloudBackupRestoreInput,
   CorrectSourceTransferInput,
   CreateSourceInput,
   FindDeletedSourceInput,
@@ -49,6 +51,7 @@ import type { FilmLibraryManagementService } from '../services/FilmLibraryManage
 import type { AccountCredentialService } from '../services/AccountCredentialService';
 import type { PlaybackSessionService } from '../services/PlaybackSessionService';
 import type { SourceTransferService } from '../services/SourceTransferService';
+import type { CloudBackupService } from '../services/CloudBackupService';
 import { lanServerConfigurationFromSettings, type LanServer } from '../server/LanServer';
 
 interface IpcContext {
@@ -67,6 +70,7 @@ interface IpcContext {
   fileOpen: FileOpenService;
   logger: AppLogger;
   desktopIntegration: DesktopIntegrationService;
+  cloudBackup: CloudBackupService;
 }
 
 export function registerIpcHandlers(context: IpcContext): () => void {
@@ -352,6 +356,23 @@ export function registerIpcHandlers(context: IpcContext): () => void {
     return null;
   });
   handle(IPC_CHANNELS.playbackCacheClear, () => context.playback.clearCache());
+  handle(IPC_CHANNELS.cloudBackupStatus, () => context.cloudBackup.status());
+  handle(IPC_CHANNELS.cloudBackupUpdateConfig, (_event, payload) => (
+    context.cloudBackup.updateConfig(validateCloudBackupConfig(payload))
+  ));
+  handle(IPC_CHANNELS.cloudBackupTestConnection, () => context.cloudBackup.testConnection());
+  handle(IPC_CHANNELS.cloudBackupRun, (_event, payload) => (
+    context.cloudBackup.runBackup('manual', isRecord(payload) && payload.force === true)
+  ));
+  handle(IPC_CHANNELS.cloudBackupVersions, () => context.cloudBackup.versions());
+  handle(IPC_CHANNELS.cloudBackupPreviewRestore, (_event, payload) => {
+    const input = validateCloudBackupRestore(payload);
+    return context.cloudBackup.previewRestore(input.commitSha);
+  });
+  handle(IPC_CHANNELS.cloudBackupRestore, (_event, payload) => {
+    if (context.scan.status()?.status === 'running') throw new Error('CLOUD_BACKUP_RESTORE_SCAN_RUNNING');
+    return context.cloudBackup.restore(validateCloudBackupRestore(payload));
+  });
 
   const removeProgressListener = context.scan.onProgress((progress) => {
     if (!context.window.isDestroyed()) context.window.webContents.send(IPC_CHANNELS.scanProgress, progress);
@@ -427,6 +448,32 @@ function publicMessage(code: string): string {
     ACCOUNT_CREDENTIAL_FILE_INVALID: '账号凭据文件无效；请手动删除该文件后重新设置',
     ACCOUNT_CREDENTIAL_READ_FAILED: '无法读取账号凭据文件',
     ACCOUNT_CREDENTIAL_WRITE_FAILED: '无法写入账号凭据文件',
+    CLOUD_BACKUP_REPOSITORY_REQUIRED: '请填写 GitHub 私有仓库地址',
+    CLOUD_BACKUP_REPOSITORY_INVALID: 'GitHub 仓库地址无效，请填写 https://github.com/所有者/仓库',
+    CLOUD_BACKUP_REPOSITORY_NOT_PRIVATE: '为保护影片信息，只允许使用 GitHub 私有仓库',
+    CLOUD_BACKUP_BRANCH_INVALID: 'GitHub 分支名称无效',
+    CLOUD_BACKUP_TOKEN_REQUIRED: '请填写具有目标仓库 Contents 读写权限的 GitHub 令牌',
+    CLOUD_BACKUP_TOKEN_INVALID: 'GitHub 令牌格式无效',
+    CLOUD_BACKUP_TOKEN_DECRYPT_FAILED: '无法解密 GitHub 令牌，请重新填写',
+    CLOUD_BACKUP_AUTH_FAILED: 'GitHub 令牌无效或已经过期',
+    CLOUD_BACKUP_FORBIDDEN: 'GitHub 拒绝访问，请检查仓库权限和分支保护规则',
+    CLOUD_BACKUP_NOT_FOUND: '找不到 GitHub 仓库、分支或备份文件',
+    CLOUD_BACKUP_CONFLICT: '云端版本已经变化，请刷新后重试',
+    CLOUD_BACKUP_NETWORK_FAILED: '无法连接 GitHub，请检查网络后重试',
+    CLOUD_BACKUP_TIMEOUT: '连接 GitHub 超时，已保留待上传备份',
+    CLOUD_BACKUP_FILE_INVALID: '云端备份文件格式无效',
+    CLOUD_BACKUP_CHECKSUM_MISMATCH: '云端备份校验失败，未进行恢复',
+    CLOUD_BACKUP_FILE_TOO_LARGE: '备份文件超过 20 MB，已停止上传',
+    CLOUD_BACKUP_EMPTY_LIBRARY: '当前影片库为空，为避免覆盖有效备份已停止自动上传',
+    CLOUD_BACKUP_LIBRARY_REGRESSION: '当前影片数量大幅减少，为避免覆盖有效备份已停止自动上传',
+    CLOUD_BACKUP_NO_MATCHES: '没有找到可按文件名恢复的影片',
+    CLOUD_BACKUP_RESTORE_SCAN_RUNNING: '扫描进行中，完成或取消扫描后再恢复',
+    CLOUD_BACKUP_COMMIT_INVALID: '备份版本无效',
+    CLOUD_BACKUP_CONFIG_READ_FAILED: '无法读取云备份设置',
+    CLOUD_BACKUP_CONFIG_WRITE_FAILED: '无法保存云备份设置',
+    CLOUD_BACKUP_CONFIG_INVALID: '云备份设置文件无效',
+    CLOUD_BACKUP_REMOTE_INVALID: 'GitHub 返回了无效的备份数据',
+    CLOUD_BACKUP_REMOTE_FAILED: 'GitHub 云备份操作失败',
   };
   return messages[code] ?? '操作失败，请查看日志获取更多信息';
 }
@@ -581,6 +628,33 @@ function validateSettingsUpdate(payload: unknown): SettingsUpdateInput {
   }
   if (payload.lanRequireAuthentication !== undefined) input.lanRequireAuthentication = Boolean(payload.lanRequireAuthentication);
   return input;
+}
+
+function validateCloudBackupConfig(payload: unknown): CloudBackupConfigUpdateInput {
+  if (!isRecord(payload)
+    || typeof payload.repositoryUrl !== 'string'
+    || typeof payload.branch !== 'string'
+    || typeof payload.autoBackupOnStartup !== 'boolean'
+    || typeof payload.autoBackupOnQuit !== 'boolean'
+    || (payload.token !== undefined && typeof payload.token !== 'string')
+    || (payload.clearToken !== undefined && typeof payload.clearToken !== 'boolean')) {
+    throw new Error('CLOUD_BACKUP_CONFIG_INVALID');
+  }
+  return {
+    repositoryUrl: payload.repositoryUrl.slice(0, 1000),
+    branch: payload.branch.slice(0, 200),
+    token: typeof payload.token === 'string' ? payload.token.slice(0, 1000) : undefined,
+    clearToken: payload.clearToken === true,
+    autoBackupOnStartup: payload.autoBackupOnStartup,
+    autoBackupOnQuit: payload.autoBackupOnQuit,
+  };
+}
+
+function validateCloudBackupRestore(payload: unknown): CloudBackupRestoreInput {
+  if (!isRecord(payload) || typeof payload.commitSha !== 'string' || !/^[0-9a-f]{7,64}$/i.test(payload.commitSha)) {
+    throw new Error('CLOUD_BACKUP_COMMIT_INVALID');
+  }
+  return { commitSha: payload.commitSha };
 }
 
 function validateFfprobePath(payload: unknown): string {

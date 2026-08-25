@@ -73,6 +73,9 @@ export function validateFilmPageQuery(
   if (payload.allData !== undefined) {
     query.allData = booleanValue(payload.allData, strict);
   }
+  if (payload.duplicateFilenameOnly !== undefined) {
+    query.duplicateFilenameOnly = booleanValue(payload.duplicateFilenameOnly, strict);
+  }
   if (payload.availability !== undefined) {
     if (!['all', 'available', 'partial_missing', 'missing', 'source_offline', 'source_removed', 'archived'].includes(String(payload.availability))) {
       throw new Error('INVALID_PAGE_QUERY');

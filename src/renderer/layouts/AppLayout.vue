@@ -1,17 +1,31 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { Film, FolderOpened, CollectionTag, Setting, VideoCamera, Star, Clock, CircleCheck, Files, User } from '@element-plus/icons-vue';
 import { useScanStore } from '../stores/scan';
 import ScanProgressDialog from '../components/scan/ScanProgressDialog.vue';
 import ResonanceBall from '../components/resonance/ResonanceBall.vue';
 import { closeAllHoverPopups } from '../composables/hoverPopupManager';
+import type { CloudBackupActivityDto } from '../../shared/contracts';
 
 const router = useRouter();
 const route = useRoute();
 const scan = useScanStore();
 const counts = ref({ all: 0, unorganized: 0, organized: 0, favorite: 0, allData: 0 });
 const appVersion = ref('');
+const startupBackupActivity = ref<CloudBackupActivityDto | null>(null);
+const shutdownBackupActivity = ref<CloudBackupActivityDto | null>(null);
+let stopBackupActivity: (() => void) | null = null;
+let startupStatusTimer: number | null = null;
+
+const startupBackupText = computed(() => {
+  const activity = startupBackupActivity.value;
+  if (!activity) return '';
+  if (activity.phase === 'running') return '启动自动备份：正在同步到 GitHub…';
+  if (activity.phase === 'success') return '启动自动备份：备份完成';
+  if (activity.phase === 'skipped') return '启动自动备份：云端已是最新';
+  return '启动自动备份失败，请到设置中查看原因';
+});
 async function loadCounts(): Promise<void> {
   const result = await window.filmLibrary.films.navigationCounts();
   if (result.ok) counts.value = result.data;
@@ -26,8 +40,14 @@ onMounted(() => {
   window.addEventListener('film-library:changed', handleLibraryChanged);
   void loadCounts();
   void loadAppVersion();
+  stopBackupActivity = window.filmLibrary.cloudBackup.onActivity(handleBackupActivity);
+  void loadBackupActivity();
 });
-onBeforeUnmount(() => window.removeEventListener('film-library:changed', handleLibraryChanged));
+onBeforeUnmount(() => {
+  window.removeEventListener('film-library:changed', handleLibraryChanged);
+  stopBackupActivity?.();
+  if (startupStatusTimer !== null) window.clearTimeout(startupStatusTimer);
+});
 watch(() => route.fullPath, () => closeAllHoverPopups());
 
 function go(path: string): void {
@@ -44,6 +64,27 @@ function selected(): string {
   if (route.query.favorite === '1') return '/library?favorite=1';
   if (route.query.all === '1') return '/library?all=1';
   return '/library';
+}
+
+async function loadBackupActivity(): Promise<void> {
+  const result = await window.filmLibrary.cloudBackup.status();
+  if (result.ok && result.data.activity) handleBackupActivity(result.data.activity);
+}
+
+function handleBackupActivity(activity: CloudBackupActivityDto): void {
+  if (activity.trigger === 'shutdown') {
+    if (activity.phase === 'running') shutdownBackupActivity.value = activity;
+    return;
+  }
+  if (activity.trigger !== 'startup') return;
+  startupBackupActivity.value = activity;
+  if (startupStatusTimer !== null) window.clearTimeout(startupStatusTimer);
+  if (activity.phase !== 'running') {
+    startupStatusTimer = window.setTimeout(() => {
+      startupBackupActivity.value = null;
+      startupStatusTimer = null;
+    }, activity.phase === 'error' ? 12_000 : 8_000);
+  }
 }
 </script>
 
@@ -79,9 +120,36 @@ function selected(): string {
   </el-container>
   <ResonanceBall />
   <ScanProgressDialog v-model="scan.dialogVisible" :progress="scan.progress" @cancel="scan.cancel" @close="scan.closeDialog" />
+  <Transition name="backup-status">
+    <div v-if="startupBackupActivity" class="cloud-backup-status" :class="startupBackupActivity.phase" role="status">
+      <span v-if="startupBackupActivity.phase === 'running'" class="cloud-backup-spinner" />
+      <span v-else class="cloud-backup-dot" />
+      {{ startupBackupText }}
+    </div>
+  </Transition>
+  <div v-if="shutdownBackupActivity?.phase === 'running'" class="shutdown-backup-overlay" role="alert" aria-live="assertive">
+    <section class="shutdown-backup-card">
+      <span class="shutdown-backup-spinner" />
+      <h2>正在备份影片整理数据</h2>
+      <p>正在同步到 GitHub，完成后会自动退出…</p>
+    </section>
+  </div>
 </template>
 
 <style scoped>
 .side-menu .el-menu-item small { margin-left: auto; color: var(--subtle); font-size: 10px; }
 .brand-version { color: var(--accent); font-size: 10px; font-weight: 700; letter-spacing: .04em; }
+.cloud-backup-status { position: fixed; z-index: 2100; right: 22px; bottom: 18px; display: flex; align-items: center; gap: 9px; max-width: min(460px, calc(100vw - 44px)); padding: 10px 14px; border: 1px solid rgba(152, 227, 194, .22); border-radius: 10px; color: #c8d0dc; background: rgba(20, 24, 33, .96); box-shadow: 0 12px 36px rgba(0, 0, 0, .32); font-size: 12px; }
+.cloud-backup-status.error { border-color: rgba(255, 116, 116, .28); color: #ffb3b3; }
+.cloud-backup-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--accent); }
+.cloud-backup-status.error .cloud-backup-dot { background: #ff7474; }
+.cloud-backup-spinner, .shutdown-backup-spinner { width: 14px; height: 14px; flex: 0 0 auto; border: 2px solid rgba(152, 227, 194, .25); border-top-color: var(--accent); border-radius: 50%; animation: cloud-backup-spin .8s linear infinite; }
+.shutdown-backup-overlay { position: fixed; z-index: 5000; inset: 0; display: grid; place-items: center; background: rgba(8, 10, 14, .82); backdrop-filter: blur(7px); }
+.shutdown-backup-card { width: min(390px, calc(100vw - 48px)); padding: 34px; border: 1px solid rgba(152, 227, 194, .18); border-radius: 16px; text-align: center; background: #171b25; box-shadow: 0 24px 80px rgba(0, 0, 0, .5); }
+.shutdown-backup-card .shutdown-backup-spinner { width: 30px; height: 30px; margin: 0 auto 20px; border-width: 3px; }
+.shutdown-backup-card h2 { margin: 0; color: var(--ink); font-size: 20px; }
+.shutdown-backup-card p { margin: 10px 0 0; color: var(--muted); font-size: 13px; }
+.backup-status-enter-active, .backup-status-leave-active { transition: opacity .18s ease, transform .18s ease; }
+.backup-status-enter-from, .backup-status-leave-to { opacity: 0; transform: translateY(8px); }
+@keyframes cloud-backup-spin { to { transform: rotate(360deg); } }
 </style>

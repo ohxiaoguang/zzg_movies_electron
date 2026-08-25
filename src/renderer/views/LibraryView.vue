@@ -101,6 +101,10 @@ async function cardSizeChanged(value: number): Promise<void> {
   if (!result.ok) ElMessage.error(result.error.message);
 }
 function selectionChanged(rows: FilmSummaryDto[]): void { selectedRecordIds.value = rows.map((row) => row.id); }
+async function showInFolder(film: FilmSummaryDto): Promise<void> {
+  const result = await window.filmLibrary.films.showInFolder(film.id);
+  if (!result.ok) ElMessage.error(result.error.message);
+}
 async function deleteRecords(ids: string[]): Promise<void> {
   if (!ids.length || deletingRecords.value) return;
   try {
@@ -141,6 +145,7 @@ function changePage(page: number): void { library.filters.page = page; void libr
       <el-select v-model="library.filters.commentImages" placeholder="精彩评论截图" @change="filterChanged"><el-option label="全部评论状态" value="all" /><el-option label="有精彩评论截图" value="with" /><el-option label="无精彩评论截图" value="without" /></el-select>
       <el-select v-model="library.filters.sort" placeholder="排序" @change="filterChanged"><el-option v-if="organizedPage" label="整理顺序" value="organized" /><el-option v-if="favoritePage" label="收藏顺序" value="favorite" /><el-option label="最近新增" value="added" /><el-option label="最近观看" value="played" /><el-option label="最近更新" value="recent" /><el-option label="标题" value="title" /><el-option label="年份" value="year" /><el-option label="评分" value="rating" /><el-option label="文件名" value="file" /></el-select>
       <el-select v-if="allData" v-model="library.filters.availability" placeholder="数据状态" @change="filterChanged"><el-option label="全部状态" value="all" /><el-option label="正常" value="available" /><el-option label="部分缺失" value="partial_missing" /><el-option label="完全缺失" value="missing" /><el-option label="来源离线" value="source_offline" /><el-option label="来源已删除" value="source_removed" /></el-select>
+      <el-select v-if="allData" v-model="library.filters.duplicateFilenameOnly" placeholder="同名影片" @change="filterChanged"><el-option label="全部文件名" :value="false" /><el-option label="仅看同名影片" :value="true" /></el-select>
       <el-select v-if="!allData" v-model="library.settings.cardSize" placeholder="卡片大小" @change="cardSizeChanged"><el-option label="小卡片" :value="160" /><el-option label="标准" :value="200" /><el-option label="大卡片" :value="240" /><el-option label="超大" :value="280" /></el-select>
       <el-button :loading="library.loading" @click="refresh"><Refresh />刷新</el-button>
       <span class="grow" />
@@ -148,7 +153,7 @@ function changePage(page: number): void { library.filters.page = page; void libr
     </div>
     <div v-if="library.error" class="error-banner">{{ library.error }}</div>
     <FilmGrid v-if="!allData && library.viewMode === 'grid'" :films="library.items" :hover-delay="library.settings.hoverDelayMs" :hover-close-delay="library.settings.hoverCloseDelayMs" :slideshow-interval="library.settings.slideshowIntervalMs" :card-width="library.settings.cardSize" @select="selectFilm" @updated="refresh" />
-    <FilmTable v-else :films="library.items" :all-data="allData" @select="selectFilm" @selection-change="selectionChanged" @delete-row="deleteRecords([$event.id])" />
+    <FilmTable v-else :films="library.items" :all-data="allData" @select="selectFilm" @selection-change="selectionChanged" @show-in-folder="showInFolder" @delete-row="deleteRecords([$event.id])" />
     <el-pagination v-if="library.pageData.total" background layout="prev, pager, next, ->, total" :current-page="library.pageData.page" :page-size="library.pageData.pageSize" :total="library.pageData.total" @current-change="changePage" />
     <FilmDetailDrawer v-model="detailVisible" :film-id="selectedFilmId" @updated="refresh" />
   </div>

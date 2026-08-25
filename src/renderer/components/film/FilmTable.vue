@@ -6,6 +6,7 @@ defineProps<{ films: FilmSummaryDto[]; allData?: boolean }>();
 const emit = defineEmits<{
   select: [film: FilmSummaryDto];
   selectionChange: [films: FilmSummaryDto[]];
+  showInFolder: [film: FilmSummaryDto];
   deleteRow: [film: FilmSummaryDto];
 }>();
 function selectRow(row: FilmSummaryDto): void { emit('select', row); }
@@ -31,7 +32,7 @@ function availabilityLabel(value: FilmSummaryDto['availability']): string {
     <el-table-column v-if="allData" label="文件数量" width="100"><template #default="{ row }">{{ row.existingFileCount }} / {{ row.totalFileCount }}</template></el-table-column>
     <el-table-column label="文件可用性" width="110"><template #default="{ row }"><el-tag :type="row.availability === 'available' ? 'success' : 'warning'" size="small">{{ availabilityLabel(row.availability) }}</el-tag></template></el-table-column>
     <el-table-column v-if="allData" label="数据库更新时间" min-width="170"><template #default="{ row }">{{ new Date(row.updatedAt).toLocaleString() }}</template></el-table-column>
-    <el-table-column v-if="allData" label="操作" width="96"><template #default="{ row }"><el-button text type="danger" @click.stop="emit('deleteRow', row)">删除</el-button></template></el-table-column>
+    <el-table-column v-if="allData" label="操作" width="190"><template #default="{ row }"><el-button text @click.stop="emit('showInFolder', row)">打开文件位置</el-button><el-button text type="danger" @click.stop="emit('deleteRow', row)">删除</el-button></template></el-table-column>
   </el-table>
 </template>
 

@@ -120,6 +120,23 @@ describe('custom categories', () => {
     expect(context.films.page({ page: 1, pageSize: 20, allData: true }).total).toBe(3);
   });
 
+  it('filters every record whose filename has a case-insensitive duplicate', async () => {
+    const context = await scannedContext();
+    const beta = filmByTitle(context, 'Beta');
+    context.database.db.prepare('UPDATE film SET filename = ? WHERE id = ?').run('  ALPHA.MKV  ', beta.id);
+
+    const duplicates = context.films.page({
+      page: 1,
+      pageSize: 20,
+      allData: true,
+      duplicateFilenameOnly: true,
+      sort: 'title',
+    });
+
+    expect(duplicates.items.map((film) => film.title)).toEqual(['Alpha', 'Beta']);
+    expect(context.films.page({ page: 1, pageSize: 20, allData: true, duplicateFilenameOnly: true, search: 'Gamma' }).total).toBe(0);
+  });
+
   it('orders organized and favorite pages by their latest actions', async () => {
     const context = await scannedContext();
     const alpha = filmByTitle(context, 'Alpha');

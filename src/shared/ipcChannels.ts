@@ -61,4 +61,12 @@ export const IPC_CHANNELS = {
   playbackCacheChooseDirectory: 'playback-cache:choose-directory',
   playbackCacheOpenDirectory: 'playback-cache:open-directory',
   playbackCacheClear: 'playback-cache:clear',
+  cloudBackupStatus: 'cloud-backup:status',
+  cloudBackupUpdateConfig: 'cloud-backup:update-config',
+  cloudBackupTestConnection: 'cloud-backup:test-connection',
+  cloudBackupRun: 'cloud-backup:run',
+  cloudBackupVersions: 'cloud-backup:versions',
+  cloudBackupPreviewRestore: 'cloud-backup:preview-restore',
+  cloudBackupRestore: 'cloud-backup:restore',
+  cloudBackupActivity: 'cloud-backup:activity',
 } as const;

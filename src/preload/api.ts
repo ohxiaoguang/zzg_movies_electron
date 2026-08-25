@@ -5,6 +5,9 @@ import type {
   ApiResult,
   AccountCredentialsInput,
   CorrectSourceTransferInput,
+  CloudBackupConfigUpdateInput,
+  CloudBackupActivityDto,
+  CloudBackupRestoreInput,
   CreateSourceInput,
   FindDeletedSourceInput,
   FilmRecordDeleteBatchInput,
@@ -114,6 +117,20 @@ export const filmLibraryApi: FilmLibraryApi = {
     chooseCacheDirectory: () => invoke(IPC_CHANNELS.playbackCacheChooseDirectory),
     openCacheDirectory: () => invoke(IPC_CHANNELS.playbackCacheOpenDirectory),
     clearCache: () => invoke(IPC_CHANNELS.playbackCacheClear),
+  },
+  cloudBackup: {
+    status: () => invoke(IPC_CHANNELS.cloudBackupStatus),
+    updateConfig: (input: CloudBackupConfigUpdateInput) => invoke(IPC_CHANNELS.cloudBackupUpdateConfig, input),
+    testConnection: () => invoke(IPC_CHANNELS.cloudBackupTestConnection),
+    run: (force = false) => invoke(IPC_CHANNELS.cloudBackupRun, { force }),
+    versions: () => invoke(IPC_CHANNELS.cloudBackupVersions),
+    previewRestore: (commitSha: string) => invoke(IPC_CHANNELS.cloudBackupPreviewRestore, { commitSha }),
+    restore: (input: CloudBackupRestoreInput) => invoke(IPC_CHANNELS.cloudBackupRestore, input),
+    onActivity: (listener) => {
+      const wrapped = (_event: IpcRendererEvent, activity: CloudBackupActivityDto) => listener(activity);
+      ipcRenderer.on(IPC_CHANNELS.cloudBackupActivity, wrapped);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.cloudBackupActivity, wrapped);
+    },
   },
 };
 

@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { app, BrowserWindow, protocol } from 'electron';
+import { app, BrowserWindow, protocol, safeStorage } from 'electron';
 import { DatabaseManager } from './database/DatabaseManager';
 import { FilmRepository } from './database/repositories/FilmRepository';
 import { SettingsRepository } from './database/repositories/SettingsRepository';
@@ -23,7 +23,11 @@ import { AccountCredentialService } from './services/AccountCredentialService';
 import { FilmLibraryManagementService } from './services/FilmLibraryManagementService';
 import { PlaybackSessionService } from './services/PlaybackSessionService';
 import { SourceTransferService } from './services/SourceTransferService';
+import { CloudBackupConfigService } from './services/CloudBackupConfigService';
+import { CloudBackupService } from './services/CloudBackupService';
+import { LibraryDataBackupService } from './services/LibraryDataBackupService';
 import { lanServerConfigurationFromSettings, LanServer } from './server/LanServer';
+import { IPC_CHANNELS } from '../shared/ipcChannels';
 
 if (!app.isPackaged) {
   const developmentSessionDataPath = path.join(app.getPath('userData'), 'development-session-data');
@@ -49,6 +53,7 @@ let applicationLogger: AppLogger | null = null;
 let lanServer: LanServer | null = null;
 let desktopIntegration: DesktopIntegrationService | null = null;
 let showMainWindow: (() => BrowserWindow) | null = null;
+let cloudBackup: CloudBackupService | null = null;
 let shutdownStarted = false;
 let shutdownComplete = false;
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
@@ -122,6 +127,26 @@ if (hasSingleInstanceLock) void app.whenReady().then(() => {
   const accountCredentials = new AccountCredentialService(path.join(app.getPath('userData'), 'account-credentials.json'));
   const lanAuth = new LanAuthService(lanDevices, logger, accountCredentials);
   const management = new FilmLibraryManagementService(database, films, sources, libraryRead, scan, logger);
+  const cloudBackupConfig = new CloudBackupConfigService(
+    path.join(app.getPath('userData'), 'cloud-backup-config.json'),
+    path.join(app.getPath('userData'), 'cloud-backup-pending.json'),
+    {
+      encryptStringAsync: (value) => safeStorage.encryptStringAsync(value),
+      decryptStringAsync: (value) => safeStorage.decryptStringAsync(value),
+    },
+  );
+  cloudBackup = new CloudBackupService(
+    cloudBackupConfig,
+    new LibraryDataBackupService(database, app.getVersion()),
+    logger,
+  );
+  cloudBackup.onActivity((activity) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+        window.webContents.send(IPC_CHANNELS.cloudBackupActivity, activity);
+      }
+    }
+  });
   const lanSettings = settings.get();
   lanServer = new LanServer(libraryRead, mediaAssets, logger, {
     version: app.getVersion(),
@@ -198,6 +223,12 @@ if (hasSingleInstanceLock) void app.whenReady().then(() => {
       fileOpen,
       logger,
       desktopIntegration: desktopIntegration!,
+      cloudBackup: cloudBackup!,
+    });
+    window.on('close', (event) => {
+      if (shutdownComplete) return;
+      event.preventDefault();
+      app.quit();
     });
     window.once('closed', () => {
       if (mainWindow === window) mainWindow = null;
@@ -209,6 +240,11 @@ if (hasSingleInstanceLock) void app.whenReady().then(() => {
 
   showMainWindow = () => desktopIntegration!.showMainWindow();
   const initialWindow = createWindow();
+  void cloudBackup.backupOnStartup().catch((error: unknown) => {
+    logger.warn('Automatic startup cloud backup failed', {
+      errorCode: error instanceof Error ? error.message : 'CLOUD_BACKUP_FAILED',
+    });
+  });
   if (settings.get().autoScanOnStartup) {
     initialWindow.webContents.once('did-finish-load', () => {
       try {
@@ -245,17 +281,39 @@ app.on('before-quit', (event) => {
   shutdownStarted = true;
   applicationLogger?.info('Application quitting');
   void (async () => {
-    try {
-      await lanServer?.stop();
-    } catch (error) {
+    const backupStatus = cloudBackup?.status();
+    const shouldShowBackup = backupStatus?.configured === true && backupStatus.autoBackupOnQuit;
+    const shutdownUiStartedAt = Date.now();
+    if (shouldShowBackup) desktopIntegration?.showMainWindow();
+    const results = await Promise.allSettled([
+      lanServer?.stop(),
+      cloudBackup?.backupOnShutdown(),
+    ]);
+    const [lanResult, backupResult] = results;
+    if (lanResult?.status === 'rejected') {
       applicationLogger?.warn('Local web server shutdown failed', {
-        errorCode: error instanceof Error ? error.message : 'HTTP_SERVER_ERROR',
+        errorCode: lanResult.reason instanceof Error ? lanResult.reason.message : 'HTTP_SERVER_ERROR',
       });
-    } finally {
+    }
+    if (backupResult?.status === 'rejected') {
+      applicationLogger?.warn('Automatic shutdown cloud backup failed', {
+        errorCode: backupResult.reason instanceof Error ? backupResult.reason.message : 'CLOUD_BACKUP_FAILED',
+      });
+    }
+    if (shouldShowBackup) {
+      const remainingDisplayMs = 350 - (Date.now() - shutdownUiStartedAt);
+      if (remainingDisplayMs > 0) await new Promise((resolve) => setTimeout(resolve, remainingDisplayMs));
+    }
+    try {
       desktopIntegration?.destroy();
       desktopIntegration = null;
       showMainWindow = null;
       database?.close();
+      cloudBackup = null;
+      shutdownComplete = true;
+      app.quit();
+    } catch (error) {
+      applicationLogger?.error('Application shutdown cleanup failed', { error });
       shutdownComplete = true;
       app.quit();
     }

@@ -1512,6 +1512,15 @@ export class FilmRepository {
       clauses.push("NOT EXISTS (SELECT 1 FROM film_asset comment_filter WHERE comment_filter.film_id = f.id AND comment_filter.asset_type = 'comment' AND comment_filter.missing = 0)");
     }
     if (query.missingOnly) clauses.push('f.missing = 1');
+    if (query.duplicateFilenameOnly) {
+      clauses.push(`TRIM(f.filename) COLLATE NOCASE IN (
+        SELECT TRIM(duplicate_name.filename)
+        FROM film duplicate_name
+        WHERE TRIM(duplicate_name.filename) <> ''
+        GROUP BY TRIM(duplicate_name.filename) COLLATE NOCASE
+        HAVING COUNT(*) > 1
+      )`);
+    }
     if (query.recordIssue === 'title-mismatch') {
       clauses.push(`f.nfo_status = 'missing'
         AND f.title_user_edited = 0

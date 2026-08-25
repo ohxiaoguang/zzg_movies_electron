@@ -254,6 +254,7 @@ export interface FilmPageQuery {
   recordIssue?: 'all' | 'title-mismatch' | 'invalid-multipart';
   playbackCompatibility?: 'all' | 'non-native';
   allData?: boolean;
+  duplicateFilenameOnly?: boolean;
   availability?: FilmAvailability | 'all';
   sort?: 'added' | 'organized' | 'favorite' | 'played' | 'recent' | 'title' | 'year' | 'rating' | 'file';
 }
@@ -606,6 +607,138 @@ export interface SettingsDto {
 }
 
 export type SettingsUpdateInput = Partial<SettingsDto>;
+
+export interface LibraryDataBackupCategory {
+  name: string;
+  sortOrder: number;
+}
+
+export interface LibraryDataBackupSegment {
+  fileName: string;
+  fileSize: number;
+  startSeconds: number;
+  endSeconds: number;
+  title: string;
+  comment: string;
+  includeInPreview: boolean;
+  sortOrder: number;
+}
+
+export interface LibraryDataBackupFilm {
+  filename: string;
+  fileSize: number;
+  durationSeconds: number | null;
+  favorite: boolean;
+  categories: string[];
+  segments: LibraryDataBackupSegment[];
+}
+
+export interface LibraryDataBackupDocument {
+  format: 'local-film-library-user-data';
+  formatVersion: 1;
+  appVersion: string;
+  exportedAt: string;
+  dataHash: string;
+  counts: {
+    films: number;
+    favorites: number;
+    categories: number;
+    categoryLinks: number;
+    segments: number;
+  };
+  categories: LibraryDataBackupCategory[];
+  films: LibraryDataBackupFilm[];
+}
+
+export type CloudBackupState = 'disabled' | 'ready' | 'running' | 'success' | 'error';
+export type CloudBackupTrigger = 'startup' | 'shutdown' | 'manual';
+export type CloudBackupActivityPhase = 'running' | 'success' | 'skipped' | 'error';
+
+export interface CloudBackupActivityDto {
+  trigger: CloudBackupTrigger;
+  phase: CloudBackupActivityPhase;
+  at: string;
+  commitSha: string | null;
+  errorCode: string | null;
+}
+
+export interface CloudBackupConfigUpdateInput {
+  repositoryUrl: string;
+  branch: string;
+  token?: string;
+  clearToken?: boolean;
+  autoBackupOnStartup: boolean;
+  autoBackupOnQuit: boolean;
+}
+
+export interface CloudBackupStatusDto {
+  state: CloudBackupState;
+  repositoryUrl: string;
+  branch: string;
+  backupPath: string;
+  tokenConfigured: boolean;
+  configured: boolean;
+  autoBackupOnStartup: boolean;
+  autoBackupOnQuit: boolean;
+  lastSuccessAt: string | null;
+  lastCommitSha: string | null;
+  lastErrorCode: string | null;
+  pendingUpload: boolean;
+  activity: CloudBackupActivityDto | null;
+}
+
+export interface CloudBackupRunResultDto {
+  uploaded: boolean;
+  skipped: boolean;
+  commitSha: string | null;
+  exportedAt: string;
+  counts: LibraryDataBackupDocument['counts'];
+}
+
+export interface CloudBackupVersionDto {
+  commitSha: string;
+  committedAt: string;
+  message: string;
+}
+
+export type CloudBackupMatchStatus = 'matched' | 'missing' | 'ambiguous';
+
+export interface CloudBackupMatchIssueDto {
+  backupIndex: number;
+  filename: string;
+  fileSize: number;
+  durationSeconds: number | null;
+  status: Exclude<CloudBackupMatchStatus, 'matched'>;
+  candidateCount: number;
+}
+
+export interface CloudBackupRestorePreviewDto {
+  commitSha: string;
+  exportedAt: string;
+  appVersion: string;
+  counts: LibraryDataBackupDocument['counts'];
+  matchedFilms: number;
+  missingFilms: number;
+  ambiguousFilms: number;
+  restorableFavorites: number;
+  restorableCategoryLinks: number;
+  restorableSegments: number;
+  issues: CloudBackupMatchIssueDto[];
+}
+
+export interface CloudBackupRestoreInput {
+  commitSha: string;
+}
+
+export interface CloudBackupRestoreResultDto {
+  matchedFilms: number;
+  missingFilms: number;
+  ambiguousFilms: number;
+  favoritesRestored: number;
+  categoryLinksRestored: number;
+  segmentsRestored: number;
+  segmentsSkipped: number;
+}
 
 export interface FfprobeTestResult {
   ok: boolean;
