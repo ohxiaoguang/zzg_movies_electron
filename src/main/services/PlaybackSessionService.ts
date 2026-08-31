@@ -741,17 +741,11 @@ export async function discoverSidecarSubtitleFiles(videoFilePath: string): Promi
       video.name.toLowerCase(),
       stripMultipartSuffix(video.name).toLowerCase(),
     ]);
-    const related = candidates.filter((candidate) => (
-      [...videoStems].some((stem) => (
-        candidate.stem.toLowerCase() === stem
-        || candidate.stem.toLowerCase().startsWith(`${stem}.`)
-        || candidate.stem.toLowerCase().startsWith(`${stem}-`)
-        || candidate.stem.toLowerCase().startsWith(`${stem}_`)
-        || candidate.stem.toLowerCase().startsWith(`${stem} `)
-      ))
-    ));
-    const selected = related.length > 0 ? related : candidates.length === 1 ? candidates : [];
-    return selected.map(({ stem: _stem, ...subtitle }) => subtitle);
+    const related = candidates.filter((candidate) => {
+      const candidateStem = candidate.stem.toLowerCase();
+      return [...videoStems].some((stem) => candidateStem.includes(stem));
+    });
+    return related.map(({ stem: _stem, ...subtitle }) => subtitle);
   } catch {
     return [];
   }

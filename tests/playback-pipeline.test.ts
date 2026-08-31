@@ -193,6 +193,41 @@ describe('web playback pipeline', () => {
     }]);
   });
 
+  it('matches a subtitle whose filename contains the complete video filename stem', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'film-sidecar-subtitles-containing-stem-'));
+    roots.push(root);
+    const videoPath = path.join(root, 'aaabbb.mp4');
+    const subtitlePath = path.join(root, 'aaabbbqweqwe.srt');
+    fs.writeFileSync(videoPath, 'video');
+    fs.writeFileSync(subtitlePath, 'subtitle');
+
+    expect(await discoverSidecarSubtitleFiles(videoPath)).toEqual([{
+      filePath: subtitlePath,
+      codec: 'subrip',
+      language: null,
+      title: 'aaabbbqweqwe.srt',
+    }]);
+  });
+
+  it('does not assign the only sidecar subtitle to an unrelated video in the same directory', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'film-sidecar-subtitles-shared-directory-'));
+    roots.push(root);
+    const movieAPath = path.join(root, 'Movie A.mkv');
+    const movieBPath = path.join(root, 'Movie B.mp4');
+    const subtitlePath = path.join(root, 'Movie A.srt');
+    fs.writeFileSync(movieAPath, 'video-a');
+    fs.writeFileSync(movieBPath, 'video-b');
+    fs.writeFileSync(subtitlePath, 'subtitle-a');
+
+    expect(await discoverSidecarSubtitleFiles(movieAPath)).toEqual([{
+      filePath: subtitlePath,
+      codec: 'subrip',
+      language: null,
+      title: 'Movie A.srt',
+    }]);
+    expect(await discoverSidecarSubtitleFiles(movieBPath)).toEqual([]);
+  });
+
   it('tracks direct-play sessions, ownership and persistent playback progress', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'film-playback-session-'));
     roots.push(root);
