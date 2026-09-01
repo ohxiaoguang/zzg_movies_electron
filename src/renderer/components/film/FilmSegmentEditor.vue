@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import type { FilmDetailDto, FilmSegmentDto } from '../../../shared/contracts';
+import type { FilmDetailDto, FilmSegmentDto, VrViewDto } from '../../../shared/contracts';
 
 const props = defineProps<{
   film: FilmDetailDto;
   currentSeconds: number;
   selectedPartId: string;
+  captureVrView?: () => VrViewDto | null;
 }>();
 const emit = defineEmits<{
   change: [segments: FilmSegmentDto[]];
@@ -21,6 +22,7 @@ const draft = reactive({
   title: '',
   comment: '',
   includeInPreview: true,
+  vrView: null as VrViewDto | null,
 });
 
 const availableParts = computed(() => props.film.parts.filter((part) => !part.missing));
@@ -33,6 +35,7 @@ watch(() => props.film.segments, (value) => { segments.value = [...value]; });
 
 function markStart(): void {
   draft.startSeconds = roundSeconds(props.currentSeconds);
+  draft.vrView = props.captureVrView?.() ?? null;
   if (draft.endSeconds <= draft.startSeconds) draft.endSeconds = roundSeconds(draft.startSeconds + 10);
 }
 
@@ -51,6 +54,7 @@ async function save(): Promise<void> {
   }
   saving.value = true;
   try {
+    const vrView = copyVrView(draft.vrView ?? props.captureVrView?.() ?? null);
     const result = await window.filmLibrary.films.createSegment({
       filmId: props.film.id,
       filmFileId: props.selectedPartId,
@@ -59,6 +63,7 @@ async function save(): Promise<void> {
       title: draft.title,
       comment: draft.comment,
       includeInPreview: draft.includeInPreview,
+      vrView,
     });
     if (!result.ok) {
       ElMessage.error(result.error.message);
@@ -69,6 +74,9 @@ async function save(): Promise<void> {
     emit('change', [...segments.value]);
     ElMessage.success('片段已添加');
     resetDraft();
+  } catch (error) {
+    console.error('[segments] failed to create segment', error);
+    ElMessage.error(error instanceof Error ? error.message : '片段保存失败，请重试');
   } finally {
     saving.value = false;
   }
@@ -111,6 +119,7 @@ function resetDraft(): void {
     title: '',
     comment: '',
     includeInPreview: true,
+    vrView: props.captureVrView?.() ?? null,
   });
 }
 
@@ -132,6 +141,15 @@ function formatTime(value: number): string {
 
 function roundSeconds(value: number): number {
   return Math.round(Math.max(0, value) * 1000) / 1000;
+}
+
+function copyVrView(view: VrViewDto | null): VrViewDto | null {
+  if (!view) return null;
+  return {
+    yawDegrees: Number(view.yawDegrees),
+    pitchDegrees: Number(view.pitchDegrees),
+    fovDegrees: Number(view.fovDegrees),
+  };
 }
 
 defineExpose({ markStart, markEnd });

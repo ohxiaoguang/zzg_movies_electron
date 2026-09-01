@@ -109,6 +109,12 @@ export interface FilmPartDto {
   isVr: boolean;
 }
 
+export interface VrViewDto {
+  yawDegrees: number;
+  pitchDegrees: number;
+  fovDegrees: number;
+}
+
 export interface FilmSegmentDto {
   id: string;
   filmId: string;
@@ -118,6 +124,7 @@ export interface FilmSegmentDto {
   title: string;
   comment: string;
   includeInPreview: boolean;
+  vrView: VrViewDto | null;
   sortOrder: number;
   sourceChanged: boolean;
   createdAt: string;
@@ -132,6 +139,7 @@ export interface FilmSegmentCreateInput {
   title?: string;
   comment?: string;
   includeInPreview?: boolean;
+  vrView?: VrViewDto | null;
 }
 
 export interface FilmSegmentUpdateInput {
@@ -141,6 +149,7 @@ export interface FilmSegmentUpdateInput {
   title?: string;
   comment?: string;
   includeInPreview?: boolean;
+  vrView?: VrViewDto | null;
 }
 
 export interface FilmSegmentDeleteInput {
@@ -623,6 +632,7 @@ export interface LibraryDataBackupSegment {
   comment: string;
   includeInPreview: boolean;
   sortOrder: number;
+  vrView?: VrViewDto | null;
 }
 
 export interface LibraryDataBackupFilm {

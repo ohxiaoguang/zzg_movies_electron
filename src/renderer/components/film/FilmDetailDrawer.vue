@@ -66,6 +66,10 @@ const selectedCategories = computed<SelectedCategoryItem[]>(() => {
 const saveStateLabel = computed(() => saveState.value === 'saving' ? '正在保存…' : saveState.value === 'dirty' ? '待保存' : saveState.value === 'saved' ? '已保存' : saveState.value === 'error' ? `保存失败：${saveError.value}` : '');
 const rescanBusy = computed(() => rescanStarting.value || Boolean(rescanJobId && scan.progress?.jobId === rescanJobId && scan.progress.status === 'running'));
 
+function captureVrView() {
+  return detailPlayer.value?.getCurrentVrView() ?? null;
+}
+
 watch(() => [props.modelValue, props.filmId], () => {
   if (props.modelValue) void load();
   else {
@@ -342,7 +346,9 @@ function addToResonance(): void {
     filename: snapshot.filename,
     currentSeconds: snapshot.currentSeconds,
     durationSeconds: snapshot.durationSeconds,
-    aspectRatio: snapshot.width / snapshot.height,
+    aspectRatio: snapshot.isVr ? 16 / 9 : snapshot.width / snapshot.height,
+    isVr: snapshot.isVr,
+    vrView: snapshot.vrView,
   });
   ElMessage.success(result === 'added' ? '已添加进共鸣球，当前视频已暂停' : '已更新共鸣球中的播放进度，当前视频已暂停');
 }
@@ -430,6 +436,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', handleKeydown, tru
             :film="detail"
             :current-seconds="playbackPosition.currentSeconds"
             :selected-part-id="playbackPosition.partId"
+            :capture-vr-view="captureVrView"
             @change="updateSegments"
             @play="detailPlayer?.playSegment($event)"
           />

@@ -56,6 +56,7 @@ describe('logical cloud backup', () => {
       endSeconds: 20,
       title: '精彩',
       comment: '测试',
+      vrView: { yawDegrees: 35, pitchDegrees: -8, fovDegrees: 62 },
     });
 
     const document = new LibraryDataBackupService(source.database, '1.0.0').exportDocument();
@@ -93,7 +94,12 @@ describe('logical cloud backup', () => {
     expect(targetFilms.detail(matched.filmId)).toMatchObject({
       favorite: true,
       customCategories: [expect.objectContaining({ name: '珍藏' })],
-      segments: [expect.objectContaining({ title: '精彩', startSeconds: 10, endSeconds: 20 })],
+      segments: [expect.objectContaining({
+        title: '精彩',
+        startSeconds: 10,
+        endSeconds: 20,
+        vrView: { yawDegrees: 35, pitchDegrees: -8, fovDegrees: 62 },
+      })],
     });
     expect(targetFilms.detail(duplicate.filmId)).toMatchObject({ favorite: false, customCategories: [], segments: [] });
     expect(targetFilms.detail(uniqueDifferentSize.filmId)?.favorite).toBe(false);

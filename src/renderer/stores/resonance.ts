@@ -1,5 +1,6 @@
 import { computed, ref, watch } from 'vue';
 import { defineStore } from 'pinia';
+import type { VrViewDto } from '../../shared/contracts';
 
 const STORAGE_KEY = 'local-film-library:resonance-v1';
 
@@ -12,10 +13,13 @@ export interface ResonanceVideo {
   currentSeconds: number;
   durationSeconds: number;
   aspectRatio: number;
+  isVr: boolean;
+  vrView: VrViewDto | null;
+  vrModeKnown: boolean;
   addedAt: string;
 }
 
-export type ResonanceVideoInput = Omit<ResonanceVideo, 'id' | 'addedAt'>;
+export type ResonanceVideoInput = Omit<ResonanceVideo, 'id' | 'addedAt' | 'vrModeKnown'>;
 
 export const useResonanceStore = defineStore('resonance', () => {
   const videos = ref<ResonanceVideo[]>(restoreVideos());
@@ -26,12 +30,13 @@ export const useResonanceStore = defineStore('resonance', () => {
     const id = identity(input.filmId, input.partId);
     const existing = videos.value.find((item) => item.id === id);
     if (existing) {
-      Object.assign(existing, sanitizeVideo({ ...existing, ...input, id }));
+      Object.assign(existing, sanitizeVideo({ ...existing, ...input, id, vrModeKnown: true }));
       return 'updated';
     }
     videos.value.push(sanitizeVideo({
       ...input,
       id,
+      vrModeKnown: true,
       addedAt: new Date().toISOString(),
     }));
     return 'added';
@@ -52,6 +57,21 @@ export const useResonanceStore = defineStore('resonance', () => {
     item.aspectRatio = clampAspectRatio(width / height);
   }
 
+  function updateVrMode(id: string, isVr: boolean): void {
+    const item = videos.value.find((video) => video.id === id);
+    if (!item) return;
+    item.isVr = isVr;
+    item.vrModeKnown = true;
+    if (!isVr) item.vrView = null;
+    else item.aspectRatio = 16 / 9;
+  }
+
+  function updateVrView(id: string, view: VrViewDto): void {
+    const item = videos.value.find((video) => video.id === id);
+    if (!item || !item.isVr) return;
+    item.vrView = sanitizeVrView(view);
+  }
+
   function remove(id: string): void {
     videos.value = videos.value.filter((item) => item.id !== id);
     if (!videos.value.length) expanded.value = false;
@@ -70,7 +90,7 @@ export const useResonanceStore = defineStore('resonance', () => {
     }
   }, { deep: true });
 
-  return { videos, expanded, count, add, updateProgress, updateAspectRatio, remove, clear };
+  return { videos, expanded, count, add, updateProgress, updateAspectRatio, updateVrMode, updateVrView, remove, clear };
 });
 
 function restoreVideos(): ResonanceVideo[] {
@@ -101,7 +121,22 @@ function sanitizeVideo(value: ResonanceVideo): ResonanceVideo {
     currentSeconds: finiteNonNegative(value.currentSeconds),
     durationSeconds: finiteNonNegative(value.durationSeconds),
     aspectRatio: clampAspectRatio(value.aspectRatio),
+    isVr: value.isVr === true,
+    vrView: value.isVr === true ? sanitizeVrView(value.vrView) : null,
+    vrModeKnown: value.vrModeKnown === true,
     addedAt: value.addedAt || new Date().toISOString(),
+  };
+}
+
+function sanitizeVrView(value: VrViewDto | null | undefined): VrViewDto | null {
+  if (!value
+    || !Number.isFinite(value.yawDegrees)
+    || !Number.isFinite(value.pitchDegrees)
+    || !Number.isFinite(value.fovDegrees)) return null;
+  return {
+    yawDegrees: Math.max(-180, Math.min(179.999, Number(value.yawDegrees))),
+    pitchDegrees: Math.max(-85, Math.min(85, Number(value.pitchDegrees))),
+    fovDegrees: Math.max(30, Math.min(100, Number(value.fovDegrees))),
   };
 }
 

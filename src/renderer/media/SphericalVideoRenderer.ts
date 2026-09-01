@@ -108,6 +108,20 @@ export class SphericalVideoRenderer {
     this.fovDegrees = 75;
   }
 
+  public getView(): VrViewDto {
+    return {
+      yawDegrees: Math.round(normalizeDegrees((this.yaw * 180) / Math.PI) * 1000) / 1000,
+      pitchDegrees: Math.round(((this.pitch * 180) / Math.PI) * 1000) / 1000,
+      fovDegrees: Math.round(this.fovDegrees * 1000) / 1000,
+    };
+  }
+
+  public setView(view: VrViewDto): void {
+    this.yaw = (normalizeDegrees(view.yawDegrees) * Math.PI) / 180;
+    this.pitch = clampSphericalPitch((view.pitchDegrees * Math.PI) / 180);
+    this.fovDegrees = clampSphericalFov(view.fovDegrees);
+  }
+
   public dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
@@ -188,6 +202,10 @@ export class SphericalVideoRenderer {
     if (this.canvas.width !== width) this.canvas.width = width;
     if (this.canvas.height !== height) this.canvas.height = height;
   }
+}
+
+function normalizeDegrees(value: number): number {
+  return ((value + 180) % 360 + 360) % 360 - 180;
 }
 
 function createProgram(gl: WebGLRenderingContext, vertexSource: string, fragmentSource: string): WebGLProgram {
@@ -281,3 +299,4 @@ const FRAGMENT_SHADER = `
     gl_FragColor = texture2D(u_video, panoramaUv);
   }
 `;
+import type { VrViewDto } from '../../shared/contracts';

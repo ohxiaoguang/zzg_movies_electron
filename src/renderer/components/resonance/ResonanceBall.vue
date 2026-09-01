@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { Close, Delete, VideoPause, VideoPlay } from '@element-plus/icons-vue';
 import { mediaUrl } from '../../api';
 import { computeResonanceLayout } from '../../composables/resonanceLayout';
+import { SphericalVideoRenderer } from '../../media/SphericalVideoRenderer';
 import { useResonanceStore, type ResonanceVideo } from '../../stores/resonance';
 
 const resonance = useResonanceStore();
@@ -11,8 +12,12 @@ const stageSize = ref({ width: 0, height: 0 });
 const playingIds = ref(new Set<string>());
 const clearPending = ref(false);
 const videoElements = new Map<string, HTMLVideoElement>();
+const canvasElements = new Map<string, HTMLCanvasElement>();
+const sphericalRenderers = new Map<string, SphericalVideoRenderer>();
+const vrActiveIds = ref(new Set<string>());
 let stageObserver: ResizeObserver | null = null;
 let clearTimer: ReturnType<typeof setTimeout> | null = null;
+let vrHydrationGeneration = 0;
 
 const layout = computed(() => computeResonanceLayout(
   resonance.videos.map((item) => ({ id: item.id, aspectRatio: item.aspectRatio })),
@@ -37,11 +42,13 @@ watch(stage, (element) => {
 
 watch(() => resonance.expanded, async (expanded) => {
   if (!expanded) {
+    vrHydrationGeneration += 1;
     pauseAll();
     return;
   }
   await nextTick();
   stage.value?.focus();
+  void hydrateLegacyVrModes();
 });
 
 function tileStyle(id: string): Record<string, string> {
@@ -55,14 +62,29 @@ function tileStyle(id: string): Record<string, string> {
   };
 }
 
-function registerVideo(id: string, element: unknown): void {
-  if (element instanceof HTMLVideoElement) videoElements.set(id, element);
-  else videoElements.delete(id);
+function registerVideo(item: ResonanceVideo, element: unknown): void {
+  if (element instanceof HTMLVideoElement) {
+    videoElements.set(item.id, element);
+    ensureSphericalRenderer(item);
+  } else {
+    destroySphericalRenderer(item.id);
+    videoElements.delete(item.id);
+  }
+}
+
+function registerCanvas(item: ResonanceVideo, element: unknown): void {
+  if (element instanceof HTMLCanvasElement) {
+    canvasElements.set(item.id, element);
+    ensureSphericalRenderer(item);
+  } else {
+    destroySphericalRenderer(item.id);
+    canvasElements.delete(item.id);
+  }
 }
 
 function initializeVideo(item: ResonanceVideo, event: Event): void {
   const element = event.currentTarget as HTMLVideoElement;
-  resonance.updateAspectRatio(item.id, element.videoWidth, element.videoHeight);
+  if (!item.isVr) resonance.updateAspectRatio(item.id, element.videoWidth, element.videoHeight);
   const duration = Number.isFinite(element.duration) ? element.duration : item.durationSeconds;
   const target = Math.min(Math.max(0, item.currentSeconds), Math.max(0, duration - 0.05));
   if (Math.abs(element.currentTime - target) > 0.1) element.currentTime = target;
@@ -112,7 +134,9 @@ function seekOne(item: ResonanceVideo, event: Event): void {
 
 function removeVideo(id: string): void {
   videoElements.get(id)?.pause();
+  destroySphericalRenderer(id);
   videoElements.delete(id);
+  canvasElements.delete(id);
   markPlaying(id, false);
   resonance.remove(id);
 }
@@ -127,9 +151,59 @@ function clearAll(): void {
   clearTimer = null;
   clearPending.value = false;
   pauseAll();
+  for (const id of sphericalRenderers.keys()) destroySphericalRenderer(id);
   videoElements.clear();
+  canvasElements.clear();
   playingIds.value = new Set();
   resonance.clear();
+}
+
+function ensureSphericalRenderer(item: ResonanceVideo): void {
+  if (!item.isVr || sphericalRenderers.has(item.id)) return;
+  const element = videoElements.get(item.id);
+  const canvas = canvasElements.get(item.id);
+  if (!element || !canvas) return;
+  try {
+    const renderer = new SphericalVideoRenderer(element, canvas, (message) => {
+      console.error('[resonance] VR rendering failed', { id: item.id, message });
+      window.setTimeout(() => {
+        if (sphericalRenderers.get(item.id) !== renderer) return;
+        destroySphericalRenderer(item.id, false);
+      }, 0);
+    });
+    renderer.setView(item.vrView ?? { yawDegrees: 0, pitchDegrees: 0, fovDegrees: 75 });
+    sphericalRenderers.set(item.id, renderer);
+    setVrActive(item.id, true);
+  } catch (error) {
+    console.error('[resonance] VR player initialization failed', { id: item.id, error });
+    setVrActive(item.id, false);
+  }
+}
+
+function destroySphericalRenderer(id: string, persistView = true): void {
+  const renderer = sphericalRenderers.get(id);
+  if (renderer && persistView) resonance.updateVrView(id, renderer.getView());
+  renderer?.dispose();
+  sphericalRenderers.delete(id);
+  setVrActive(id, false);
+}
+
+function setVrActive(id: string, active: boolean): void {
+  const next = new Set(vrActiveIds.value);
+  if (active) next.add(id);
+  else next.delete(id);
+  vrActiveIds.value = next;
+}
+
+async function hydrateLegacyVrModes(): Promise<void> {
+  const generation = ++vrHydrationGeneration;
+  const unknownVideos = resonance.videos.filter((item) => !item.vrModeKnown);
+  await Promise.all(unknownVideos.map(async (item) => {
+    const result = await window.filmLibrary.films.detail(item.filmId);
+    if (generation !== vrHydrationGeneration || !result.ok) return;
+    const part = result.data.parts.find((candidate) => candidate.id === item.partId);
+    if (part) resonance.updateVrMode(item.id, part.isVr);
+  }));
 }
 
 function formatTime(value: number): string {
@@ -154,7 +228,9 @@ onBeforeUnmount(() => {
   stageObserver?.disconnect();
   if (clearTimer) clearTimeout(clearTimer);
   pauseAll();
+  for (const id of sphericalRenderers.keys()) destroySphericalRenderer(id);
   videoElements.clear();
+  canvasElements.clear();
 });
 </script>
 
@@ -206,7 +282,9 @@ onBeforeUnmount(() => {
           :style="tileStyle(item.id)"
         >
           <video
-            :ref="(element) => registerVideo(item.id, element)"
+            :ref="(element) => registerVideo(item, element)"
+            :class="{ 'vr-video-source': vrActiveIds.has(item.id) }"
+            crossorigin="anonymous"
             :src="mediaUrl('part', item.partId)"
             preload="metadata"
             playsinline
@@ -215,6 +293,13 @@ onBeforeUnmount(() => {
             @play="markPlaying(item.id, true)"
             @pause="markPlaying(item.id, false)"
             @ended="markPlaying(item.id, false)"
+          />
+          <canvas
+            v-if="item.isVr"
+            :ref="(element) => registerCanvas(item, element)"
+            class="resonance-vr-canvas"
+            :class="{ active: vrActiveIds.has(item.id) }"
+            :aria-label="`${item.title} 的 360° VR 画面，拖动可转动视角，滚轮缩放`"
           />
           <div class="tile-shade" />
           <div class="tile-caption">
@@ -264,6 +349,10 @@ onBeforeUnmount(() => {
 .resonance-stage { position: relative; min-width: 0; min-height: 0; overflow: hidden; outline: 0; background: #05070a; }
 .resonance-tile { position: absolute; min-width: 0; min-height: 0; overflow: hidden; border: 1px solid rgba(255,255,255,.07); border-radius: 7px; background: #020305; box-shadow: 0 10px 30px rgba(0,0,0,.22); transition: left .26s ease, top .26s ease, width .26s ease, height .26s ease; }
 .resonance-tile video { display: block; width: 100%; height: 100%; object-fit: contain; background: #000; }
+.resonance-tile video.vr-video-source { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.resonance-vr-canvas { position: absolute; inset: 0; display: none; width: 100%; height: 100%; background: #000; cursor: grab; }
+.resonance-vr-canvas.active { display: block; }
+.resonance-vr-canvas.dragging { cursor: grabbing; }
 .tile-shade { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0,0,0,.52), transparent 25%, transparent 58%, rgba(0,0,0,.8)); opacity: .45; pointer-events: none; transition: opacity .18s ease; }
 .tile-caption { position: absolute; top: 10px; right: 44px; left: 12px; display: grid; min-width: 0; gap: 2px; color: #fff; text-shadow: 0 2px 6px #000; pointer-events: none; opacity: .72; transition: opacity .18s ease; }.tile-caption strong, .tile-caption span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.tile-caption strong { font-size: 12px; }.tile-caption span { color: rgba(255,255,255,.68); font-size: 9px; }
 .tile-remove { position: absolute; top: 8px; right: 8px; display: grid; width: 28px; height: 28px; padding: 0; place-items: center; border: 1px solid rgba(255,255,255,.16); border-radius: 50%; color: #fff; background: rgba(0,0,0,.5); cursor: pointer; opacity: 0; transition: opacity .18s ease, background .18s ease; }.tile-remove svg { width: 14px; }.tile-remove:hover { background: rgba(183,55,66,.82); }

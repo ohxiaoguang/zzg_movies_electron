@@ -85,6 +85,7 @@ const state = {
   playback: null,
 };
 let activeCardPreviewClose = null;
+let activeVrRenderer = null;
 const elements = Object.fromEntries([
   'menu-toggle', 'sidebar-backdrop', 'app-sidebar', 'mobile-role-badge', 'sidebar-status',
   'count-all', 'count-unorganized', 'count-organized', 'count-favorite', 'count-all-data',
@@ -542,6 +543,7 @@ function attachFilmCardPreview(card, film) {
   let mediaGeneration = 0;
   let detailPromise = null;
   let activeChannel = null;
+  let cardVrRenderer = null;
 
   const cancelClose = () => {
     if (closeTimer) window.clearTimeout(closeTimer);
@@ -555,6 +557,8 @@ function attachFilmCardPreview(card, film) {
     closeTimer = null;
     slideshowTimer = null;
     mediaGeneration += 1;
+    cardVrRenderer?.dispose();
+    cardVrRenderer = null;
     if (popup?.querySelector('video') === state.playback?.video) releaseActivePlayback();
     popup?.remove();
     popup = null;
@@ -587,6 +591,8 @@ function attachFilmCardPreview(card, film) {
     const activate = async (channel) => {
       if (!popup) return;
       const generation = ++mediaGeneration;
+      cardVrRenderer?.dispose();
+      cardVrRenderer = null;
       if (slideshowTimer) window.clearInterval(slideshowTimer);
       slideshowTimer = null;
       if (media.querySelector('video') === state.playback?.video) releaseActivePlayback();
@@ -631,14 +637,18 @@ function attachFilmCardPreview(card, film) {
       const status = createElement('span', 'web-card-preview-status', '正在准备精彩片段…');
       const segmentLabel = createElement('div', 'web-segment-preview-label');
       const video = document.createElement('video');
+      video.crossOrigin = 'anonymous';
       video.playsInline = true;
       video.preload = 'metadata';
       video.muted = true;
-      media.append(video, segmentLabel, status);
+      const vrCanvas = createElement('canvas', 'web-vr-canvas');
+      vrCanvas.hidden = true;
+      media.append(video, vrCanvas, segmentLabel, status);
       try {
         const detail = await ensureDetail();
         if (!popup || generation !== mediaGeneration) return;
         const segments = detail.segments.filter((segment) => segment.includeInPreview);
+        const partVrModes = new Map(detail.parts.map((part) => [part.id, part.isVr]));
         if (!segments.length) {
           status.textContent = '暂无可用的精彩片段';
           return;
@@ -670,6 +680,32 @@ function attachFilmCardPreview(card, film) {
             startSeconds: activeSegment.startSeconds,
             endSeconds: activeSegment.endSeconds,
           }, null, { muted: true, controls: false });
+          if (!activeSession || !popup || generation !== mediaGeneration) return;
+          cardVrRenderer?.dispose();
+          cardVrRenderer = null;
+          const isVr = partVrModes.get(activeSegment.filmFileId) === true;
+          video.classList.toggle('vr-video-source', isVr);
+          vrCanvas.hidden = !isVr;
+          if (isVr && popup && generation === mediaGeneration) {
+            try {
+              const renderer = new window.FilmVrRenderer(video, vrCanvas, (message) => {
+                status.textContent = `VR 画面渲染失败：${message}`;
+                window.setTimeout(() => {
+                  if (cardVrRenderer !== renderer) return;
+                  cardVrRenderer.dispose();
+                  cardVrRenderer = null;
+                  video.classList.remove('vr-video-source');
+                  vrCanvas.hidden = true;
+                }, 0);
+              });
+              cardVrRenderer = renderer;
+              cardVrRenderer.setView(activeSegment.vrView);
+            } catch (error) {
+              video.classList.remove('vr-video-source');
+              vrCanvas.hidden = true;
+              status.textContent = errorMessage(error);
+            }
+          }
           video.muted = true;
           advancing = false;
         };
@@ -1204,6 +1240,7 @@ function createUnifiedPlayback(film) {
   const section = createElement('section', 'web-playback unified-playback');
   const status = createElement('small', 'muted playback-status');
   const video = document.createElement('video');
+  video.crossOrigin = 'anonymous';
   video.controls = true;
   video.playsInline = true;
   video.preload = 'metadata';
@@ -1215,8 +1252,30 @@ function createUnifiedPlayback(film) {
     seekVideoBy(video, event.key === 'ArrowLeft' ? -delta : delta);
   }, true);
   const videoFrame = createElement('div', 'segment-video-frame');
+  const vrCanvas = createElement('canvas', 'web-vr-canvas');
+  vrCanvas.hidden = true;
+  const vrControls = createElement('div', 'web-vr-controls');
+  vrControls.hidden = true;
+  const vrPlayButton = actionButton('播放', () => {
+    if (video.paused) void video.play();
+    else video.pause();
+  });
+  const vrMuteButton = actionButton('静音', () => { video.muted = !video.muted; });
+  const vrResetButton = actionButton('视角复位', () => activeVrRenderer?.resetView());
+  const vrFullscreenButton = actionButton('全屏', () => {
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void videoFrame.requestFullscreen();
+  });
+  vrControls.append(vrPlayButton, vrMuteButton, vrResetButton, vrFullscreenButton);
   const segmentLabel = createElement('div', 'segment-current-label');
-  videoFrame.append(video, segmentLabel);
+  videoFrame.append(video, vrCanvas, segmentLabel, vrControls);
+  const syncVrControls = () => {
+    vrPlayButton.textContent = video.paused ? '播放' : '暂停';
+    vrMuteButton.textContent = video.muted ? '取消静音' : '静音';
+  };
+  video.addEventListener('play', syncVrControls);
+  video.addEventListener('pause', syncVrControls);
+  video.addEventListener('volumechange', syncVrControls);
   video.addEventListener('loadedmetadata', () => {
     const active = state.playback;
     if (active?.video === video) active.mediaReady = true;
@@ -1234,6 +1293,40 @@ function createUnifiedPlayback(film) {
   let activeSegment = null;
   let activeSegmentSession = null;
 
+  const applyVrMode = (part, view = null) => {
+    activeVrRenderer?.dispose();
+    activeVrRenderer = null;
+    const isVr = part?.isVr === true;
+    video.classList.toggle('vr-video-source', isVr);
+    video.controls = !isVr;
+    vrCanvas.hidden = !isVr;
+    vrControls.hidden = !isVr;
+    if (!isVr) return;
+    try {
+      const renderer = new window.FilmVrRenderer(video, vrCanvas, (message) => {
+        status.textContent = `VR 画面渲染失败：${message}`;
+        window.setTimeout(() => {
+          if (activeVrRenderer !== renderer) return;
+          activeVrRenderer.dispose();
+          activeVrRenderer = null;
+          video.classList.remove('vr-video-source');
+          video.controls = true;
+          vrCanvas.hidden = true;
+          vrControls.hidden = true;
+        }, 0);
+      });
+      activeVrRenderer = renderer;
+      activeVrRenderer.setView(view);
+      syncVrControls();
+    } catch (error) {
+      video.classList.remove('vr-video-source');
+      video.controls = true;
+      vrCanvas.hidden = true;
+      vrControls.hidden = true;
+      status.textContent = `VR 播放器初始化失败：${errorMessage(error)}`;
+    }
+  };
+
   if (!parts.length) {
     status.textContent = '原片文件当前不可用';
   } else {
@@ -1250,12 +1343,13 @@ function createUnifiedPlayback(film) {
   };
   const playOriginal = async (partId = null) => {
     clearSegmentMode();
-    await startAdaptivePlayback(
+    const session = await startAdaptivePlayback(
       video,
       status,
       partId ? { partId } : { filmId: film.id },
       subtitleSelect,
     );
+    if (session) applyVrMode(parts.find((part) => part.id === partId) ?? parts[0], null);
   };
   const playSegment = async (segment, sequencePosition = -1) => {
     activeSegmentIndex = sequencePosition;
@@ -1272,6 +1366,7 @@ function createUnifiedPlayback(film) {
       endSeconds: segment.endSeconds,
     });
     if (activeSegmentSession) {
+      applyVrMode(parts.find((part) => part.id === segment.filmFileId), segment.vrView);
       status.textContent = `${segment.title || '未命名片段'} · ${formatPlaybackTime(segment.startSeconds)}–${formatPlaybackTime(segment.endSeconds)}`;
     }
   };
@@ -1711,6 +1806,8 @@ async function ensureCompletedHlsPlayback(sessionId, status) {
 }
 
 function releaseActivePlayback() {
+  activeVrRenderer?.dispose();
+  activeVrRenderer = null;
   const active = state.playback;
   if (!active) return;
   const positionSeconds = active.video.currentTime;

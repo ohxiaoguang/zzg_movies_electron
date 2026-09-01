@@ -201,6 +201,7 @@ describe('renderer regressions', () => {
   it('uses a full-width detail workbench and exposes segment titles on timeline nodes', () => {
     const segmentEditor = fs.readFileSync(segmentEditorPath, 'utf8');
     const detailPlayer = fs.readFileSync(detailPlayerPath, 'utf8');
+    const popup = fs.readFileSync(popupPath, 'utf8');
     const preload = fs.readFileSync(preloadPath, 'utf8');
     const settings = fs.readFileSync(settingsPath, 'utf8');
     expect(drawer).toContain('size="100vw"');
@@ -235,7 +236,14 @@ describe('renderer regressions', () => {
     expect(drawer).not.toContain('<el-tab-pane label="详细信息"');
     expect(segmentEditor).toContain('defineExpose({ markStart, markEnd })');
     expect(detailPlayer).toContain('playbackGeneration += 1');
-    expect(detailPlayer).toContain('defineExpose({ playSegment, playPreview, playOriginal, selectPart, seekRelative, togglePlayback, stopPlayback, releasePlayback, getPlaybackSnapshot })');
+    expect(detailPlayer).toContain('defineExpose({ playSegment, playPreview, playOriginal, selectPart, seekRelative, togglePlayback, stopPlayback, releasePlayback, getPlaybackSnapshot, getCurrentVrView })');
+    expect(segmentEditor).toContain('draft.vrView = props.captureVrView?.() ?? null');
+    expect(segmentEditor).toContain('copyVrView(draft.vrView ?? props.captureVrView?.() ?? null)');
+    expect(segmentEditor).toContain('yawDegrees: Number(view.yawDegrees)');
+    expect(segmentEditor).not.toContain('记录视角');
+    expect(segmentEditor).not.toContain('更新视角');
+    expect(detailPlayer).toContain('applyVrView(segment.vrView)');
+    expect(popup).toContain('sphericalRenderer?.setView(segment.vrView)');
     expect(detailPlayer).toContain("element.removeAttribute('src')");
     expect(detailPlayer).toContain('element.load()');
     expect(detailPlayer).toContain('window.filmLibrary.films.subtitleTracks(partId)');
@@ -428,6 +436,13 @@ describe('renderer regressions', () => {
     const resonance = fs.readFileSync(resonancePath, 'utf8');
     expect(resonance).toContain('object-fit: contain; background: #000;');
     expect(resonance).not.toContain('object-fit: cover;');
+    expect(resonance).toContain('SphericalVideoRenderer');
+    expect(resonance).toContain('class="resonance-vr-canvas"');
+    expect(resonance).toContain("renderer.setView(item.vrView ?? { yawDegrees: 0, pitchDegrees: 0, fovDegrees: 75 })");
+    expect(resonance).toContain('crossorigin="anonymous"');
+    expect(resonance).toContain('hydrateLegacyVrModes');
+    expect(drawer).toContain('aspectRatio: snapshot.isVr ? 16 / 9 : snapshot.width / snapshot.height');
+    expect(drawer).toContain('vrView: snapshot.vrView');
   });
 
   it('does not render or bundle a QR code in LAN web access settings', () => {

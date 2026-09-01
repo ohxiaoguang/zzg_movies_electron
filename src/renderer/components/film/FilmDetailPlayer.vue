@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
-import type { DesktopSubtitleTrackDto, FilmDetailDto, FilmSegmentDto } from '../../../shared/contracts';
+import type { DesktopSubtitleTrackDto, FilmDetailDto, FilmSegmentDto, VrViewDto } from '../../../shared/contracts';
 import { mediaUrl } from '../../api';
 import { SphericalVideoRenderer } from '../../media/SphericalVideoRenderer';
 
@@ -22,6 +22,8 @@ interface FilmPlaybackSnapshot {
   durationSeconds: number;
   width: number;
   height: number;
+  isVr: boolean;
+  vrView: VrViewDto | null;
 }
 
 type PlaybackSourceMode = 'direct' | 'compatibility';
@@ -271,6 +273,7 @@ async function seekAndPlay(segment: FilmSegmentDto): Promise<void> {
   activeSegment.value = segment;
   await nextTick();
   if (generation !== playbackGeneration) return;
+  applyVrView(segment.vrView);
   const element = video.value;
   if (!element) return;
   if (sourceChanged || element.readyState < 1) await waitForMetadata(element);
@@ -318,6 +321,16 @@ function toggleMute(): void {
 
 function resetVrView(): void {
   sphericalRenderer?.resetView();
+}
+
+function applyVrView(view: VrViewDto | null): void {
+  if (!vrEnabled.value) return;
+  if (view) sphericalRenderer?.setView(view);
+  else sphericalRenderer?.resetView();
+}
+
+function getCurrentVrView(): VrViewDto | null {
+  return vrEnabled.value ? sphericalRenderer?.getView() ?? null : null;
 }
 
 async function toggleFullscreen(): Promise<void> {
@@ -381,6 +394,8 @@ function getPlaybackSnapshot(): FilmPlaybackSnapshot | null {
     durationSeconds: Number.isFinite(element?.duration) ? element!.duration : durationSeconds.value,
     width: element?.videoWidth || props.film.width || 16,
     height: element?.videoHeight || props.film.height || 9,
+    isVr: vrEnabled.value,
+    vrView: getCurrentVrView(),
   };
 }
 
@@ -503,7 +518,7 @@ function destroySphericalRenderer(): void {
   sphericalRenderer = null;
 }
 
-defineExpose({ playSegment, playPreview, playOriginal, selectPart, seekRelative, togglePlayback, stopPlayback, releasePlayback, getPlaybackSnapshot });
+defineExpose({ playSegment, playPreview, playOriginal, selectPart, seekRelative, togglePlayback, stopPlayback, releasePlayback, getPlaybackSnapshot, getCurrentVrView });
 onBeforeUnmount(() => {
   stageObserver?.disconnect();
   destroySphericalRenderer();

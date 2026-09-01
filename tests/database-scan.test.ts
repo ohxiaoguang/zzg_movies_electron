@@ -62,7 +62,7 @@ describe('SQLite migrations and scanning', () => {
   it('creates migrated tables, scans NFO/assets, and supports paging', async () => {
     const root = fixtureRoot();
     const context = createContext(root);
-    expect(context.database.db.pragma('user_version', { simple: true })).toBe(14);
+    expect(context.database.db.pragma('user_version', { simple: true })).toBe(15);
     expect(context.database.hasTable('film_segment')).toBe(true);
     expect(context.database.hasTable('film_playback_state')).toBe(true);
     expect(context.database.hasTable('lan_device')).toBe(true);

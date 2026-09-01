@@ -92,6 +92,10 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent-strong); 
 .web-card-preview-media { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; background: #05070a; }
 .web-card-preview-media > img, .web-card-preview-media > video { display: block; width: 100%; height: 100%; object-fit: cover; background: #000; }
 .web-card-preview-media > video, .web-card-preview-media.is-comment > img { object-fit: contain; }
+.web-card-preview-media > video.vr-video-source, .web-playback video.vr-video-source { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.web-vr-canvas { display: block; width: 100%; height: 100%; background: #000; cursor: grab; }
+.web-vr-canvas.dragging { cursor: grabbing; }
+.web-vr-canvas[hidden] { display: none; }
 .web-card-preview-status { position: absolute; z-index: 2; right: 12px; bottom: 10px; left: 12px; overflow: hidden; padding: 5px 8px; border-radius: 6px; color: rgba(255,255,255,.85); background: rgba(0,0,0,.54); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .web-card-preview-status.above-pagination { bottom: 42px; }
 .web-segment-preview-label { position: absolute; z-index: 2; top: 10px; left: 50%; display: flex; max-width: calc(100% - 28px); padding: 5px 9px; border-radius: 6px; color: rgba(255,255,255,.92); background: rgba(0,0,0,.52); font-size: 10px; line-height: 1.35; transform: translateX(-50%); backdrop-filter: blur(3px); gap: 8px; pointer-events: none; }
@@ -215,6 +219,9 @@ dialog::backdrop { background: rgba(4,6,10,.78); backdrop-filter: blur(7px); }
 .web-playback video::cue { color: #fff; background: rgba(0, 0, 0, .72); font-size: 16px; line-height: 1.25; }
 .segment-preview-title { margin: 0 0 8px; font-size: 13px; }
 .segment-video-frame { position: relative; width: 100%; height: auto; max-height: 100%; min-height: 0; aspect-ratio: 16 / 9; align-self: center; justify-self: center; overflow: hidden; border-radius: 10px; background: #000; }
+.web-vr-controls { position: absolute; z-index: 4; right: 10px; bottom: 10px; display: flex; padding: 5px; border-radius: 8px; background: rgba(0,0,0,.58); gap: 5px; }
+.web-vr-controls[hidden] { display: none; }
+.web-vr-controls button { padding: 5px 8px; border-color: rgba(255,255,255,.2); color: #fff; background: rgba(28,34,44,.85); font-size: 9px; }
 .segment-current-label { position: absolute; z-index: 2; top: 10px; left: 50%; display: flex; max-width: calc(100% - 28px); padding: 5px 10px; border-radius: 6px; color: rgba(255,255,255,.9); background: rgba(0,0,0,.48); font-size: 10px; transform: translateX(-50%); backdrop-filter: blur(3px); gap: 8px; pointer-events: none; }
 .segment-current-label:empty { display: none; }
 .segment-current-label strong, .segment-current-label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

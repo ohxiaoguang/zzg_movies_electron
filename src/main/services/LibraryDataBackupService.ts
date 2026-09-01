@@ -7,6 +7,7 @@ import type {
   LibraryDataBackupDocument,
   LibraryDataBackupFilm,
   LibraryDataBackupSegment,
+  VrViewDto,
 } from '../../shared/contracts';
 import type { DatabaseManager } from '../database/DatabaseManager';
 
@@ -44,6 +45,9 @@ interface SegmentRow {
   title: string;
   comment: string;
   include_in_preview: number;
+  vr_yaw_degrees: number | null;
+  vr_pitch_degrees: number | null;
+  vr_fov_degrees: number | null;
   sort_order: number;
 }
 
@@ -81,7 +85,8 @@ export class LibraryDataBackupService {
       const segments = this.database.db.prepare(
         `SELECT segment.film_id, file.filename, file.file_size,
                 segment.start_seconds, segment.end_seconds, segment.title, segment.comment,
-                segment.include_in_preview, segment.sort_order
+                segment.include_in_preview, segment.vr_yaw_degrees, segment.vr_pitch_degrees,
+                segment.vr_fov_degrees, segment.sort_order
          FROM film_segment segment
          JOIN film_file file ON file.id = segment.film_file_id
          ORDER BY segment.film_id, segment.sort_order, segment.start_seconds, segment.id`,
@@ -193,9 +198,10 @@ export class LibraryDataBackupService {
       const insertSegment = this.database.db.prepare(
         `INSERT INTO film_segment (
            id, film_id, film_file_id, start_seconds, end_seconds, title, comment,
-           include_in_preview, sort_order, source_file_size, source_file_modified_at,
+           include_in_preview, vr_yaw_degrees, vr_pitch_degrees, vr_fov_degrees,
+           sort_order, source_file_size, source_file_modified_at,
            created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       const now = this.clock().toISOString();
 
@@ -230,6 +236,9 @@ export class LibraryDataBackupService {
             segment.title,
             segment.comment,
             segment.includeInPreview ? 1 : 0,
+            segment.vrView?.yawDegrees ?? null,
+            segment.vrView?.pitchDegrees ?? null,
+            segment.vrView?.fovDegrees ?? null,
             segment.sortOrder,
             part.file_size,
             part.file_modified_at,
@@ -370,6 +379,13 @@ function toBackupSegment(row: SegmentRow): LibraryDataBackupSegment {
     comment: row.comment,
     includeInPreview: Boolean(row.include_in_preview),
     sortOrder: Number(row.sort_order),
+    vrView: row.vr_yaw_degrees === null || row.vr_pitch_degrees === null || row.vr_fov_degrees === null
+      ? null
+      : {
+          yawDegrees: Number(row.vr_yaw_degrees),
+          pitchDegrees: Number(row.vr_pitch_degrees),
+          fovDegrees: Number(row.vr_fov_degrees),
+        },
   };
 }
 
@@ -454,7 +470,30 @@ function parseSegment(value: unknown): LibraryDataBackupSegment {
     comment: value.comment,
     includeInPreview: value.includeInPreview,
     sortOrder: Number(value.sortOrder),
+    ...('vrView' in value ? { vrView: parseBackupVrView(value.vrView) } : {}),
   };
+}
+
+function parseBackupVrView(value: unknown): VrViewDto | null {
+  if (value === null) return null;
+  if (!isRecord(value)
+    || !validViewNumber(value.yawDegrees, -180, 180, false)
+    || !validViewNumber(value.pitchDegrees, -85, 85, true)
+    || !validViewNumber(value.fovDegrees, 30, 100, true)) {
+    throw new Error('CLOUD_BACKUP_FILE_INVALID');
+  }
+  return {
+    yawDegrees: value.yawDegrees as number,
+    pitchDegrees: value.pitchDegrees as number,
+    fovDegrees: value.fovDegrees as number,
+  };
+}
+
+function validViewNumber(value: unknown, minimum: number, maximum: number, inclusiveMaximum: boolean): boolean {
+  return typeof value === 'number'
+    && Number.isFinite(value)
+    && value >= minimum
+    && (inclusiveMaximum ? value <= maximum : value < maximum);
 }
 
 function validatedBackupText(value: string, maxLength: number): string {

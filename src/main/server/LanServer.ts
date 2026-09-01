@@ -50,6 +50,7 @@ import {
 } from './NetworkScope';
 import webIndex from './web/index.html?raw';
 import webScript from './web/app.js?raw';
+import webVrPlayer from './web/vr-player.js?raw';
 import webStyles from './web/styles.css?raw';
 import hlsScript from 'hls.js/dist/hls.min.js?raw';
 
@@ -301,6 +302,7 @@ export class LanServer {
 
     if (url.pathname === '/') return this.sendStatic(response, method, 'text/html; charset=utf-8', webIndex);
     if (url.pathname === '/app.js') return this.sendStatic(response, method, 'text/javascript; charset=utf-8', webScript);
+    if (url.pathname === '/vr-player.js') return this.sendStatic(response, method, 'text/javascript; charset=utf-8', webVrPlayer);
     if (url.pathname === '/styles.css') return this.sendStatic(response, method, 'text/css; charset=utf-8', webStyles);
     if (url.pathname === '/vendor/hls.min.js') return this.sendStatic(response, method, 'text/javascript; charset=utf-8', hlsScript);
     if (url.pathname === '/favicon.ico') {

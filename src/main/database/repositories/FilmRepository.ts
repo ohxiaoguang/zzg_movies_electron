@@ -122,6 +122,9 @@ interface FilmSegmentRow {
   title: string;
   comment: string;
   include_in_preview: number;
+  vr_yaw_degrees: number | null;
+  vr_pitch_degrees: number | null;
+  vr_fov_degrees: number | null;
   sort_order: number;
   source_file_size: number;
   source_file_modified_at: string | null;
@@ -409,9 +412,10 @@ export class FilmRepository {
       .prepare(
         `INSERT INTO film_segment (
            id, film_id, film_file_id, start_seconds, end_seconds, title, comment,
-           include_in_preview, sort_order, source_file_size, source_file_modified_at,
+           include_in_preview, vr_yaw_degrees, vr_pitch_degrees, vr_fov_degrees,
+           sort_order, source_file_size, source_file_modified_at,
            created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -422,6 +426,9 @@ export class FilmRepository {
         input.title ?? '',
         input.comment ?? '',
         input.includeInPreview === false ? 0 : 1,
+        input.vrView?.yawDegrees ?? null,
+        input.vrView?.pitchDegrees ?? null,
+        input.vrView?.fovDegrees ?? null,
         Number(nextOrder.value),
         part.file_size,
         part.file_modified_at,
@@ -441,7 +448,8 @@ export class FilmRepository {
       .prepare(
         `UPDATE film_segment SET
            start_seconds = ?, end_seconds = ?, title = ?, comment = ?,
-           include_in_preview = ?, updated_at = ?
+           include_in_preview = ?, vr_yaw_degrees = ?, vr_pitch_degrees = ?,
+           vr_fov_degrees = ?, updated_at = ?
          WHERE id = ?`,
       )
       .run(
@@ -450,6 +458,9 @@ export class FilmRepository {
         input.title ?? existing.title,
         input.comment ?? existing.comment,
         (input.includeInPreview ?? existing.includeInPreview) ? 1 : 0,
+        input.vrView === undefined ? existing.vrView?.yawDegrees ?? null : input.vrView?.yawDegrees ?? null,
+        input.vrView === undefined ? existing.vrView?.pitchDegrees ?? null : input.vrView?.pitchDegrees ?? null,
+        input.vrView === undefined ? existing.vrView?.fovDegrees ?? null : input.vrView?.fovDegrees ?? null,
         new Date().toISOString(),
         input.id,
       );
@@ -1214,6 +1225,13 @@ export class FilmRepository {
       title: row.title,
       comment: row.comment,
       includeInPreview: Boolean(row.include_in_preview),
+      vrView: row.vr_yaw_degrees === null || row.vr_pitch_degrees === null || row.vr_fov_degrees === null
+        ? null
+        : {
+            yawDegrees: Number(row.vr_yaw_degrees),
+            pitchDegrees: Number(row.vr_pitch_degrees),
+            fovDegrees: Number(row.vr_fov_degrees),
+          },
       sortOrder: Number(row.sort_order),
       sourceChanged: Number(row.source_file_size) !== Number(row.current_file_size)
         || row.source_file_modified_at !== row.current_file_modified_at,

@@ -5,6 +5,7 @@ import type { FilmSegmentDto, FilmSummaryDto } from '../../../shared/contracts';
 import { mediaUrl } from '../../api';
 import { calculatePopupPosition, type PopupPosition, type PopupSide } from '../../composables/hoverPopupGeometry';
 import { claimPreview, releasePreview } from '../../composables/usePreviewManager';
+import { SphericalVideoRenderer } from '../../media/SphericalVideoRenderer';
 
 const props = defineProps<{
   film: FilmSummaryDto;
@@ -26,6 +27,7 @@ type PreviewChannel = 'highlights' | 'comments' | 'stills';
 
 const popup = ref<HTMLElement | null>(null);
 const video = ref<HTMLVideoElement | null>(null);
+const vrCanvas = ref<HTMLCanvasElement | null>(null);
 const hasVideoPreview = computed(() => props.film.highlightSegmentCount > 0);
 const activeChannel = ref<PreviewChannel>(props.channel);
 const mode = ref<PreviewMode>('empty');
@@ -40,8 +42,13 @@ const videoPreparing = ref(props.channel === 'highlights' && hasVideoPreview.val
 const highlightSegments = ref<FilmSegmentDto[]>([]);
 const segmentIndex = ref(-1);
 const activeHighlight = computed(() => highlightSegments.value[segmentIndex.value] ?? null);
+const partVrModes = ref(new Map<string, boolean>());
+const activeHighlightIsVr = computed(() => activeHighlight.value
+  ? partVrModes.value.get(activeHighlight.value.filmFileId) ?? false
+  : false);
 let slideshowTimer: ReturnType<typeof setInterval> | null = null;
 let highlightPlaybackGeneration = 0;
+let sphericalRenderer: SphericalVideoRenderer | null = null;
 
 const imageIds = computed(() => activeChannel.value === 'comments' ? props.film.commentImageAssetIds : props.film.previewImageAssetIds);
 const currentImageUrl = computed(() => {
@@ -120,6 +127,7 @@ async function activateChannel(channel: PreviewChannel): Promise<void> {
   claimPreview(props.film.id, video.value);
   const result = await window.filmLibrary.films.detail(props.film.id);
   if (result.ok) {
+    partVrModes.value = new Map(result.data.parts.map((part) => [part.id, part.isVr]));
     highlightSegments.value = result.data.segments.filter((segment) => segment.includeInPreview);
     if (highlightSegments.value.length) {
       await playHighlight(0).catch(fallbackToImages);
@@ -137,6 +145,12 @@ async function playHighlight(index: number): Promise<void> {
   const segment = highlightSegments.value[nextIndex]!;
   segmentIndex.value = nextIndex;
   videoPreparing.value = true;
+  await nextTick();
+  ensureSphericalRenderer();
+  if (activeHighlightIsVr.value) {
+    if (segment.vrView) sphericalRenderer?.setView(segment.vrView);
+    else sphericalRenderer?.resetView();
+  }
   element.src = mediaUrl('part', segment.filmFileId);
   element.load();
   try {
@@ -231,10 +245,37 @@ function stopSlideshow(): void {
 
 function stopVideo(): void {
   highlightPlaybackGeneration += 1;
-  if (!video.value) return;
+  destroySphericalRenderer();
   highlightSegments.value = [];
+  partVrModes.value = new Map();
   segmentIndex.value = -1;
+  if (!video.value) return;
   releasePreview(props.film.id, video.value);
+}
+
+function ensureSphericalRenderer(): void {
+  destroySphericalRenderer();
+  if (!activeHighlightIsVr.value || !video.value || !vrCanvas.value) return;
+  const partId = activeHighlight.value?.filmFileId;
+  try {
+    const renderer = new SphericalVideoRenderer(video.value, vrCanvas.value, (message) => {
+      console.error('[preview] VR rendering failed', { filmId: props.film.id, message });
+      window.setTimeout(() => {
+        if (sphericalRenderer !== renderer || !partId) return;
+        destroySphericalRenderer();
+        partVrModes.value = new Map(partVrModes.value).set(partId, false);
+      }, 0);
+    });
+    sphericalRenderer = renderer;
+  } catch (error) {
+    console.error('[preview] VR player initialization failed', { filmId: props.film.id, error });
+    if (partId) partVrModes.value = new Map(partVrModes.value).set(partId, false);
+  }
+}
+
+function destroySphericalRenderer(): void {
+  sphericalRenderer?.dispose();
+  sphericalRenderer = null;
 }
 
 function onVideoError(): void {
@@ -319,7 +360,8 @@ onBeforeUnmount(() => {
   <Teleport to="body">
     <section ref="popup" class="film-hover-popup" :style="popupStyle" @mouseenter="$emit('enter')" @mouseleave="$emit('leave')">
       <div class="popup-media" :class="{ 'popup-media-image': mode !== 'video', 'popup-media-comment': activeChannel === 'comments' }" :style="mediaStyle">
-        <video v-if="mode === 'video'" ref="video" muted :loop="!highlightSegments.length" playsinline preload="metadata" @playing="onVideoPlaying" @waiting="onVideoWaiting" @timeupdate="onVideoTimeUpdate" @error="onVideoError" />
+        <video v-if="mode === 'video'" ref="video" :class="{ 'vr-video-source': activeHighlightIsVr }" crossorigin="anonymous" muted :loop="!highlightSegments.length" playsinline preload="metadata" @playing="onVideoPlaying" @waiting="onVideoWaiting" @timeupdate="onVideoTimeUpdate" @error="onVideoError" />
+        <canvas v-if="mode === 'video' && activeHighlightIsVr" ref="vrCanvas" class="vr-video-canvas" aria-label="360° VR 精彩片段预览" />
         <img v-else-if="mode === 'slideshow' && currentImageUrl" :src="currentImageUrl" :alt="film.title" @load="onPreviewImageLoad" />
         <div v-else class="popup-empty">暂无预览</div>
         <div v-if="mode === 'video' && activeHighlight" class="segment-preview-label">
@@ -355,6 +397,9 @@ onBeforeUnmount(() => {
 .popup-media { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000; }
 .popup-media-image { aspect-ratio: 800 / 537; }
 .popup-media video, .popup-media img { display: block; width: 100%; height: 100%; object-fit: contain; background: #000; }
+.popup-media video.vr-video-source { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.vr-video-canvas { display: block; width: 100%; height: 100%; background: #000; cursor: grab; }
+.vr-video-canvas.dragging { cursor: grabbing; }
 .popup-media-image img { object-fit: cover; }
 .popup-media-comment img { object-fit: contain; }
 .preview-pagination { position: absolute; z-index: 3; bottom: 10px; left: 50%; display: flex; align-items: center; max-width: calc(100% - 28px); padding: 6px 8px; border-radius: 999px; background: rgba(0, 0, 0, .46); transform: translateX(-50%); gap: 7px; }

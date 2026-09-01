@@ -187,6 +187,7 @@ describe('localhost read-only web server', () => {
     expect(html).toContain('<option value="favorite" hidden>收藏顺序</option>');
     expect(html).toContain('<option value="played">最近观看</option>');
     expect(html).toContain('<script src="/vendor/hls.min.js" defer>');
+    expect(html).toContain('<script src="/vr-player.js" defer>');
     expect(html).toContain('<script src="/app.js" defer>');
     const script = await (await fetch(`${baseUrl}/app.js`)).text();
     expect(script).toContain('class HttpFilmLibraryClient');
@@ -239,6 +240,9 @@ describe('localhost read-only web server', () => {
     expect(script).toContain("createElement('div', 'web-segment-preview-label')");
     expect(script).toContain('formatPlaybackTime(activeSegment.startSeconds)');
     expect(script).toContain('pagination?.setActive(segmentIndex)');
+    expect(script).toContain('cardVrRenderer.setView(activeSegment.vrView)');
+    expect(script).toContain('applyVrMode(parts.find((part) => part.id === segment.filmFileId), segment.vrView)');
+    expect(script).toContain("createElement('canvas', 'web-vr-canvas')");
     expect(script).toContain("appendGroup('精彩评论'");
     expect(script).toContain("appendGroup('剧照'");
     expect(script).toContain('web-segment-timeline');
@@ -297,6 +301,9 @@ describe('localhost read-only web server', () => {
     const hlsResponse = await fetch(`${baseUrl}/vendor/hls.min.js`);
     expect(hlsResponse.status).toBe(200);
     expect(hlsResponse.headers.get('content-type')).toContain('text/javascript');
+    const vrPlayerResponse = await fetch(`${baseUrl}/vr-player.js`);
+    expect(vrPlayerResponse.status).toBe(200);
+    expect(await vrPlayerResponse.text()).toContain('window.FilmVrRenderer = FilmVrRenderer');
     const styleResponse = await fetch(`${baseUrl}/styles.css`);
     expect(styleResponse.status).toBe(200);
     expect(styleResponse.headers.get('content-type')).toContain('text/css');

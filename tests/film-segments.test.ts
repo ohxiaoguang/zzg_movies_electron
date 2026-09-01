@@ -64,6 +64,7 @@ describe('film segments', () => {
       endSeconds: 13,
       title: '精彩片段',
       comment: '测试批注',
+      vrView: { yawDegrees: 42.125, pitchDegrees: -12.5, fovDegrees: 58 },
     });
     expect(created).toMatchObject({
       filmId,
@@ -73,6 +74,7 @@ describe('film segments', () => {
       title: '精彩片段',
       comment: '测试批注',
       includeInPreview: true,
+      vrView: { yawDegrees: 42.125, pitchDegrees: -12.5, fovDegrees: 58 },
       sourceChanged: false,
     });
     expect(films.detail(filmId)).toMatchObject({
@@ -113,8 +115,13 @@ describe('film segments', () => {
       id: created.id,
       endSeconds: 14.5,
       includeInPreview: false,
+      vrView: { yawDegrees: -90, pitchDegrees: 20, fovDegrees: 65 },
     });
-    expect(updated).toMatchObject({ endSeconds: 14.5, includeInPreview: false });
+    expect(updated).toMatchObject({
+      endSeconds: 14.5,
+      includeInPreview: false,
+      vrView: { yawDegrees: -90, pitchDegrees: 20, fovDegrees: 65 },
+    });
     expect(films.detail(filmId)?.highlightSegmentCount).toBe(1);
     expect(films.csvRows({ page: 1, pageSize: 20 })[0]?.highlights.map((item) => item.title)).toEqual(['最终高潮']);
 
@@ -133,7 +140,12 @@ describe('film segments', () => {
       startSeconds: 10.12345,
       endSeconds: 12.5,
       title: '  标题  ',
-    })).toMatchObject({ startSeconds: 10.123, title: '标题' });
+      vrView: { yawDegrees: 12.34567, pitchDegrees: -5, fovDegrees: 75 },
+    })).toMatchObject({
+      startSeconds: 10.123,
+      title: '标题',
+      vrView: { yawDegrees: 12.346, pitchDegrees: -5, fovDegrees: 75 },
+    });
     expect(() => validateFilmSegmentCreate({
       filmId,
       filmFileId: partId,
@@ -142,5 +154,9 @@ describe('film segments', () => {
     })).toThrow('INVALID_FILM_SEGMENT_RANGE');
     expect(() => validateFilmSegmentUpdate({ id: 'not-a-uuid', title: 'x' }))
       .toThrow('INVALID_FILM_SEGMENT');
+    expect(() => validateFilmSegmentUpdate({
+      id: filmId,
+      vrView: { yawDegrees: 180, pitchDegrees: 0, fovDegrees: 75 },
+    })).toThrow('INVALID_FILM_SEGMENT_VIEW');
   });
 });
