@@ -51,7 +51,7 @@ export class MediaProtocol {
         if (request.signal.aborted) return new Response(null, { status: 204 });
         if (!generatedPath) return new Response('Not Found', { status: 404 });
         filePath = generatedPath;
-      } else if (route.kind === 'preview' || route.kind === 'part') {
+      } else if (requiresPlayablePreparation(route.kind)) {
         const cachedPath = await this.previewTranscoder.preparePlayableFile(sourceFilePath, request.signal);
         if (request.signal.aborted) return new Response(null, { status: 204 });
         filePath = cachedPath;
@@ -91,22 +91,28 @@ export class MediaProtocol {
     }
   }
 
-  private resolveLocation(kind: string, id: string): MediaLocation | null {
+  private resolveLocation(kind: MediaRouteKind, id: string): MediaLocation | null {
     if (kind === 'asset') return this.films.assetLocation(id);
     if (kind === 'preview') return this.films.previewLocation(id);
     if (kind === 'poster') return this.films.filmLocation(id);
-    if (kind === 'part') return this.films.partLocation(id);
+    if (kind === 'part' || kind === 'original-part') return this.films.partLocation(id);
     return null;
   }
 }
 
-export function parseMediaUrl(requestUrl: string): { kind: 'asset' | 'preview' | 'poster' | 'part'; id: string } | null {
+export type MediaRouteKind = 'asset' | 'preview' | 'poster' | 'part' | 'original-part';
+
+export function requiresPlayablePreparation(kind: MediaRouteKind): boolean {
+  return kind === 'preview' || kind === 'part';
+}
+
+export function parseMediaUrl(requestUrl: string): { kind: MediaRouteKind; id: string } | null {
   try {
     const url = new URL(requestUrl);
     if (url.search || url.hash) return null;
-    const kind = url.hostname as 'asset' | 'preview' | 'poster' | 'part';
+    const kind = url.hostname as MediaRouteKind;
     const id = url.pathname.split('/').filter(Boolean);
-    if (!['asset', 'preview', 'poster', 'part'].includes(kind) || id.length !== 1 || !isUuid(id[0])) return null;
+    if (!['asset', 'preview', 'poster', 'part', 'original-part'].includes(kind) || id.length !== 1 || !isUuid(id[0])) return null;
     return { kind, id: id[0] };
   } catch {
     return null;

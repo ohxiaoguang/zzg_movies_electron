@@ -90,8 +90,10 @@ export interface FilmLibraryApi {
     partsList(filmId: string): Promise<ApiResult<FilmPartDto[]>>;
     partsOpen(partId: string): Promise<ApiResult<null>>;
     partsShowInFolder(partId: string): Promise<ApiResult<null>>;
+    updatePartVr(partId: string, isVr: boolean): Promise<ApiResult<FilmPartDto>>;
     subtitleTracks(partId: string): Promise<ApiResult<DesktopSubtitleTrackDto[]>>;
     subtitleContent(partId: string, index: number): Promise<ApiResult<string>>;
+    cancelPreview(partId: string): Promise<ApiResult<boolean>>;
     createSegment(input: FilmSegmentCreateInput): Promise<ApiResult<FilmSegmentDto>>;
     updateSegment(input: FilmSegmentUpdateInput): Promise<ApiResult<FilmSegmentDto>>;
     deleteSegment(id: string): Promise<ApiResult<null>>;

@@ -97,6 +97,7 @@ interface FilmFileRow {
   file_modified_at: string | null;
   fingerprint: string | null;
   missing: number;
+  is_vr: number;
   created_at: string;
   updated_at: string;
 }
@@ -671,6 +672,18 @@ export class FilmRepository {
 
   public parts(filmId: string): FilmPartDto[] { return this.partsForFilm(filmId); }
 
+  public updatePartVr(partId: string, isVr: boolean): FilmPartDto {
+    const result = this.db
+      .prepare('UPDATE film_file SET is_vr = ?, updated_at = ? WHERE id = ? AND missing = 0')
+      .run(isVr ? 1 : 0, new Date().toISOString(), partId);
+    if (!result.changes) throw new Error('PART_NOT_FOUND');
+    const row = this.db
+      .prepare('SELECT id, part_type, part_number, filename, relative_path, file_size, file_modified_at, missing, is_vr FROM film_file WHERE id = ?')
+      .get(partId) as Pick<FilmFileRow, 'id' | 'part_type' | 'part_number' | 'filename' | 'relative_path' | 'file_size' | 'file_modified_at' | 'missing' | 'is_vr'> | undefined;
+    if (!row) throw new Error('PART_NOT_FOUND');
+    return this.toPart(row);
+  }
+
   public assetLocation(assetId: string): MediaLocation | null {
     const row = this.db
       .prepare(
@@ -1143,9 +1156,13 @@ export class FilmRepository {
 
   private partsForFilm(filmId: string): FilmPartDto[] {
     const rows = this.db
-      .prepare('SELECT id, part_type, part_number, filename, relative_path, file_size, file_modified_at, missing FROM film_file WHERE film_id = ? ORDER BY part_number ASC, filename COLLATE NOCASE ASC')
-      .all(filmId) as Array<Pick<FilmFileRow, 'id' | 'part_type' | 'part_number' | 'filename' | 'relative_path' | 'file_size' | 'file_modified_at' | 'missing'>>;
-    return rows.map((row) => ({
+      .prepare('SELECT id, part_type, part_number, filename, relative_path, file_size, file_modified_at, missing, is_vr FROM film_file WHERE film_id = ? ORDER BY part_number ASC, filename COLLATE NOCASE ASC')
+      .all(filmId) as Array<Pick<FilmFileRow, 'id' | 'part_type' | 'part_number' | 'filename' | 'relative_path' | 'file_size' | 'file_modified_at' | 'missing' | 'is_vr'>>;
+    return rows.map((row) => this.toPart(row));
+  }
+
+  private toPart(row: Pick<FilmFileRow, 'id' | 'part_type' | 'part_number' | 'filename' | 'relative_path' | 'file_size' | 'file_modified_at' | 'missing' | 'is_vr'>): FilmPartDto {
+    return {
       id: row.id,
       partType: row.part_type,
       partNumber: row.part_number,
@@ -1154,7 +1171,8 @@ export class FilmRepository {
       fileSize: row.file_size,
       fileModifiedAt: row.file_modified_at,
       missing: Boolean(row.missing),
-    }));
+      isVr: Boolean(row.is_vr),
+    };
   }
 
   private segmentsForFilm(filmId: string): FilmSegmentDto[] {

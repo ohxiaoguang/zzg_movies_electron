@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { ElMessage } from 'element-plus';
 import type { DesktopSubtitleTrackDto, FilmDetailDto, FilmSegmentDto } from '../../../shared/contracts';
 import { mediaUrl } from '../../api';
+import { SphericalVideoRenderer } from '../../media/SphericalVideoRenderer';
 
 const props = defineProps<{
   film: FilmDetailDto;
@@ -22,7 +24,10 @@ interface FilmPlaybackSnapshot {
   height: number;
 }
 
+type PlaybackSourceMode = 'direct' | 'compatibility';
+
 const video = ref<HTMLVideoElement | null>(null);
+const vrCanvas = ref<HTMLCanvasElement | null>(null);
 const stage = ref<HTMLElement | null>(null);
 const stageSlot = ref<HTMLElement | null>(null);
 const selectedPartId = ref('');
@@ -30,6 +35,17 @@ const currentSeconds = ref(0);
 const durationSeconds = ref(0);
 const sequenceIndex = ref(-1);
 const activeSegment = ref<FilmSegmentDto | null>(null);
+const mediaActive = ref(true);
+const playbackSourceMode = ref<PlaybackSourceMode>('direct');
+const compatibilityReady = ref(false);
+const playbackError = ref('');
+const vrEnabled = ref(false);
+const vrSaving = ref(false);
+const vrRenderError = ref('');
+const isPlaying = ref(false);
+const isMuted = ref(false);
+const activeSubtitleText = ref('');
+const partVrModes = ref(new Map<string, boolean>());
 const intrinsicSize = ref({ width: 0, height: 0 });
 const stageSize = ref<{ width: string; height: string }>({ width: '100%', height: '100%' });
 const fittedSize = ref<{ width: string; height: string }>({ width: '100%', height: '100%' });
@@ -39,17 +55,32 @@ const subtitleUrl = ref('');
 const subtitleBusy = ref(false);
 const subtitleError = ref('');
 let stageObserver: ResizeObserver | null = null;
+let sphericalRenderer: SphericalVideoRenderer | null = null;
 let playbackGeneration = 0;
 let subtitleGeneration = 0;
+let resumeAfterFallbackSeconds: number | null = null;
+let resumeAfterFallbackPlayback = false;
 
 const availableParts = computed(() => props.film.parts.filter((part) => !part.missing));
 const selectedPart = computed(() => availableParts.value.find((part) => part.id === selectedPartId.value) ?? null);
-const source = computed(() => selectedPartId.value ? mediaUrl('part', selectedPartId.value) : '');
+const source = computed(() => {
+  if (!mediaActive.value || !selectedPartId.value) return '';
+  return mediaUrl(playbackSourceMode.value === 'direct' ? 'original-part' : 'part', selectedPartId.value);
+});
+const playbackModeLabel = computed(() => {
+  if (playbackSourceMode.value === 'direct') return '原片直放';
+  return compatibilityReady.value ? '兼容版本' : '正在准备兼容版本…';
+});
 const selectedPartSegments = computed(() => props.segments.filter((segment) => segment.filmFileId === selectedPartId.value));
 const previewSegments = computed(() => props.segments.filter((segment) => segment.includeInPreview));
 const supportedSubtitleTracks = computed(() => subtitleTracks.value.filter((track) => track.supported));
 
 watch(() => props.film.id, () => {
+  partVrModes.value = new Map(props.film.parts.map((part) => [part.id, part.isVr]));
+  mediaActive.value = true;
+  playbackSourceMode.value = 'direct';
+  compatibilityReady.value = false;
+  playbackError.value = '';
   selectedPartId.value = availableParts.value[0]?.id ?? '';
   currentSeconds.value = 0;
   durationSeconds.value = 0;
@@ -60,7 +91,16 @@ watch(() => props.film.id, () => {
   fittedSize.value = { width: '100%', height: '100%' };
 }, { immediate: true });
 
-watch(selectedPartId, () => {
+watch(selectedPartId, (partId, previousPartId) => {
+  if (previousPartId) void window.filmLibrary.films.cancelPreview(previousPartId);
+  mediaActive.value = true;
+  playbackSourceMode.value = 'direct';
+  compatibilityReady.value = false;
+  playbackError.value = '';
+  resumeAfterFallbackSeconds = null;
+  resumeAfterFallbackPlayback = false;
+  vrEnabled.value = partVrModes.value.get(partId) ?? false;
+  vrRenderError.value = '';
   currentSeconds.value = 0;
   durationSeconds.value = 0;
   intrinsicSize.value = { width: 0, height: 0 };
@@ -78,6 +118,21 @@ watch(stageSlot, (nextSlot) => {
   void nextTick(fitVideoToStage);
 });
 
+watch([vrCanvas, video, vrEnabled], ([canvas, element, enabled]) => {
+  destroySphericalRenderer();
+  vrRenderError.value = '';
+  if (!enabled || !canvas || !element) return;
+  try {
+    sphericalRenderer = new SphericalVideoRenderer(element, canvas, (message) => {
+      vrRenderError.value = `VR 画面渲染失败：${message}`;
+    });
+  } catch (error) {
+    vrRenderError.value = error instanceof Error && error.message === 'WEBGL_UNAVAILABLE'
+      ? '当前设备未启用 WebGL，无法显示 VR 画面'
+      : 'VR 播放器初始化失败';
+  }
+}, { flush: 'post' });
+
 function onLoadedMetadata(): void {
   const element = video.value;
   durationSeconds.value = Number.isFinite(element?.duration) ? element!.duration : 0;
@@ -86,7 +141,33 @@ function onLoadedMetadata(): void {
     height: element?.videoHeight || 0,
   };
   fitVideoToStage();
+  if (playbackSourceMode.value === 'compatibility') compatibilityReady.value = true;
+  if (element && resumeAfterFallbackSeconds !== null) {
+    element.currentTime = Math.max(0, Math.min(element.duration || Number.POSITIVE_INFINITY, resumeAfterFallbackSeconds));
+    const shouldResume = resumeAfterFallbackPlayback;
+    resumeAfterFallbackSeconds = null;
+    resumeAfterFallbackPlayback = false;
+    if (shouldResume) void element.play().catch(() => undefined);
+  }
+  syncPlaybackState();
   emitPosition();
+}
+
+function onPlaybackError(event: Event): void {
+  const element = event.currentTarget as HTMLVideoElement;
+  if (!mediaActive.value || !selectedPartId.value) return;
+  if (playbackSourceMode.value === 'direct') {
+    const expectedSource = mediaUrl('original-part', selectedPartId.value);
+    if (element.currentSrc && element.currentSrc !== expectedSource && element.getAttribute('src') !== expectedSource) return;
+    resumeAfterFallbackSeconds = Number.isFinite(element.currentTime) ? element.currentTime : currentSeconds.value;
+    resumeAfterFallbackPlayback = !element.paused || activeSegment.value !== null;
+    compatibilityReady.value = false;
+    playbackError.value = '';
+    playbackSourceMode.value = 'compatibility';
+    ElMessage.info('原片无法直接播放，正在自动准备兼容版本');
+    return;
+  }
+  playbackError.value = '兼容版本也无法播放，请尝试使用本地播放器';
 }
 
 function fitVideoToStage(): void {
@@ -152,6 +233,7 @@ function seekTimeline(event: MouseEvent): void {
 }
 
 async function playOriginal(): Promise<void> {
+  mediaActive.value = true;
   const generation = ++playbackGeneration;
   sequenceIndex.value = -1;
   activeSegment.value = null;
@@ -161,6 +243,7 @@ async function playOriginal(): Promise<void> {
 }
 
 async function playSegment(segment: FilmSegmentDto): Promise<void> {
+  mediaActive.value = true;
   sequenceIndex.value = -1;
   await seekAndPlay(segment);
 }
@@ -202,6 +285,7 @@ function selectPart(partId: string): void {
   if (!availableParts.value.some((part) => part.id === partId)) return;
   sequenceIndex.value = -1;
   activeSegment.value = null;
+  mediaActive.value = true;
   selectedPartId.value = partId;
 }
 
@@ -220,11 +304,70 @@ function togglePlayback(): void {
   else element.pause();
 }
 
+function syncPlaybackState(): void {
+  isPlaying.value = !(video.value?.paused ?? true);
+  isMuted.value = video.value?.muted ?? false;
+}
+
+function toggleMute(): void {
+  const element = video.value;
+  if (!element) return;
+  element.muted = !element.muted;
+  syncPlaybackState();
+}
+
+function resetVrView(): void {
+  sphericalRenderer?.resetView();
+}
+
+async function toggleFullscreen(): Promise<void> {
+  if (document.fullscreenElement) await document.exitFullscreen();
+  else await stage.value?.requestFullscreen();
+}
+
+async function saveVrMode(value: boolean): Promise<void> {
+  const partId = selectedPartId.value;
+  if (!partId || vrSaving.value) return;
+  const previous = partVrModes.value.get(partId) ?? false;
+  vrEnabled.value = value;
+  vrSaving.value = true;
+  const result = await window.filmLibrary.films.updatePartVr(partId, value);
+  if (partId !== selectedPartId.value) {
+    vrSaving.value = false;
+    return;
+  }
+  if (!result.ok) {
+    vrEnabled.value = previous;
+    ElMessage.error(result.error.message);
+  } else {
+    partVrModes.value = new Map(partVrModes.value).set(partId, result.data.isVr);
+    vrEnabled.value = result.data.isVr;
+  }
+  vrSaving.value = false;
+}
+
 function stopPlayback(): void {
   playbackGeneration += 1;
   sequenceIndex.value = -1;
   activeSegment.value = null;
   video.value?.pause();
+  syncPlaybackState();
+}
+
+function releasePlayback(): void {
+  stopPlayback();
+  if (!mediaActive.value) return;
+  const partId = selectedPartId.value;
+  if (partId) void window.filmLibrary.films.cancelPreview(partId);
+  mediaActive.value = false;
+  resumeAfterFallbackSeconds = null;
+  resumeAfterFallbackPlayback = false;
+  subtitleGeneration += 1;
+  resetSubtitleState();
+  const element = video.value;
+  if (!element) return;
+  element.removeAttribute('src');
+  element.load();
 }
 
 function getPlaybackSnapshot(): FilmPlaybackSnapshot | null {
@@ -302,13 +445,29 @@ function showSelectedTextTrack(): void {
   if (!tracks) return;
   for (let index = 0; index < tracks.length; index += 1) {
     tracks[index]!.mode = index === tracks.length - 1 ? 'showing' : 'disabled';
+    tracks[index]!.oncuechange = index === tracks.length - 1
+      ? () => updateActiveSubtitleText(tracks[index]!)
+      : null;
   }
+  const selected = tracks[tracks.length - 1];
+  if (selected) updateActiveSubtitleText(selected);
 }
 
 function disableTextTracks(): void {
   const tracks = video.value?.textTracks;
+  activeSubtitleText.value = '';
   if (!tracks) return;
-  for (let index = 0; index < tracks.length; index += 1) tracks[index]!.mode = 'disabled';
+  for (let index = 0; index < tracks.length; index += 1) {
+    tracks[index]!.mode = 'disabled';
+    tracks[index]!.oncuechange = null;
+  }
+}
+
+function updateActiveSubtitleText(track: TextTrack): void {
+  activeSubtitleText.value = Array.from(track.activeCues ?? [])
+    .map((cue) => (cue as VTTCue).text || '')
+    .filter(Boolean)
+    .join('\n');
 }
 
 function resetSubtitleState(): void {
@@ -339,12 +498,16 @@ function formatTime(value: number): string {
   return [hours, minutes, rest].map((part) => String(part).padStart(2, '0')).join(':');
 }
 
-defineExpose({ playSegment, playPreview, playOriginal, selectPart, seekRelative, togglePlayback, stopPlayback, getPlaybackSnapshot });
+function destroySphericalRenderer(): void {
+  sphericalRenderer?.dispose();
+  sphericalRenderer = null;
+}
+
+defineExpose({ playSegment, playPreview, playOriginal, selectPart, seekRelative, togglePlayback, stopPlayback, releasePlayback, getPlaybackSnapshot });
 onBeforeUnmount(() => {
   stageObserver?.disconnect();
-  subtitleGeneration += 1;
-  releaseSubtitleUrl();
-  stopPlayback();
+  destroySphericalRenderer();
+  releasePlayback();
 });
 </script>
 
@@ -354,8 +517,14 @@ onBeforeUnmount(() => {
       <div class="player-context">
         <strong>原片播放器</strong>
         <span v-if="selectedPart">{{ selectedPart.filename }}</span>
+        <small v-if="source" class="playback-mode-badge" :class="{ fallback: playbackSourceMode === 'compatibility' }">{{ playbackModeLabel }}</small>
       </div>
       <div class="player-actions">
+        <span class="vr-mode-label">是否 VR</span>
+        <el-select v-model="vrEnabled" class="vr-mode-select" aria-label="是否 VR 视频" :loading="vrSaving" :disabled="vrSaving || !selectedPart" @change="saveVrMode">
+          <el-option label="否" :value="false" />
+          <el-option label="是（360°）" :value="true" />
+        </el-select>
         <el-select
           v-if="source"
           :model-value="selectedSubtitleIndex"
@@ -392,15 +561,21 @@ onBeforeUnmount(() => {
         <video
           ref="video"
           class="detail-player-video"
+          :class="{ 'vr-video-source': vrEnabled }"
+          crossorigin="anonymous"
           :src="source"
           :style="fittedSize"
           :data-video-width="intrinsicSize.width"
           :data-video-height="intrinsicSize.height"
-          controls
+          :controls="!vrEnabled"
           playsinline
           preload="metadata"
           @loadedmetadata="onLoadedMetadata"
+          @error="onPlaybackError"
           @timeupdate="onTimeUpdate"
+          @play="syncPlaybackState"
+          @pause="syncPlaybackState"
+          @volumechange="syncPlaybackState"
         >
           <track
             v-if="subtitleUrl"
@@ -412,6 +587,17 @@ onBeforeUnmount(() => {
             @load="showSelectedTextTrack"
           />
         </video>
+        <canvas v-if="vrEnabled" ref="vrCanvas" class="vr-video-canvas" aria-label="360° VR 视频画面，拖动鼠标转动视角，滚轮缩放" />
+        <div v-if="vrEnabled" class="vr-player-hint">拖动转动视角 · 滚轮缩放</div>
+        <div v-if="vrEnabled" class="vr-player-controls">
+          <button type="button" @click="togglePlayback">{{ isPlaying ? '暂停' : '播放' }}</button>
+          <button type="button" @click="toggleMute">{{ isMuted ? '取消静音' : '静音' }}</button>
+          <button type="button" @click="resetVrView">视角复位</button>
+          <button type="button" @click="toggleFullscreen">全屏</button>
+        </div>
+        <p v-if="vrEnabled && activeSubtitleText" class="vr-subtitle-overlay">{{ activeSubtitleText }}</p>
+        <div v-if="vrEnabled && vrRenderError" class="vr-render-error">{{ vrRenderError }}</div>
+        <div v-if="playbackError" class="playback-error">{{ playbackError }}</div>
         <div v-if="activeSegment" class="active-segment-label">
           <strong>{{ activeSegment.title || '未命名片段' }}</strong>
           <span>{{ formatTime(activeSegment.startSeconds) }} → {{ formatTime(activeSegment.endSeconds) }}</span>
@@ -447,14 +633,28 @@ onBeforeUnmount(() => {
 .player-context { display: flex; min-width: 0; align-items: center; gap: 8px; }
 .player-context strong { flex: 0 0 auto; font-size: 12px; }
 .player-context span { overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.playback-mode-badge { flex: 0 0 auto; padding: 2px 6px; border: 1px solid rgba(122,211,167,.35); border-radius: 999px; color: #9be0bf; font-size: 9px; font-weight: 600; white-space: nowrap; }
+.playback-mode-badge.fallback { border-color: rgba(238,188,105,.35); color: #efc47d; }
 .player-actions { display: flex; min-width: 0; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; }
 .part-select { width: min(320px, 32vw); }
 .subtitle-select { width: min(210px, 22vw); }
+.vr-mode-label { flex: 0 0 auto; color: var(--muted); font-size: 10px; }
+.vr-mode-select { width: 108px; }
 .resonance-add-button { --el-button-text-color: #b7f2da; --el-button-border-color: rgba(152,227,194,.42); --el-button-bg-color: rgba(54,115,94,.16); }
 .player-stage-slot { display: grid; width: 100%; height: 100%; min-height: 0; place-items: center; overflow: hidden; }
 .player-stage { position: relative; display: grid; max-width: 100%; max-height: 100%; aspect-ratio: 16 / 9; place-items: center; overflow: hidden; border-radius: 9px; background: #050609; box-shadow: 0 16px 42px rgba(0, 0, 0, .28); }
 .detail-player-video { display: block; min-width: 0; min-height: 0; max-width: 100%; max-height: 100%; flex: 0 0 auto; object-fit: contain !important; object-position: 50% 50%; background: #050609; }
+.detail-player-video.vr-video-source { opacity: 0; pointer-events: none; }
 .detail-player-video::cue { color: #fff; background: rgba(0, 0, 0, .72); font-size: 55%; line-height: 1.25; }
+.vr-video-canvas { position: absolute; z-index: 1; inset: 0; display: block; width: 100%; height: 100%; cursor: grab; background: #000; }
+.vr-video-canvas.dragging { cursor: grabbing; }
+.vr-player-hint { position: absolute; z-index: 4; top: 10px; right: 10px; padding: 5px 8px; border-radius: 6px; color: rgba(255,255,255,.72); background: rgba(0,0,0,.48); font-size: 10px; pointer-events: none; }
+.vr-player-controls { position: absolute; z-index: 4; right: 10px; bottom: 10px; left: 10px; display: flex; justify-content: center; gap: 6px; pointer-events: none; }
+.vr-player-controls button { padding: 5px 9px; border: 1px solid rgba(255,255,255,.28); border-radius: 6px; color: #fff; background: rgba(0,0,0,.62); font: inherit; font-size: 10px; cursor: pointer; pointer-events: auto; }
+.vr-player-controls button:hover, .vr-player-controls button:focus-visible { border-color: var(--accent); color: var(--accent); outline: none; }
+.vr-subtitle-overlay { position: absolute; z-index: 3; right: 12%; bottom: 48px; left: 12%; margin: 0; color: #fff; font-size: 15px; line-height: 1.35; text-align: center; text-shadow: 0 1px 3px #000, 0 1px 8px #000; white-space: pre-line; pointer-events: none; }
+.vr-render-error { position: absolute; z-index: 5; inset: 0; display: grid; padding: 20px; place-items: center; color: #ffb4b4; background: rgba(0,0,0,.82); font-size: 12px; text-align: center; }
+.playback-error { position: absolute; z-index: 6; inset: 0; display: grid; padding: 20px; place-items: center; color: #ffb4b4; background: rgba(0,0,0,.86); font-size: 12px; text-align: center; }
 .active-segment-label { position: absolute; z-index: 2; top: 12px; left: 50%; display: flex; max-width: calc(100% - 32px); padding: 6px 11px; border-radius: 7px; color: rgba(255,255,255,.94); background: rgba(0,0,0,.48); font-size: 11px; transform: translateX(-50%); backdrop-filter: blur(4px); gap: 9px; pointer-events: none; }
 .active-segment-label strong, .active-segment-label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .active-segment-label span { color: rgba(255,255,255,.72); font-variant-numeric: tabular-nums; }

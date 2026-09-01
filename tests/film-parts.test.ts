@@ -81,6 +81,8 @@ describe('multi-part films and availability', () => {
     const detail = context.films.detail(first.items[0].id)!;
     expect(detail.parts.map((part) => part.partNumber)).toEqual([1, 2, 3]);
     expect(detail.parts.map((part) => part.partType)).toEqual(['cd', 'cd', 'cd']);
+    expect(detail.parts.every((part) => !part.isVr)).toBe(true);
+    expect(context.films.updatePartVr(detail.parts[1]!.id, true).isVr).toBe(true);
     expect(detail.title).toBe('分段电影');
     expect(detail.images).toHaveLength(4);
     expect(detail.nfoTags[0]?.name).toBe('科幻');
@@ -88,6 +90,7 @@ describe('multi-part films and availability', () => {
     await waitForScan(context.scan);
     expect(context.films.page({ page: 1, pageSize: 20 }).total).toBe(1);
     expect(context.films.detail(first.items[0].id)?.parts).toHaveLength(3);
+    expect(context.films.detail(first.items[0].id)?.parts[1]?.isVr).toBe(true);
     expect(context.films.page({ page: 1, pageSize: 20, allData: true, recordIssue: 'invalid-multipart' }).total).toBe(0);
   });
 

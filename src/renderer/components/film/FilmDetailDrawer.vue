@@ -69,7 +69,7 @@ const rescanBusy = computed(() => rescanStarting.value || Boolean(rescanJobId &&
 watch(() => [props.modelValue, props.filmId], () => {
   if (props.modelValue) void load();
   else {
-    detailPlayer.value?.stopPlayback();
+    detailPlayer.value?.releasePlayback();
     cleanupGallery();
   }
 }, { immediate: true });
@@ -378,7 +378,7 @@ function cleanupGallery(): void { brokenImageIds.value = new Set(); imageViewerV
 function actorCountIndex(actors: ActorDto[]): Record<string, number> { return Object.fromEntries(actors.map((actor) => [actor.name.toLocaleLowerCase(), actor.filmCount])); }
 function actorCount(name: string): number { return actorCounts.value[name.toLocaleLowerCase()] ?? 0; }
 async function close(): Promise<boolean> {
-  detailPlayer.value?.stopPlayback();
+  detailPlayer.value?.releasePlayback();
   if (!(await flushBeforeClose())) return false;
   cleanupGallery();
   activeFilmId = null;
@@ -388,7 +388,7 @@ async function close(): Promise<boolean> {
 async function filterByActor(name: string): Promise<void> { if (await close()) await router.push({ path: '/library', query: { actor: name } }); }
 
 window.addEventListener('keydown', handleKeydown, true);
-onBeforeUnmount(() => { window.removeEventListener('keydown', handleKeydown, true); detailPlayer.value?.stopPlayback(); if (saveTimer) clearTimeout(saveTimer); });
+onBeforeUnmount(() => { window.removeEventListener('keydown', handleKeydown, true); detailPlayer.value?.releasePlayback(); if (saveTimer) clearTimeout(saveTimer); });
 </script>
 
 <template>
@@ -415,6 +415,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', handleKeydown, tru
 
         <main class="detail-main-column">
           <FilmDetailPlayer
+            v-if="modelValue"
             ref="detailPlayer"
             :film="detail"
             :segments="detail.segments"

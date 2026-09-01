@@ -1,8 +1,9 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppLogger } from '../src/main/system/AppLogger';
+import { MediaCapabilityService } from '../src/main/media/MediaCapabilityService';
 import {
   buildPreviewTranscodeArgs,
   previewCacheKey,
@@ -22,6 +23,28 @@ function toolDirectory(): string {
   fs.writeFileSync(path.join(root, 'ffmpeg.exe'), 'fixture');
   fs.writeFileSync(path.join(root, 'ffprobe.exe'), 'fixture');
   return root;
+}
+
+class TranscodeCapabilityStub extends MediaCapabilityService {
+  public constructor() {
+    super(() => '');
+  }
+
+  public override toolPaths(): { ffmpeg: string; ffprobe: null } {
+    return { ffmpeg: 'ffmpeg', ffprobe: null };
+  }
+
+  public override async playbackPlan(_filePath: string) {
+    return {
+      probe: null,
+      plan: {
+        mode: 'transcode' as const,
+        reason: 'PROBE_UNAVAILABLE_TRANSCODE_FALLBACK' as const,
+        videoMode: 'transcode' as const,
+        audioMode: 'transcode' as const,
+      },
+    };
+  }
 }
 
 describe('compatibility preview transcoder', () => {
@@ -69,5 +92,105 @@ describe('compatibility preview transcoder', () => {
     expect(previewCacheKey('C:\\Movies\\clip.mkv', 100, 1_000)).toBe(first);
     expect(previewCacheKey('C:\\Movies\\clip.mkv', 101, 1_000)).not.toBe(first);
     expect(previewCacheKey('C:\\Movies\\clip.mkv', 100, 2_000)).not.toBe(first);
+  });
+
+  it('stops a shared ffmpeg conversion after its last media request is cancelled', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'film-preview-cancel-'));
+    tempRoots.push(root);
+    const sourcePath = path.join(root, 'movie.mkv');
+    fs.writeFileSync(sourcePath, Buffer.alloc(2048));
+    let started!: () => void;
+    const runnerStarted = new Promise<void>((resolve) => { started = resolve; });
+    const runnerSignals: AbortSignal[] = [];
+    const transcoder = new PreviewTranscoder(
+      new AppLogger(root),
+      () => '',
+      path.join(root, 'cache'),
+      new TranscodeCapabilityStub(),
+      async (_ffmpegPath, _args, signal) => {
+        runnerSignals.push(signal);
+        started();
+        await new Promise<void>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true });
+        });
+      },
+    );
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    const first = transcoder.prepareCachedFile(sourcePath, firstController.signal);
+    const second = transcoder.prepareCachedFile(sourcePath, secondController.signal);
+
+    await runnerStarted;
+    const internals = transcoder as unknown as { conversions: Map<string, { consumers: number }> };
+    await vi.waitFor(() => {
+      expect([...internals.conversions.values()][0]?.consumers).toBe(2);
+    });
+    expect(runnerSignals).toHaveLength(1);
+    firstController.abort();
+    expect(await first).toBeNull();
+    expect(runnerSignals[0]!.aborted).toBe(false);
+
+    secondController.abort();
+    expect(await second).toBeNull();
+    expect(runnerSignals[0]!.aborted).toBe(true);
+  });
+
+  it('explicitly cancels an active conversion when the detail player closes', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'film-preview-explicit-cancel-'));
+    tempRoots.push(root);
+    const sourcePath = path.join(root, 'movie.mkv');
+    fs.writeFileSync(sourcePath, Buffer.alloc(2048));
+    let started!: () => void;
+    const runnerStarted = new Promise<void>((resolve) => { started = resolve; });
+    let runnerSignal: AbortSignal | null = null;
+    const transcoder = new PreviewTranscoder(
+      new AppLogger(root),
+      () => '',
+      path.join(root, 'cache'),
+      new TranscodeCapabilityStub(),
+      async (_ffmpegPath, _args, signal) => {
+        runnerSignal = signal;
+        started();
+        await new Promise<void>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true });
+        });
+      },
+    );
+    const pending = transcoder.prepareCachedFile(sourcePath, new AbortController().signal);
+
+    await runnerStarted;
+    expect(transcoder.cancel(sourcePath)).toBe(true);
+    expect(await pending).toBeNull();
+    expect(runnerSignal).not.toBeNull();
+    expect((runnerSignal as unknown as AbortSignal).aborted).toBe(true);
+  });
+
+  it('honors explicit cancellation while media probing is still pending', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'film-preview-probe-cancel-'));
+    tempRoots.push(root);
+    const sourcePath = path.join(root, 'movie.mkv');
+    fs.writeFileSync(sourcePath, Buffer.alloc(2048));
+    let releaseProbe!: () => void;
+    const probeGate = new Promise<void>((resolve) => { releaseProbe = resolve; });
+    const capabilities = new TranscodeCapabilityStub();
+    const originalPlaybackPlan = capabilities.playbackPlan.bind(capabilities);
+    capabilities.playbackPlan = async (filePath: string) => {
+      await probeGate;
+      return originalPlaybackPlan(filePath);
+    };
+    let runnerCalls = 0;
+    const transcoder = new PreviewTranscoder(
+      new AppLogger(root),
+      () => '',
+      path.join(root, 'cache'),
+      capabilities,
+      async () => { runnerCalls += 1; },
+    );
+    const pending = transcoder.prepareCachedFile(sourcePath, new AbortController().signal);
+
+    expect(transcoder.cancel(sourcePath)).toBe(false);
+    releaseProbe();
+    expect(await pending).toBeNull();
+    expect(runnerCalls).toBe(0);
   });
 });

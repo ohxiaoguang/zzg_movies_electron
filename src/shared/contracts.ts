@@ -106,6 +106,7 @@ export interface FilmPartDto {
   fileSize: number;
   fileModifiedAt: string | null;
   missing: boolean;
+  isVr: boolean;
 }
 
 export interface FilmSegmentDto {

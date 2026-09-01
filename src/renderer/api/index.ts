@@ -5,6 +5,6 @@ export {
   type FilmLibraryClient,
 } from './FilmLibraryClient';
 
-export function mediaUrl(kind: 'asset' | 'preview' | 'poster' | 'part', id: string): string {
+export function mediaUrl(kind: 'asset' | 'preview' | 'poster' | 'part' | 'original-part', id: string): string {
   return `film-media://${kind}/${encodeURIComponent(id)}`;
 }

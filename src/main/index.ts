@@ -224,6 +224,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(() => {
       logger,
       desktopIntegration: desktopIntegration!,
       cloudBackup: cloudBackup!,
+      previewTranscoder,
     });
     window.on('close', (event) => {
       if (shutdownComplete) return;

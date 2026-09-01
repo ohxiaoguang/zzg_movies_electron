@@ -62,7 +62,7 @@ describe('SQLite migrations and scanning', () => {
   it('creates migrated tables, scans NFO/assets, and supports paging', async () => {
     const root = fixtureRoot();
     const context = createContext(root);
-    expect(context.database.db.pragma('user_version', { simple: true })).toBe(13);
+    expect(context.database.db.pragma('user_version', { simple: true })).toBe(14);
     expect(context.database.hasTable('film_segment')).toBe(true);
     expect(context.database.hasTable('film_playback_state')).toBe(true);
     expect(context.database.hasTable('lan_device')).toBe(true);
@@ -70,6 +70,9 @@ describe('SQLite migrations and scanning', () => {
       expect.arrayContaining([expect.objectContaining({ name: 'role', dflt_value: "'viewer'" })]),
     );
     expect(context.database.db.prepare('SELECT name FROM sqlite_master WHERE type = \'table\' AND name = \'film_file\'').get()).toBeTruthy();
+    expect(context.database.db.pragma('table_info(film_file)')).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'is_vr', dflt_value: '0' })]),
+    );
     const start = context.scan.start({});
     expect(start.jobId).toMatch(/[0-9a-f-]{36}/);
     const status = await waitForScan(context.scan);

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { resolveSafeMediaPath, isPathWithinRoot } from '../src/main/media/MediaPathResolver';
 import { parseRangeHeader } from '../src/main/media/RangeResponse';
-import { parseMediaUrl } from '../src/main/media/MediaProtocol';
+import { parseMediaUrl, requiresPlayablePreparation } from '../src/main/media/MediaProtocol';
 
 describe('media path safety', () => {
   it('accepts a normal file inside the source', () => {
@@ -55,7 +55,17 @@ describe('film-media URL routing', () => {
       kind: 'asset',
       id: '123e4567-e89b-12d3-a456-426614174000',
     });
+    expect(parseMediaUrl('film-media://original-part/123e4567-e89b-12d3-a456-426614174000')).toEqual({
+      kind: 'original-part',
+      id: '123e4567-e89b-12d3-a456-426614174000',
+    });
     expect(parseMediaUrl('film-media://poster/123e4567-e89b-12d3-a456-426614174000?path=C:/secret')).toBeNull();
     expect(parseMediaUrl('film-media://asset/not-a-uuid')).toBeNull();
+  });
+
+  it('serves the original part without preparing a transcoded cache', () => {
+    expect(requiresPlayablePreparation('original-part')).toBe(false);
+    expect(requiresPlayablePreparation('part')).toBe(true);
+    expect(requiresPlayablePreparation('preview')).toBe(true);
   });
 });

@@ -52,6 +52,8 @@ import type { AccountCredentialService } from '../services/AccountCredentialServ
 import type { PlaybackSessionService } from '../services/PlaybackSessionService';
 import type { SourceTransferService } from '../services/SourceTransferService';
 import type { CloudBackupService } from '../services/CloudBackupService';
+import type { PreviewTranscoder } from '../media/PreviewTranscoder';
+import { resolveExistingSafeMediaPath } from '../media/MediaPathResolver';
 import { lanServerConfigurationFromSettings, type LanServer } from '../server/LanServer';
 
 interface IpcContext {
@@ -71,6 +73,7 @@ interface IpcContext {
   logger: AppLogger;
   desktopIntegration: DesktopIntegrationService;
   cloudBackup: CloudBackupService;
+  previewTranscoder: PreviewTranscoder;
 }
 
 export function registerIpcHandlers(context: IpcContext): () => void {
@@ -198,6 +201,12 @@ export function registerIpcHandlers(context: IpcContext): () => void {
     await context.fileOpen.showPartInFolder(payload);
     return null;
   });
+  handle(IPC_CHANNELS.filmsPartsUpdateVr, (_event, payload) => {
+    if (!isRecord(payload) || !isUuid(payload.partId) || typeof payload.isVr !== 'boolean') {
+      throw new Error('INVALID_PART_VR_MODE');
+    }
+    return context.films.updatePartVr(payload.partId, payload.isVr);
+  });
   handle(IPC_CHANNELS.sourcesTransfer, async (_event, payload) => {
     if (context.scan.status()?.status === 'running') throw new Error('SOURCE_TRANSFER_SCAN_RUNNING');
     const input = validateTransferSource(payload);
@@ -229,6 +238,18 @@ export function registerIpcHandlers(context: IpcContext): () => void {
       throw new Error('INVALID_SUBTITLE_TRACK');
     }
     return context.playback.desktopSubtitleContent(payload.partId, payload.index as number);
+  });
+  handle(IPC_CHANNELS.playbackPreviewCancel, async (_event, payload) => {
+    if (!isUuid(payload)) throw new Error('INVALID_PART_ID');
+    const location = context.films.partLocation(payload);
+    if (!location) return false;
+    const sourceFilePath = await resolveExistingSafeMediaPath(location.rootPath, location.relativePath);
+    const cancelled = context.previewTranscoder.cancel(sourceFilePath);
+    context.logger.info('Desktop compatibility preview cancellation requested', {
+      partId: payload,
+      cancelled,
+    });
+    return cancelled;
   });
   handle(IPC_CHANNELS.filmSegmentsCreate, (_event, payload) => (
     context.management.createSegment(validateFilmSegmentCreate(payload))
