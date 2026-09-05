@@ -137,8 +137,7 @@ function changePage(page: number): void { library.filters.page = page; void libr
     <div class="toolbar library-toolbar">
       <el-input v-model="library.filters.search" clearable placeholder="搜索标题、文件名…" @input="queueSearch"><template #prefix><Search /></template></el-input>
       <el-select v-model="library.filters.sourceId" clearable placeholder="全部来源" @change="filterChanged"><el-option v-for="source in sources.sources" :key="source.id" :label="source.name" :value="source.id" /></el-select>
-      <el-select v-model="library.filters.categoryIds" multiple filterable clearable placeholder="我的分类" @change="filterChanged"><el-option v-for="category in categories" :key="category.id" :label="category.name" :value="category.id" /></el-select>
-      <el-select v-if="library.filters.categoryIds?.length" v-model="library.filters.categoryMatch" placeholder="分类匹配" @change="filterChanged"><el-option label="匹配任意" value="any" /><el-option label="匹配全部" value="all" /></el-select>
+      <el-select v-model="library.filters.categoryIds" class="category-filter" multiple filterable clearable collapse-tags collapse-tags-tooltip placeholder="我的分类（同时包含全部）" aria-label="我的分类（同时包含全部所选分类）" @change="filterChanged"><el-option v-for="category in categories" :key="category.id" :label="category.name" :value="category.id" /></el-select>
       <el-select v-model="library.filters.nfoTagIds" multiple filterable clearable placeholder="NFO 标签" @change="filterChanged"><el-option v-for="tag in nfoTags" :key="tag.id" :label="tag.name" :value="tag.id" /></el-select>
       <el-select v-model="library.filters.actor" filterable clearable placeholder="NFO 演员" @change="filterChanged"><el-option v-for="actor in actors" :key="actor.name" :label="`${actor.name} (${actor.filmCount})`" :value="actor.name" /></el-select>
       <el-select :model-value="library.filters.favoriteOnly ? 'favorite' : 'all'" placeholder="收藏" @change="favoriteFilterChanged"><el-option label="全部影片" value="all" /><el-option label="仅收藏" value="favorite" /></el-select>
@@ -164,6 +163,7 @@ function changePage(page: number): void { library.filters.page = page; void libr
 .heading-actions .el-button svg { width: 15px; margin-right: 5px; }
 .library-toolbar .el-input { width: 260px; }
 .library-toolbar .el-select { width: 138px; }
+.library-toolbar .category-filter { width: 240px; }
 .library-toolbar .el-radio-button svg { width: 15px; }
 .error-banner { padding: 13px 16px; margin-bottom: 16px; border: 1px solid rgba(255, 120, 120, .25); border-radius: 9px; color: #ffadad; background: rgba(255, 100, 100, .07); font-size: 13px; }
 </style>

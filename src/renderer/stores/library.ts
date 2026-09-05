@@ -32,7 +32,7 @@ export const useLibraryStore = defineStore('library', () => {
     lanServerHost: DEFAULT_SETTINGS.lanServerHost,
     lanRequireAuthentication: DEFAULT_SETTINGS.lanRequireAuthentication,
   });
-  const filters = reactive<FilmPageQuery>({ page: 1, pageSize: DEFAULT_SETTINGS.pageSize, sort: 'added', organizationState: 'all', categoryIds: [], categoryMatch: 'any', nfoTagIds: [], nfoTagMatch: 'any', commentImages: 'all', allData: false, duplicateFilenameOnly: false, availability: 'all' });
+  const filters = reactive<FilmPageQuery>({ page: 1, pageSize: DEFAULT_SETTINGS.pageSize, sort: 'added', organizationState: 'all', categoryIds: [], categoryMatch: 'all', nfoTagIds: [], nfoTagMatch: 'any', commentImages: 'all', allData: false, duplicateFilenameOnly: false, availability: 'all' });
   const viewMode = ref<'grid' | 'table'>('grid');
 
   const items = computed(() => pageData.value.items);
@@ -73,7 +73,7 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   function resetFilters(): void {
-    Object.assign(filters, { page: 1, pageSize: settings.value.pageSize, search: '', sourceId: '', actor: '', organizationState: 'all', categoryIds: [], categoryMatch: 'any', nfoTagIds: [], nfoTagMatch: 'any', minRating: undefined, favoriteOnly: false, commentImages: 'all', missingOnly: false, recordIssue: undefined, playbackCompatibility: undefined, allData: false, duplicateFilenameOnly: false, availability: 'all', sort: 'added' });
+    Object.assign(filters, { page: 1, pageSize: settings.value.pageSize, search: '', sourceId: '', actor: '', organizationState: 'all', categoryIds: [], categoryMatch: 'all', nfoTagIds: [], nfoTagMatch: 'any', minRating: undefined, favoriteOnly: false, commentImages: 'all', missingOnly: false, recordIssue: undefined, playbackCompatibility: undefined, allData: false, duplicateFilenameOnly: false, availability: 'all', sort: 'added' });
   }
 
   return { pageData, items, loading, error, settings, filters, viewMode, loadSettings, fetchPage, setFilter, resetFilters };
