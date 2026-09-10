@@ -360,8 +360,10 @@ onBeforeUnmount(() => {
   <Teleport to="body">
     <section ref="popup" class="film-hover-popup" :style="popupStyle" @mouseenter="$emit('enter')" @mouseleave="$emit('leave')">
       <div class="popup-media" :class="{ 'popup-media-image': mode !== 'video', 'popup-media-comment': activeChannel === 'comments' }" :style="mediaStyle">
-        <video v-if="mode === 'video'" ref="video" :class="{ 'vr-video-source': activeHighlightIsVr }" crossorigin="anonymous" muted :loop="!highlightSegments.length" playsinline preload="metadata" @playing="onVideoPlaying" @waiting="onVideoWaiting" @timeupdate="onVideoTimeUpdate" @error="onVideoError" />
-        <canvas v-if="mode === 'video' && activeHighlightIsVr" ref="vrCanvas" class="vr-video-canvas" aria-label="360° VR 精彩片段预览" />
+        <template v-if="mode === 'video'">
+          <video ref="video" :class="{ 'vr-video-source': activeHighlightIsVr }" crossorigin="anonymous" muted :loop="!highlightSegments.length" playsinline preload="metadata" @playing="onVideoPlaying" @waiting="onVideoWaiting" @timeupdate="onVideoTimeUpdate" @error="onVideoError" />
+          <canvas v-if="activeHighlightIsVr" ref="vrCanvas" class="vr-video-canvas" aria-label="360° VR 精彩片段预览" />
+        </template>
         <img v-else-if="mode === 'slideshow' && currentImageUrl" :src="currentImageUrl" :alt="film.title" @load="onPreviewImageLoad" />
         <div v-else class="popup-empty">暂无预览</div>
         <div v-if="mode === 'video' && activeHighlight" class="segment-preview-label">

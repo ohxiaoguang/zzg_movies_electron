@@ -1,6 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { compile } from '@vue/compiler-dom';
+import * as Vue from 'vue';
+import { renderToString } from '@vue/server-renderer';
 
 const drawerPath = path.resolve(process.cwd(), 'src/renderer/components/film/FilmDetailDrawer.vue');
 const segmentEditorPath = path.resolve(process.cwd(), 'src/renderer/components/film/FilmSegmentEditor.vue');
@@ -25,6 +28,31 @@ const resonancePath = path.resolve(process.cwd(), 'src/renderer/components/reson
 const appPath = path.resolve(process.cwd(), 'src/renderer/App.vue');
 
 describe('renderer regressions', () => {
+  it.each([
+    ['video', false, true, false, false, false],
+    ['video', true, true, true, false, false],
+    ['slideshow', false, false, false, true, false],
+    ['empty', false, false, false, false, true],
+  ])('renders mutually exclusive preview content for %s (VR: %s)', async (mode, isVr, hasVideo, hasCanvas, hasImage, hasEmpty) => {
+    const popup = fs.readFileSync(popupPath, 'utf8');
+    const template = popup.slice(popup.indexOf('<template>'));
+    const media = template.slice(template.indexOf('<div class="popup-media"'), template.indexOf('<div v-if="mode === \'video\' && activeHighlight"')) + '</div>';
+    const { code } = compile(media, { mode: 'function' });
+    const render = new Function('Vue', code)(Vue);
+    const noop = () => {};
+    const context = {
+      mode, activeHighlightIsVr: isVr, activeChannel: 'highlights', mediaStyle: undefined,
+      highlightSegments: [], currentImageUrl: '/preview.jpg', film: { title: 'Preview' },
+      onVideoPlaying: noop, onVideoWaiting: noop, onVideoTimeUpdate: noop,
+      onVideoError: noop, onPreviewImageLoad: noop,
+    };
+    const html = await renderToString(Vue.createSSRApp({ render: () => render(context, []) }));
+    expect(html.includes('<video')).toBe(hasVideo);
+    expect(html.includes('<canvas')).toBe(hasCanvas);
+    expect(html.includes('<img')).toBe(hasImage);
+    expect(html.includes('暂无预览')).toBe(hasEmpty);
+  });
+
   it('shows startup cloud backup status at the bottom and blocks shutdown with a loading overlay', () => {
     const layout = fs.readFileSync(layoutPath, 'utf8');
     expect(layout).toContain('启动自动备份：正在同步到 GitHub…');
@@ -195,7 +223,7 @@ describe('renderer regressions', () => {
     expect(popup).toContain('window.filmLibrary.films.showInFolder(props.film.id)');
     expect(popup).toContain('打开文件位置');
     expect(popup).toContain('flex-wrap: wrap');
-    expect(popup).toMatch(/<video v-if="mode === 'video'"[\s\S]*?<img v-else-if="mode === 'slideshow'[\s\S]*?<div v-else class="popup-empty">暂无预览<\/div>[\s\S]*?<div v-if="mode === 'video' && videoPreparing"/);
+    expect(popup).toMatch(/<template v-if="mode === 'video'">[\s\S]*?<video[\s\S]*?<canvas v-if="activeHighlightIsVr"[\s\S]*?<\/template>\s*<img v-else-if="mode === 'slideshow'[\s\S]*?<div v-else class="popup-empty">暂无预览<\/div>[\s\S]*?<div v-if="mode === 'video' && videoPreparing"/);
   });
 
   it('uses a full-width detail workbench and exposes segment titles on timeline nodes', () => {
