@@ -228,7 +228,7 @@ describe('web playback pipeline', () => {
     expect(await discoverSidecarSubtitleFiles(movieBPath)).toEqual([]);
   });
 
-  it('tracks direct-play sessions, ownership and persistent playback progress', async () => {
+  it.each([true, false])('tracks direct-play sessions, ownership and progress with FFmpeg available=%s', async (ffmpegAvailable) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'film-playback-session-'));
     roots.push(root);
     const filePath = path.join(root, 'movie.mp4');
@@ -257,6 +257,10 @@ describe('web playback pipeline', () => {
       subtitles: [{ index: 2, codec: 'subrip', language: 'chi', title: '中文' }],
     };
     vi.spyOn(capabilities, 'playbackPlan').mockResolvedValue({ probe: directProbe, plan: directPlan });
+    vi.spyOn(capabilities, 'toolPaths').mockReturnValue({
+      ffmpeg: ffmpegAvailable ? path.join(root, 'ffmpeg.exe') : null,
+      ffprobe: null,
+    });
     const films = createPlaybackRepository();
     const service = new PlaybackSessionService(media, films, capabilities, new AppLogger(path.join(root, 'logs')), path.join(root, 'cache'));
     const filmId = '11111111-1111-4111-8111-111111111111';
@@ -279,7 +283,7 @@ describe('web playback pipeline', () => {
         title: '中文',
         source: 'embedded',
         url: expect.stringContaining('/subtitle-2.vtt'),
-        supported: true,
+        supported: ffmpegAvailable,
       }],
     });
     expect(JSON.stringify(created)).not.toContain(root);

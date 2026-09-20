@@ -193,7 +193,7 @@ describe('localhost read-only web server', () => {
     expect(script).toContain('class HttpFilmLibraryClient');
     expect(script).toContain('/api/v1/films');
     expect(script).toContain("state.libraryMode === 'favorite'");
-    expect(script).toContain("state.libraryMode === 'organized'\n    ? 'organized'");
+    expect(script).toMatch(/state\.libraryMode === 'organized'\s+\? 'organized'/);
     expect(script).toContain(": state.libraryMode === 'favorite' ? 'favorite' : 'added'");
     expect(script).toContain("state.libraryMode === 'all-data'");
     expect(script).toContain('renderSources()');
