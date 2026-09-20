@@ -19,6 +19,8 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - name: Prepare Electron test runtime
+        run: node node_modules/electron/install.js
       # Tests run inside Electron to match better-sqlite3's native ABI.
       - run: npx electron-rebuild -f -w better-sqlite3
       - run: npm run typecheck
