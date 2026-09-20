@@ -10,6 +10,7 @@ import type { DatabaseManager } from '../database/DatabaseManager';
 import type { SourceRepository } from '../database/repositories/SourceRepository';
 import { discoverSidecarSubtitleFiles } from './PlaybackSessionService';
 import type { AppLogger } from '../system/AppLogger';
+import { TransferJournal, removeEmptyDirectories } from './TransferJournal';
 
 interface FilmRow {
   id: string;
@@ -36,7 +37,6 @@ interface FileMove {
 }
 
 export class SourceTransferService {
-  private transferring = false;
 
   public constructor(
     private readonly database: DatabaseManager,
@@ -46,12 +46,21 @@ export class SourceTransferService {
   ) {}
 
   public async transfer(input: TransferSourceInput): Promise<TransferSourceResultDto> {
-    if (this.transferring) throw new Error('SOURCE_TRANSFER_ALREADY_RUNNING');
-    this.transferring = true;
+    const release = this.database.operations.acquire('transfer');
     try {
+      this.database.assertTransfersRecovered();
       return await this.runTransfer(input);
     } finally {
-      this.transferring = false;
+      release();
+    }
+  }
+
+  public async recoverInterruptedTransfers(): Promise<void> {
+    const release = this.database.operations.acquire('transfer');
+    try {
+      await new TransferJournal(this.database).recover();
+    } finally {
+      release();
     }
   }
 
@@ -87,12 +96,12 @@ export class SourceTransferService {
   }
 
   public async correctTransfer(input: CorrectSourceTransferInput): Promise<TransferSourceResultDto> {
-    if (this.transferring) throw new Error('SOURCE_TRANSFER_ALREADY_RUNNING');
-    this.transferring = true;
+    const release = this.database.operations.acquire('transfer');
     try {
+      this.database.assertTransfersRecovered();
       return await this.runCorrection(input);
     } finally {
-      this.transferring = false;
+      release();
     }
   }
 
@@ -107,7 +116,7 @@ export class SourceTransferService {
     const targetRoot = path.resolve(target.rootPath);
     await assertDirectory(sourceRoot, 'SOURCE_TRANSFER_SOURCE_OFFLINE');
     await assertDirectory(targetRoot, 'SOURCE_TRANSFER_TARGET_OFFLINE');
-    if (pathsOverlap(sourceRoot, targetRoot)) throw new Error('SOURCE_TRANSFER_PATH_OVERLAP');
+    if (pathsOverlap(await fs.promises.realpath(sourceRoot), await fs.promises.realpath(targetRoot))) throw new Error('SOURCE_TRANSFER_PATH_OVERLAP');
 
     const folderName = await this.availableFolderName(targetRoot, source.name);
     const destinationRoot = path.join(targetRoot, folderName);
@@ -157,29 +166,9 @@ export class SourceTransferService {
     }
 
     await fs.promises.mkdir(destinationRoot, { recursive: false });
-    const completed: FileMove[] = [];
-    try {
-      for (const move of moves.values()) {
-        await moveFile(move.sourcePath, move.destinationPath);
-        completed.push(move);
-      }
+    await new TransferJournal(this.database).execute({ sourceRoot, destinationRoot, moves: [...moves.values()] }, () => {
       this.updateDatabase(source.id, target.id, folderName, films, filmFiles, assets);
-    } catch (error) {
-      const rollbackErrors: string[] = [];
-      for (const move of completed.reverse()) {
-        try {
-          await moveFile(move.destinationPath, move.sourcePath);
-        } catch (rollbackError) {
-          rollbackErrors.push(rollbackError instanceof Error ? rollbackError.message : 'ROLLBACK_FAILED');
-        }
-      }
-      await removeEmptyDirectories(destinationRoot);
-      if (rollbackErrors.length) {
-        this.logger.error('Source transfer rollback incomplete', { sourceId: source.id, rollbackErrors });
-        throw new Error('SOURCE_TRANSFER_ROLLBACK_FAILED', { cause: error });
-      }
-      throw error;
-    }
+    });
 
     const movedFileCount = [...moves.values()].filter((move) => move.kind === 'video').length;
     const movedAssetCount = moves.size - movedFileCount;
@@ -217,7 +206,7 @@ export class SourceTransferService {
     const newRoot = path.resolve(newTarget.rootPath);
     await assertDirectory(currentRoot, 'SOURCE_TRANSFER_SOURCE_OFFLINE');
     await assertDirectory(newRoot, 'SOURCE_TRANSFER_TARGET_OFFLINE');
-    if (pathsOverlap(currentRoot, newRoot)) throw new Error('SOURCE_TRANSFER_PATH_OVERLAP');
+    if (pathsOverlap(await fs.promises.realpath(currentRoot), await fs.promises.realpath(newRoot))) throw new Error('SOURCE_TRANSFER_PATH_OVERLAP');
 
     const films = (this.database.db
       .prepare('SELECT id, relative_path, nfo_relative_path FROM film WHERE source_id = ? ORDER BY id')
@@ -269,12 +258,7 @@ export class SourceTransferService {
     }
 
     await fs.promises.mkdir(destinationRoot, { recursive: false });
-    const completed: FileMove[] = [];
-    try {
-      for (const move of moves.values()) {
-        await moveFile(move.sourcePath, move.destinationPath);
-        completed.push(move);
-      }
+    await new TransferJournal(this.database).execute({ sourceRoot: currentRoot, destinationRoot, moves: [...moves.values()] }, () => {
       this.updateCorrectedDatabase(
         currentTarget.id,
         newTarget.id,
@@ -284,23 +268,8 @@ export class SourceTransferService {
         filmFiles,
         assets,
       );
-    } catch (error) {
-      const rollbackErrors: string[] = [];
-      for (const move of completed.reverse()) {
-        try {
-          await moveFile(move.destinationPath, move.sourcePath);
-        } catch (rollbackError) {
-          rollbackErrors.push(rollbackError instanceof Error ? rollbackError.message : 'ROLLBACK_FAILED');
-        }
-      }
-      await removeEmptyDirectories(destinationRoot);
-      if (rollbackErrors.length) {
-        this.logger.error('Source transfer correction rollback incomplete', { sourceId: originalSource.id, rollbackErrors });
-        throw new Error('SOURCE_TRANSFER_ROLLBACK_FAILED', { cause: error });
-      }
-      throw error;
-    }
-    await removeEmptyDirectories(path.join(currentRoot, input.destinationFolderName));
+    });
+    await removeEmptyDirectories(path.join(currentRoot, input.destinationFolderName)).catch(() => undefined);
 
     const movedFileCount = [...moves.values()].filter((move) => move.kind === 'video').length;
     const movedAssetCount = moves.size - movedFileCount;
@@ -543,37 +512,4 @@ async function pathExists(filePath: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-async function moveFile(sourcePath: string, destinationPath: string): Promise<void> {
-  await fs.promises.mkdir(path.dirname(destinationPath), { recursive: true });
-  try {
-    await fs.promises.rename(sourcePath, destinationPath);
-  } catch (error) {
-    if (!isCrossDeviceError(error)) throw error;
-    await fs.promises.copyFile(sourcePath, destinationPath, fs.constants.COPYFILE_EXCL);
-    try {
-      await fs.promises.unlink(sourcePath);
-    } catch (unlinkError) {
-      await fs.promises.unlink(destinationPath).catch(() => undefined);
-      throw unlinkError;
-    }
-  }
-}
-
-async function removeEmptyDirectories(directory: string): Promise<void> {
-  let entries: fs.Dirent[];
-  try {
-    entries = await fs.promises.readdir(directory, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  for (const entry of entries) {
-    if (entry.isDirectory()) await removeEmptyDirectories(path.join(directory, entry.name));
-  }
-  await fs.promises.rmdir(directory).catch(() => undefined);
-}
-
-function isCrossDeviceError(error: unknown): boolean {
-  return error instanceof Error && 'code' in error && (error as { code?: unknown }).code === 'EXDEV';
 }

@@ -66,36 +66,47 @@ export class ScanCoordinator {
 
   private begin(targets: ScanTarget[]): ScanStartDto {
     if (this.state?.status === 'running') throw new Error('SCAN_ALREADY_RUNNING');
-    const jobId = randomUUID();
-    const startedAt = new Date().toISOString();
-    this.cancellation = new ScanCancellation();
-    this.state = {
-      jobId,
-      status: 'running',
-      currentSource: null,
-      currentDirectory: null,
-      currentFilm: null,
-      discovered: 0,
-      processed: 0,
-      created: 0,
-      updated: 0,
-      moved: 0,
-      missing: 0,
-      nfoErrors: 0,
-      ambiguousAssets: 0,
-      otherErrors: 0,
-      message: null,
-      startedAt,
-      finishedAt: null,
-      sourceCount: targets.length,
-      cancelled: false,
-    };
-    this.database.db
-      .prepare('INSERT INTO scan_job (id, started_at, status, source_count) VALUES (?, ?, ?, ?)')
-      .run(jobId, startedAt, 'running', targets.length);
-    this.emit();
-    void this.run(targets, jobId);
-    return { jobId };
+    const release = this.database.operations.acquire('scan');
+    try {
+      this.database.assertTransfersRecovered();
+      const jobId = randomUUID();
+      const startedAt = new Date().toISOString();
+      this.cancellation = new ScanCancellation();
+      this.state = {
+        jobId,
+        status: 'running',
+        currentSource: null,
+        currentDirectory: null,
+        currentFilm: null,
+        discovered: 0,
+        processed: 0,
+        created: 0,
+        updated: 0,
+        moved: 0,
+        missing: 0,
+        nfoErrors: 0,
+        ambiguousAssets: 0,
+        otherErrors: 0,
+        message: null,
+        startedAt,
+        finishedAt: null,
+        sourceCount: targets.length,
+        cancelled: false,
+      };
+      this.database.db
+        .prepare('INSERT INTO scan_job (id, started_at, status, source_count) VALUES (?, ?, ?, ?)')
+        .run(jobId, startedAt, 'running', targets.length);
+      this.emit();
+      void this.run(targets, jobId).catch((error: unknown) => {
+        this.logger.error('Scan finalization failed', { error: error instanceof Error ? error.message : 'SCAN_FAILED' });
+      }).finally(release);
+      return { jobId };
+    } catch (error) {
+      release();
+      this.state = null;
+      this.cancellation = null;
+      throw error;
+    }
   }
 
   public cancel(): void {
@@ -257,16 +268,20 @@ export class ScanCoordinator {
     }
     assertUniqueIncomingPhysicalFiles(source.id, deduplicated.candidates);
     const missing = this.database.transaction(() => {
-      const sourceMissing = relativeDirectory
-        ? this.films.markDirectoryMissing(source.id, relativeDirectory, now)
-        : this.films.markSourceMissing(source.id, now);
+      const previouslyAvailable = new Set((this.database.db.prepare(
+        'SELECT id FROM film WHERE source_id = ? AND archived = 0 AND missing = 0',
+      ).all(source.id) as Array<{ id: string }>).map((film) => film.id));
+      if (relativeDirectory) this.films.markDirectoryMissing(source.id, relativeDirectory, now);
+      else this.films.markSourceMissing(source.id, now);
       for (const candidate of deduplicated.candidates) {
         const result = this.films.upsertCandidate(candidate, now);
         if (result.created) created += 1;
         else if (result.moved) moved += 1;
         else updated += 1;
       }
-      return sourceMissing;
+      return (this.database.db.prepare(
+        'SELECT id FROM film WHERE source_id = ? AND archived = 0 AND missing = 1',
+      ).all(source.id) as Array<{ id: string }>).filter((film) => previouslyAvailable.has(film.id)).length;
     });
     return { created, updated, moved, missing, errors };
   }

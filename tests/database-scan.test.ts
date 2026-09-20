@@ -62,7 +62,8 @@ describe('SQLite migrations and scanning', () => {
   it('creates migrated tables, scans NFO/assets, and supports paging', async () => {
     const root = fixtureRoot();
     const context = createContext(root);
-    expect(context.database.db.pragma('user_version', { simple: true })).toBe(15);
+    expect(context.database.db.pragma('user_version', { simple: true })).toBe(16);
+    expect(context.database.hasTable('source_transfer_journal')).toBe(true);
     expect(context.database.hasTable('film_segment')).toBe(true);
     expect(context.database.hasTable('film_playback_state')).toBe(true);
     expect(context.database.hasTable('lan_device')).toBe(true);
@@ -143,12 +144,14 @@ describe('SQLite migrations and scanning', () => {
     context.scan.start({});
     const secondStatus = await waitForScan(context.scan);
     expect(secondStatus.status).toBe('completed');
+    expect(secondStatus.missing).toBe(0);
     expect(context.films.page({ page: 1, pageSize: 60 }).total).toBe(1);
     expect(context.films.detail(film.id)?.title).toBe('用户标题');
     expect(context.films.detail(film.id)?.favorite).toBe(true);
     fs.renameSync(path.join(root, 'Movie A.mkv'), path.join(root, 'Renamed Movie.mkv'));
     context.scan.start({});
     const renamedStatus = await waitForScan(context.scan);
+    expect(renamedStatus.missing).toBe(1);
     expect(renamedStatus.moved).toBe(0);
     expect(renamedStatus.created).toBe(1);
     const available = context.films.page({ page: 1, pageSize: 60 });
@@ -159,6 +162,8 @@ describe('SQLite migrations and scanning', () => {
     expect(allRecords.total).toBe(2);
     expect(allRecords.items.find((item) => item.id === film.id)?.availability).toBe('missing');
     expect(context.films.detail(film.id)?.title).toBe('用户标题');
+    context.scan.start({});
+    expect((await waitForScan(context.scan)).missing).toBe(0);
   });
 
   it('keeps identical videos with different filenames as separate films', async () => {

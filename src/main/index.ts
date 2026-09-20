@@ -54,6 +54,7 @@ let lanServer: LanServer | null = null;
 let desktopIntegration: DesktopIntegrationService | null = null;
 let showMainWindow: (() => BrowserWindow) | null = null;
 let cloudBackup: CloudBackupService | null = null;
+let activeScan: ScanCoordinator | null = null;
 let shutdownStarted = false;
 let shutdownComplete = false;
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
@@ -73,7 +74,7 @@ app.on('child-process-gone', (_event, details) => {
   });
 });
 
-if (hasSingleInstanceLock) void app.whenReady().then(() => {
+if (hasSingleInstanceLock) void app.whenReady().then(async () => {
   const logger = new AppLogger(app.getPath('logs'), { redactPaths: app.isPackaged });
   applicationLogger = logger;
   logger.info('Application started', {
@@ -95,7 +96,16 @@ if (hasSingleInstanceLock) void app.whenReady().then(() => {
   const settings = new SettingsRepository(database.db);
   const lanDevices = new LanDeviceRepository(database.db);
   const scan = new ScanCoordinator(database, sources, films, settings, logger);
+  activeScan = scan;
   const sourceTransfer = new SourceTransferService(database, sources, logger);
+  try {
+    await sourceTransfer.recoverInterruptedTransfers();
+  } catch (error) {
+    logger.error('Interrupted transfer needs recovery; scans and transfers are blocked', {
+      errorCode: error instanceof Error ? error.message : 'SOURCE_TRANSFER_RECOVERY_REQUIRED',
+    });
+  }
+  if (shutdownStarted) return;
   const fileOpen = new FileOpenService(films);
   const libraryRead = new FilmLibraryReadService(films, sources, settings);
   const mediaCapabilities = new MediaCapabilityService(() => settings.get().ffprobePath);
@@ -282,15 +292,17 @@ app.on('before-quit', (event) => {
   shutdownStarted = true;
   applicationLogger?.info('Application quitting');
   void (async () => {
+    // Freeze new scan/transfer jobs immediately, and finish filesystem changes before closing SQLite.
+    const operationsStopped = database?.operations.stopAndWait();
+    for (const window of BrowserWindow.getAllWindows()) window.setEnabled(false);
+    activeScan?.cancel();
+    const [lanResult] = await Promise.allSettled([lanServer?.stop(), operationsStopped]);
     const backupStatus = cloudBackup?.status();
     const shouldShowBackup = backupStatus?.configured === true && backupStatus.autoBackupOnQuit;
     const shutdownUiStartedAt = Date.now();
     if (shouldShowBackup) desktopIntegration?.showMainWindow();
-    const results = await Promise.allSettled([
-      lanServer?.stop(),
-      cloudBackup?.backupOnShutdown(),
-    ]);
-    const [lanResult, backupResult] = results;
+    for (const window of BrowserWindow.getAllWindows()) window.setEnabled(false);
+    const [backupResult] = await Promise.allSettled([cloudBackup?.backupOnShutdown()]);
     if (lanResult?.status === 'rejected') {
       applicationLogger?.warn('Local web server shutdown failed', {
         errorCode: lanResult.reason instanceof Error ? lanResult.reason.message : 'HTTP_SERVER_ERROR',

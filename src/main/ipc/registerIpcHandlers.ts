@@ -38,6 +38,7 @@ import {
   validateScanStart,
 } from '../../shared/filmManagementValidation';
 import type { DatabaseManager } from '../database/DatabaseManager';
+import { isTrustedWindowUrl } from '../window/WindowTrust';
 import { FilmRepository } from '../database/repositories/FilmRepository';
 import { SettingsRepository } from '../database/repositories/SettingsRepository';
 import { SourceRepository } from '../database/repositories/SourceRepository';
@@ -80,7 +81,11 @@ export function registerIpcHandlers(context: IpcContext): () => void {
   const registered: string[] = [];
   const handle = <T>(channel: string, callback: (event: IpcMainInvokeEvent, payload: unknown) => Promise<T> | T): void => {
     ipcMain.handle(channel, async (event, payload) => {
-      if (!isTrustedSender(event.senderFrame?.url ?? '')) return failure('UNTRUSTED_SENDER', '请求来源不受信任');
+      if (event.sender !== context.window.webContents
+        || event.senderFrame !== context.window.webContents.mainFrame
+        || !isTrustedWindowUrl(event.sender, event.senderFrame?.url ?? '')) {
+        return failure('UNTRUSTED_SENDER', '请求来源不受信任');
+      }
       try {
         if (!ACCOUNT_IPC_CHANNELS.has(channel) && !context.accountCredentials.isDesktopAuthenticated(event.sender.id)) {
           const configured = context.accountCredentials.status(event.sender.id).configured;
@@ -437,6 +442,9 @@ function publicMessage(code: string): string {
     SOURCE_TRANSFER_PATH_OVERLAP: '两个来源目录存在包含关系，无法安全转移',
     SOURCE_TRANSFER_SCAN_RUNNING: '扫描进行中，完成或取消扫描后再转移',
     SOURCE_TRANSFER_ALREADY_RUNNING: '已有来源转移任务正在进行',
+    APPLICATION_SHUTTING_DOWN: '应用正在退出，请等待当前任务完成',
+    SOURCE_TRANSFER_RECOVERY_REQUIRED: '存在未完成的文件转移，请连接原盘和目标盘后重启应用以恢复；冲突文件会保留，请查看日志',
+    SOURCE_TRANSFER_DESTINATION_EXISTS: '目标位置已有文件，已停止转移以避免覆盖',
     SOURCE_TRANSFER_FILE_MISSING: '部分已扫描影片文件不存在，请先重新扫描来源',
     SOURCE_TRANSFER_ASSET_MISSING: '部分已扫描旁路资源不存在，请先重新扫描来源',
     SOURCE_TRANSFER_INVALID_PATH: '来源中存在不安全的文件路径，已停止转移',
@@ -512,10 +520,6 @@ function validateAccountCredentials(payload: unknown): AccountCredentialsInput {
     throw new Error('INVALID_ACCOUNT_INPUT');
   }
   return { username: payload.username, password: payload.password };
-}
-
-function isTrustedSender(url: string): boolean {
-  return url.startsWith('file://') || /^https?:\/\/localhost(?::\d+)?\//.test(url);
 }
 
 function validateCreateSource(payload: unknown): CreateSourceInput {

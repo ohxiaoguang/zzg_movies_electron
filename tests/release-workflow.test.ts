@@ -22,8 +22,9 @@ describe('GitHub release workflow', () => {
     expect(workflow).toContain('npm run smoke:package');
   });
 
-  it('does not run the Vitest suite during a tag release', () => {
-    expect(workflow).not.toContain('npm test');
+  it('runs the Vitest suite after rebuilding native modules and before publishing', () => {
+    expect(workflow.indexOf('run: npm test')).toBeGreaterThan(workflow.indexOf('run: npm run make'));
+    expect(workflow.indexOf('run: npm test')).toBeLessThan(workflow.indexOf('name: Create GitHub Release'));
   });
 
   it('creates or updates a GitHub Release with installer and ZIP assets', () => {

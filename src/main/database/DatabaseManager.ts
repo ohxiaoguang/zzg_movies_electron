@@ -16,11 +16,20 @@ import { filmSegmentsMigration } from './migrations/012_film_segments';
 import { favoriteOrderMigration } from './migrations/013_favorite_order';
 import { filmFileVrMigration } from './migrations/014_film_file_vr';
 import { filmSegmentVrViewMigration } from './migrations/015_film_segment_vr_view';
+import { sourceTransferJournalMigration } from './migrations/016_source_transfer_journal';
+import { LibraryOperationCoordinator } from '../services/LibraryOperationCoordinator';
 import { parseFilmPartName } from '../scanner/PartNaming';
 import type { AppLogger } from '../system/AppLogger';
 
 export class DatabaseManager {
   public readonly db: Database.Database;
+  public readonly operations = new LibraryOperationCoordinator();
+
+  public assertTransfersRecovered(): void {
+    if (this.db.prepare('SELECT 1 FROM source_transfer_journal LIMIT 1').get()) {
+      throw new Error('SOURCE_TRANSFER_RECOVERY_REQUIRED');
+    }
+  }
 
   public constructor(public readonly databasePath: string, private readonly logger?: AppLogger) {
     this.logger?.info('Database initialization started', { databasePath });
@@ -41,6 +50,7 @@ export class DatabaseManager {
     this.logger?.info('Database opened', { databasePath, open: this.db.open });
     this.db.pragma('foreign_keys = ON');
     this.db.pragma('journal_mode = WAL');
+    this.db.pragma('synchronous = FULL');
     this.db.pragma('busy_timeout = 5000');
     this.runMigrations();
   }
@@ -67,7 +77,7 @@ export class DatabaseManager {
   private runMigrations(): void {
     const currentVersion = this.schemaVersion;
     this.logger?.info('Database schema inspected', { version: currentVersion });
-    const migrations = [initialMigration, filmFilesMigration, groupedFilmFilesRepairMigration, userEditedTaxonomyMigration, protectLegacyTaxonomyMigration, customCategoriesMigration, sourceOriginalPreviewMigration, titleUserEditedMigration, lanDevicesMigration, lanDeviceRolesMigration, filmPlaybackStateMigration, filmSegmentsMigration, favoriteOrderMigration, filmFileVrMigration, filmSegmentVrViewMigration];
+    const migrations = [initialMigration, filmFilesMigration, groupedFilmFilesRepairMigration, userEditedTaxonomyMigration, protectLegacyTaxonomyMigration, customCategoriesMigration, sourceOriginalPreviewMigration, titleUserEditedMigration, lanDevicesMigration, lanDeviceRolesMigration, filmPlaybackStateMigration, filmSegmentsMigration, favoriteOrderMigration, filmFileVrMigration, filmSegmentVrViewMigration, sourceTransferJournalMigration];
     if (currentVersion >= migrations[migrations.length - 1].version) {
       this.logger?.info('Database schema ready', { version: currentVersion });
       return;

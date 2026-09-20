@@ -5,6 +5,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { verifyResonanceScenes } from './smoke-resonance-scenes.mjs';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const executable = path.resolve(process.argv[2] ?? path.join(projectRoot, 'out/local-film-library-win32-x64/local-film-library.exe'));
@@ -223,6 +224,7 @@ try {
     if (!result?.account?.ok || !result.account.data?.authenticated) throw new Error(`Account setup failed: ${JSON.stringify(result?.account)}`);
     if (!result?.health?.ok || !result.health.data?.databaseReady || !result.health.data?.ipcReady) throw new Error(`Health check failed: ${JSON.stringify(result?.health)}`);
     if (!result.info?.ok || (expectedAppVersion && result.info.data.version !== expectedAppVersion)) throw new Error(`Application version failed: expected=${expectedAppVersion || '(any)'} actual=${JSON.stringify(result.info)}`);
+    if (expectedAppVersion && !result.ui?.sidebarText.includes(`v${expectedAppVersion}`)) throw new Error(`Visible client version does not match v${expectedAppVersion}`);
     if (!result.created?.ok) throw new Error(`Source create failed: ${JSON.stringify(result.created)}`);
     if (!result.previewEnabled?.ok || !result.previewEnabled.data.allowOriginalPreview) throw new Error(`Original preview source update failed: ${JSON.stringify(result.previewEnabled)}`);
     if (!result.started?.ok || result.scanStatus?.data?.status !== 'completed') throw new Error(`Scan failed: ${JSON.stringify(result.scanStatus)}`);
@@ -246,6 +248,7 @@ try {
     if (!result.after?.ok || !result.after.data.some((source) => source.name === 'Smoke Source')) throw new Error(`Source list did not contain the created source: ${JSON.stringify(result.after)}`);
 
     if (fs.readFileSync(path.join(mediaRoot, 'Smoke Movie.nfo'), 'utf8') !== '<movie><title>Smoke Movie</title><tag>Smoke Tag</tag><actor>Smoke Actor</actor><plot>Smoke summary</plot></movie>') throw new Error('Packaged smoke unexpectedly modified NFO');
+    await verifyResonanceScenes((expression, awaitPromise) => cdpEvaluate(socket, expression, awaitPromise));
     console.log(`SMOKE_OK health=ok database=ready ipc=ready sourceCount=${result.after.data.length} categories=${result.patchedDetail.data.customCategories.length}`);
     if (browserHoldMs > 0) {
       console.log(`SMOKE_BROWSER_URL=${result.localWeb.data.baseUrl}`);

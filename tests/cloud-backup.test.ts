@@ -19,6 +19,81 @@ afterEach(() => {
 });
 
 describe('logical cloud backup', () => {
+  it('times out stalled response bodies and retains a retry snapshot', async () => {
+    const context = await backupFixture();
+    let aborted = false;
+    const fetcher = async (_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"private":'));
+          init?.signal?.addEventListener('abort', () => {
+            aborted = true;
+            controller.error(new DOMException('Aborted', 'AbortError'));
+          }, { once: true });
+        },
+      });
+      return new Response(body, { headers: { 'Content-Type': 'application/json' } });
+    };
+    const service = new CloudBackupService(context.config, context.library, context.logger, fetcher);
+    await expect(service.runBackup('manual', false, 30)).rejects.toThrow('CLOUD_BACKUP_TIMEOUT');
+    expect(aborted).toBe(true);
+    expect(fs.existsSync(context.config.pendingFilePath)).toBe(true);
+  });
+
+  it('uploads the latest edits on shutdown after an older upload finishes', async () => {
+    const context = await backupFixture();
+    let releaseFirst!: () => void;
+    let firstStarted!: () => void;
+    const started = new Promise<void>((resolve) => { firstStarted = resolve; });
+    const paused = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const uploads: Array<{ counts: { favorites: number } }> = [];
+    let remote = '';
+    const fetcher = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      if (init?.method === 'PUT') {
+        const content = (JSON.parse(String(init.body)) as { content: string }).content;
+        uploads.push(JSON.parse(Buffer.from(content, 'base64').toString('utf8')));
+        if (uploads.length === 1) { firstStarted(); await paused; }
+        remote = content;
+        return jsonResponse({ commit: { sha: `commit-${uploads.length}` } });
+      }
+      if (String(input).includes('/contents/')) {
+        return remote ? jsonResponse({ sha: 'blob', encoding: 'base64', content: remote }) : jsonResponse({}, 404);
+      }
+      return jsonResponse({ private: true, default_branch: 'main' });
+    };
+    const service = new CloudBackupService(context.config, context.library, context.logger, fetcher);
+    const initial = service.runBackup('manual');
+    await started;
+    new FilmRepository(context.database.db).updateFavorite(context.filmId, true);
+    const shutdown = service.backupOnShutdown(2_000);
+    releaseFirst();
+    await initial;
+    await shutdown;
+    expect(uploads.map((document) => document.counts.favorites)).toEqual([0, 1]);
+    expect(fs.existsSync(context.config.pendingFilePath)).toBe(false);
+  });
+
+  it('bounds shutdown including an existing upload and saves the newest pending data', async () => {
+    const context = await backupFixture();
+    let firstStarted!: () => void;
+    const started = new Promise<void>((resolve) => { firstStarted = resolve; });
+    const fetcher = async (_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      firstStarted();
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+      });
+    };
+    const service = new CloudBackupService(context.config, context.library, context.logger, fetcher);
+    const initial = service.runBackup('manual').catch((error: unknown) => error);
+    await started;
+    new FilmRepository(context.database.db).updateFavorite(context.filmId, true);
+    await expect(service.backupOnShutdown(30)).rejects.toThrow('CLOUD_BACKUP_TIMEOUT');
+    expect(await initial).toBeInstanceOf(Error);
+    const pending = JSON.parse(fs.readFileSync(context.config.pendingFilePath, 'utf8'));
+    expect(pending.counts.favorites).toBe(1);
+    expect(service.status().activity).toMatchObject({ trigger: 'shutdown', phase: 'error' });
+  });
+
   it('round-trips compatibility Unicode filenames without changing their checksum', () => {
     const source = createDatabase();
     const sourceId = insertSource(source.database, 'source');
@@ -226,6 +301,21 @@ const fakeSecrets = {
     return { result: Buffer.from(encoded, 'base64').toString(), shouldReEncrypt: false };
   },
 };
+
+async function backupFixture() {
+  const context = createDatabase();
+  const sourceId = insertSource(context.database, 'source');
+  const { filmId } = insertFilm(context.database, sourceId, 'movie.mp4', 100, 60);
+  const config = new CloudBackupConfigService(
+    path.join(context.root, 'config.json'), path.join(context.root, 'pending.json'), fakeSecrets,
+  );
+  await config.update({ repositoryUrl: 'owner/private-repo', branch: 'main', token: 'test-token', autoBackupOnStartup: false, autoBackupOnQuit: true });
+  return {
+    ...context, filmId, config,
+    library: new LibraryDataBackupService(context.database, '1.0.0'),
+    logger: new AppLogger(path.join(context.root, 'logs')),
+  };
+}
 
 function createDatabase(): { root: string; database: DatabaseManager } {
   const root = createRoot();

@@ -1,6 +1,6 @@
 # Local Film Library
 
-一个完全本地运行的 Windows 影片资料管理桌面程序。它只读取外部影片目录中的影片、NFO、海报和背景图，并把索引与用户编辑内容保存到 SQLite；不会复制、修改、移动、重命名或删除外部媒体文件。
+一个以本地数据为主的 Windows 影片资料管理桌面程序。扫描只读取外部影片目录中的影片、NFO、海报和背景图，并把索引与用户编辑内容保存到 SQLite。删除索引或来源不会删除外部媒体；只有用户确认的“转移来源”和“修正转移目标”会移动已扫描影片及其旁路资源。可选局域网访问和 GitHub 私有仓库备份由用户配置启用。
 
 ## 技术架构
 
@@ -50,7 +50,7 @@ node scripts/smoke-dev-save.mjs <remote-debugging-port> <temporary-root>
 
 ## GitHub 自动发布
 
-向 GitHub 推送语义化版本 Tag（例如 `v1.2.3` 或 `1.2.3`）会触发 `.github/workflows/release.yml`。工作流在 Windows Runner 中执行类型检查、Lint、Forge 打包和生产包启动验证，然后创建同名 GitHub Release，上传安装程序、ZIP、Squirrel `RELEASES` 和增量包。Tag 发布流程不运行 Vitest 测试套件。
+向 GitHub 推送语义化版本 Tag（例如 `v1.2.3` 或 `1.2.3`）会触发 `.github/workflows/release.yml`。工作流在 Windows Runner 中执行类型检查、Lint、Forge 打包、Vitest 测试和生产包启动验证，然后创建同名 GitHub Release，上传安装程序、ZIP、Squirrel `RELEASES` 和增量包。Vitest 在 Forge 重建原生模块后运行，确保 SQLite 与 Electron ABI 一致。分支推送和 PR 另外通过 `.github/workflows/check.yml` 执行类型检查、Lint 和测试。
 
 Release 固定使用 `windows-2022` Runner。当前 Forge 间接依赖的 `@electron/rebuild 3.x / node-gyp` 尚不能识别 `windows-latest` 中的 Visual Studio 2026，而 Windows Server 2022 提供兼容的 Visual Studio 2022 C++ 工具链。
 
@@ -69,7 +69,7 @@ git push origin v1.2.3
 app.getPath("userData")/film-library.db
 ~~~
 
-启动时启用 foreign_keys、WAL 和 5000ms busy timeout，并执行版本化事务迁移。当前 schema 版本为 v13；数据库只在 Main Process 中访问。
+启动时启用 foreign_keys、WAL 和 5000ms busy timeout，并执行版本化事务迁移。当前 schema 版本为 v16；数据库只在 Main Process 中访问。
 
 主要表：
 
@@ -83,6 +83,7 @@ app.getPath("userData")/film-library.db
 - film_asset：poster、fanart、thumb、extra_fanart、preview、trailer、sample。
 - scan_job / scan_error：扫描摘要和单文件错误。
 - app_setting：本地设置。
+- source_transfer_journal：文件转移恢复日志；索引提交成功时在同一事务中清除。
 
 ## GitHub 云备份
 
@@ -93,6 +94,7 @@ app.getPath("userData")/film-library.db
 - 每次恢复前会在应用数据目录生成 `library-data-before-restore-时间.json` 安全副本。
 - GitHub 细粒度访问令牌需要目标仓库的 Contents 读写权限，并通过 Electron safeStorage / Windows DPAPI 加密保存在独立配置文件中；令牌不会进入数据库、日志或云端备份。
 - 启动和退出自动备份都会按数据哈希去重。失败时保留 `cloud-backup-pending.json`，下次启动重试；空库或影片数量骤减时自动停止上传，避免覆盖有效版本。
+- 退出备份会等待已有上传后重新检查最新数据；包含等待和响应正文读取的总时限为 8 秒。超时会尝试保存最新待上传快照，并继续退出。
 
 ## 添加来源和扫描
 
@@ -107,6 +109,14 @@ app.getPath("userData")/film-library.db
 2. 数据库合并：只有来源完整扫描成功后才进入事务，按精确相对路径执行 upsert、资源更新和 missing 标记。
 
 来源离线、权限错误、用户取消或扫描异常时，不会对该来源执行 missing 标记，也不会删除数据库影片。
+
+扫描摘要中的“缺失”是本次成功合并后新增的缺失影片数量；重复扫描未变化的来源不会重复计数。
+
+## 来源转移与中断恢复
+
+“转移”将已扫描影片及其旁路资源移动到目标来源中的独立子目录，保留影片 ID、收藏、分类和片段。桌面和网页扫描与文件转移互斥；正常退出会等待转移结束，并取消、等待扫描结束，再关闭数据库。
+
+移动前写入 SQLite 恢复日志。跨盘复制先写入临时文件并同步，再发布目标文件和移除原文件；索引更新与清除日志在同一事务中完成。下次启动会尝试回滚尚未提交的转移。磁盘离线、文件丢失或两端内容冲突时保留日志和文件，阻止继续扫描或转移；请连接原盘与目标盘后重启，仍有冲突时根据日志人工处理。恢复不会覆盖不同内容的现有文件。
 
 重复扫描按 (source_id, relative_path) 幂等。扫描器不读取或比较视频内容指纹；即使两个视频内容完全相同，只要文件名不同就会保留为两部影片。文件改名或移动后，旧路径标记为缺失，新路径作为新影片导入。
 
@@ -152,6 +162,12 @@ extrafanart/ 中的图片会按自然排序识别为剧照；与 extrafanart 同
 - 卡片销毁、离开可视区域或鼠标移出时清理定时器和媒体资源。
 - 没有精彩片段时回退到 fanart 和 extrafanart 图片轮播，不再使用独立 preview、trailer、sample 或完整原片预览。
 
+## 共鸣场景
+
+共鸣球顶部可以将当前视频“保存为场景”，通过场景下拉框切换，并在“管理场景”中重命名、复制或删除。每套场景独立保留视频列表及顺序、播放位置、画面比例和 VR 视角；使用时自动保存到本机，重启后恢复上次选中的场景。复制的场景与原场景互不影响。
+
+已有共鸣球队列保留为“临时场景”。切换前保存当前位置并暂停视频，切换后从对应位置等待播放；“清空”只清空当前场景的视频。删除当前场景会返回之前的临时场景，不删除影片文件。场景目前只保存在当前客户端本机存储中，不包含在 GitHub 云备份中。
+
 ## 片段标注和精彩预览
 
 - 客户端影片详情使用全宽工作台：左 1/4 集中展示海报、标题、常用操作和“我的分类”，右 3/4 上方是完整画面适配、不裁剪的唯一原片播放器，下方是压缩高度的功能分页，桌面尺寸下不会产生详情页整体滚动条。
@@ -178,9 +194,9 @@ film-media://preview/<film-uuid>  （旧版兼容路由，界面不再使用）
 film-media://poster/<film-uuid>
 ~~~
 
-URL 只接受合法 UUID。Main 根据 UUID 查 SQLite，再拼接并校验来源根路径；拒绝绝对路径、路径穿越、跨盘路径、离线来源和不存在文件。视频使用流式 fs.createReadStream，支持 Range、206、Accept-Ranges、Content-Range 和拖动进度，不启动本地 HTTP 服务。
+URL 只接受合法 UUID。Main 根据 UUID 查 SQLite，再拼接并校验来源根路径；拒绝绝对路径、路径穿越、跨盘路径、离线来源和不存在文件。视频使用流式 fs.createReadStream，支持 Range、206、Accept-Ranges、Content-Range 和拖动进度。媒体协议本身不依赖 HTTP 服务；另有可配置的本机/局域网网页服务。
 
-BrowserWindow 使用 nodeIntegration: false、contextIsolation: true、sandbox: true 和显式 preload。导航仅允许应用本地页面，未知新窗口全部拒绝，并启用严格 CSP。
+BrowserWindow 使用 nodeIntegration: false、contextIsolation: true、sandbox: true 和显式 preload。导航和重定向仅允许当前应用入口及诊断页，未知新窗口与 webview 全部拒绝，并启用严格 CSP。IPC 同时检查注册窗口、主框架和精确页面 URL。
 
 原片和目录操作只接受影片 UUID，分别调用 shell.openPath() 和 shell.showItemInFolder()；不会拼接或执行 cmd、PowerShell、start 或 explorer.exe 命令。
 
@@ -242,4 +258,4 @@ out/make/zip/win32/x64/local-film-library-win32-x64-0.1.0.zip
 
 ## 已知限制和下一阶段
 
-当前版本不联网刮削，不接入 TMDB/豆瓣/IMDb，不做分类层级、AI 分类、自动截图、预览生成、转码、外部文件修改、NFO 导出、剧集/季集模型、整库备份或自动更新。后续可以增加更完善的媒体技术信息、批量编辑、同名冲突手动映射和横向卡片模式。
+当前版本不联网刮削，不接入 TMDB/豆瓣/IMDb，暂不支持分类层级、AI 分类、NFO 写回/导出、剧集/季集模型、SQLite 整库备份或自动更新。已有自动封面截图、兼容播放转码、批量整理、来源文件转移和逻辑数据云备份。后续可以增加更完善的媒体技术信息、同名冲突手动映射和横向卡片模式。

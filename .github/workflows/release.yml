@@ -59,12 +59,16 @@ jobs:
           "SQUIRREL_VENDOR_DIR=$vendor" >> $env:GITHUB_ENV
 
       - name: Verify source
-        run: |
-          npm run typecheck
-          npm run lint
+        run: npm run typecheck
+
+      - name: Lint source
+        run: npm run lint
 
       - name: Build Windows artifacts
         run: npm run make
+
+      - name: Test with rebuilt Electron native modules
+        run: npm test
 
       - name: Verify packaged application
         run: npm run smoke:package

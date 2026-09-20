@@ -1,7 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { app, BrowserWindow } from 'electron';
 import type { AppLogger } from '../system/AppLogger';
+import { isTrustedWindowUrl, trustWindow } from './WindowTrust';
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string;
 declare const MAIN_WINDOW_VITE_NAME: string;
@@ -29,6 +31,10 @@ export function createMainWindow(logger: AppLogger, options: CreateMainWindowOpt
       preload: preloadPath,
     },
   });
+
+  const entry = getDevServerUrl() ?? pathToFileURL(path.join(__dirname, `../renderer/${getRendererName()}/index.html`)).href;
+  const failurePage = resolveFailurePage();
+  trustWindow(window.webContents, [entry, ...(failurePage ? [pathToFileURL(failurePage).href] : [])]);
 
   let failureShown = false;
   const showFailurePage = (reason: string, errorCode?: number): void => {
@@ -62,14 +68,15 @@ export function createMainWindow(logger: AppLogger, options: CreateMainWindowOpt
   window.on('closed', () => logger.info('BrowserWindow closed'));
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', (event, url) => {
-    const devServerUrl = getDevServerUrl();
-    const isDevUrl = Boolean(devServerUrl) && url.startsWith(devServerUrl!);
-    const isFileUrl = url.startsWith('file://');
-    if (!isDevUrl && !isFileUrl) {
+    if (!isTrustedWindowUrl(window.webContents, url)) {
       logger.warn('Renderer navigation blocked', { url });
       event.preventDefault();
     }
   });
+  window.webContents.on('will-redirect', (event, url) => {
+    if (!isTrustedWindowUrl(window.webContents, url)) event.preventDefault();
+  });
+  window.webContents.on('will-attach-webview', (event) => event.preventDefault());
   window.webContents.on('did-start-loading', () => logger.info('Renderer did-start-loading'));
   window.webContents.on('did-finish-load', () => {
     logger.info('Renderer did-finish-load', { url: describeUrl(window.webContents.getURL()) });

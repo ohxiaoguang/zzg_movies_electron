@@ -966,6 +966,8 @@ function errorCode(error: unknown): string {
 }
 
 function errorStatus(code: string): number {
+  if (code === 'SCAN_ALREADY_RUNNING' || code === 'SOURCE_TRANSFER_ALREADY_RUNNING'
+    || code === 'SOURCE_TRANSFER_RECOVERY_REQUIRED' || code === 'APPLICATION_SHUTTING_DOWN') return 409;
   if (code === 'UNAUTHORIZED' || code === 'INVALID_ACCOUNT_CREDENTIALS') return 401;
   if (code === 'PAIRING_RATE_LIMITED' || code === 'PLAYBACK_BUSY') return 429;
   if (code === 'MEDIA_PATH_OUTSIDE_SOURCE' || code === 'NETWORK_SCOPE_DENIED' || code === 'UNTRUSTED_ORIGIN'
@@ -980,6 +982,9 @@ function errorStatus(code: string): number {
 }
 
 function publicErrorMessage(status: number, code: string): string {
+  if (code === 'SOURCE_TRANSFER_ALREADY_RUNNING') return '正在转移文件，完成后才能开始扫描';
+  if (code === 'SOURCE_TRANSFER_RECOVERY_REQUIRED') return '存在未完成的文件转移，请在服务器电脑连接原盘和目标盘后重启恢复';
+  if (code === 'SCAN_ALREADY_RUNNING') return '已有扫描任务正在运行';
   if (code === 'PLAYBACK_BUSY') return '服务器当前的播放处理任务已满，请稍后重试';
   if (code === 'PLAYBACK_TOOLS_UNAVAILABLE') return '服务器未找到可用的 ffmpeg，无法处理该视频格式';
   if (code.startsWith('FFMPEG_') || code.startsWith('PLAYBACK_PREPARATION_')) return '服务器无法准备该视频的兼容播放流';

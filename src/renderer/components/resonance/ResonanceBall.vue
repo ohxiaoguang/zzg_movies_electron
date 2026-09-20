@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { Close, Delete, VideoPause, VideoPlay } from '@element-plus/icons-vue';
+import { ElMessage } from 'element-plus';
+import ResonanceSceneControls from './ResonanceSceneControls.vue';
 import { mediaUrl } from '../../api';
 import { computeResonanceLayout } from '../../composables/resonanceLayout';
 import { SphericalVideoRenderer } from '../../media/SphericalVideoRenderer';
@@ -11,6 +13,7 @@ const stage = ref<HTMLElement | null>(null);
 const stageSize = ref({ width: 0, height: 0 });
 const playingIds = ref(new Set<string>());
 const clearPending = ref(false);
+const sceneGeneration = ref(0);
 const videoElements = new Map<string, HTMLVideoElement>();
 const canvasElements = new Map<string, HTMLCanvasElement>();
 const sphericalRenderers = new Map<string, SphericalVideoRenderer>();
@@ -42,6 +45,8 @@ watch(stage, (element) => {
 
 watch(() => resonance.expanded, async (expanded) => {
   if (!expanded) {
+    captureSceneState();
+    try { resonance.flush(); } catch { /* Scene controls show persistence failures. */ }
     vrHydrationGeneration += 1;
     pauseAll();
     return;
@@ -84,6 +89,7 @@ function registerCanvas(item: ResonanceVideo, element: unknown): void {
 
 function initializeVideo(item: ResonanceVideo, event: Event): void {
   const element = event.currentTarget as HTMLVideoElement;
+  if (videoElements.get(item.id) !== element || !resonance.videos.includes(item)) return;
   if (!item.isVr) resonance.updateAspectRatio(item.id, element.videoWidth, element.videoHeight);
   const duration = Number.isFinite(element.duration) ? element.duration : item.durationSeconds;
   const target = Math.min(Math.max(0, item.currentSeconds), Math.max(0, duration - 0.05));
@@ -93,10 +99,12 @@ function initializeVideo(item: ResonanceVideo, event: Event): void {
 
 function trackProgress(item: ResonanceVideo, event: Event): void {
   const element = event.currentTarget as HTMLVideoElement;
+  if (videoElements.get(item.id) !== element || !resonance.videos.includes(item)) return;
   resonance.updateProgress(item.id, element.currentTime, element.duration);
 }
 
-function markPlaying(id: string, playing: boolean): void {
+function markPlaying(id: string, playing: boolean, event?: Event): void {
+  if (event && videoElements.get(id) !== event.currentTarget) return;
   const next = new Set(playingIds.value);
   if (playing) next.add(id);
   else next.delete(id);
@@ -121,6 +129,61 @@ function playAll(): void {
 
 function pauseAll(): void {
   for (const element of videoElements.values()) element.pause();
+}
+
+function captureSceneState(): void {
+  for (const item of resonance.videos) {
+    const element = videoElements.get(item.id);
+    // Before metadata arrives, currentTime is zero rather than the saved bookmark.
+    if (element && element.readyState >= 1) resonance.updateProgress(item.id, element.currentTime, element.duration);
+    const renderer = sphericalRenderers.get(item.id);
+    if (renderer) resonance.updateVrView(item.id, renderer.getView());
+  }
+}
+
+function persistSceneState(): void {
+  captureSceneState();
+  try { resonance.flush(); } catch { /* Scene controls show persistence failures. */ }
+}
+
+onMounted(() => window.addEventListener('pagehide', persistSceneState));
+
+function changeScene(action: () => void): void {
+  captureSceneState();
+  pauseAll();
+  try {
+    action();
+  } catch (error) {
+    ElMessage({ type: 'error', message: error instanceof Error ? error.message : '场景切换失败', zIndex: 4500 });
+    return;
+  }
+  vrHydrationGeneration += 1;
+  for (const id of sphericalRenderers.keys()) destroySphericalRenderer(id, false);
+  videoElements.clear();
+  canvasElements.clear();
+  playingIds.value = new Set();
+  if (clearTimer) clearTimeout(clearTimer);
+  clearTimer = null;
+  clearPending.value = false;
+  // Remount even when two scenes contain the same file, restoring their independent positions/views.
+  sceneGeneration.value += 1;
+  void nextTick(() => {
+    stage.value?.focus();
+    void hydrateLegacyVrModes();
+  });
+}
+
+function switchScene(id: string | null): void {
+  if (id === resonance.activeSceneId) return;
+  changeScene(() => resonance.switchScene(id));
+}
+
+function deleteScene(id: string): void {
+  if (id === resonance.activeSceneId) changeScene(() => resonance.deleteScene(id));
+  else {
+    try { resonance.deleteScene(id); }
+    catch (error) { ElMessage({ type: 'error', message: error instanceof Error ? error.message : '场景删除失败', zIndex: 4500 }); }
+  }
 }
 
 function seekOne(item: ResonanceVideo, event: Event): void {
@@ -225,6 +288,9 @@ function handleOverlayKeydown(event: KeyboardEvent): void {
 }
 
 onBeforeUnmount(() => {
+  window.removeEventListener('pagehide', persistSceneState);
+  captureSceneState();
+  try { resonance.flush(); } catch { /* Keep the in-memory scene and visible error. */ }
   stageObserver?.disconnect();
   if (clearTimer) clearTimeout(clearTimer);
   pauseAll();
@@ -254,6 +320,7 @@ onBeforeUnmount(() => {
           <span class="resonance-heading-mark" />
           <div><strong>共鸣球</strong><small>{{ resonance.count }} 个视频正在共鸣</small></div>
         </div>
+        <ResonanceSceneControls @capture="captureSceneState" @switch-scene="switchScene" @delete-scene="deleteScene" />
         <div class="resonance-global-actions">
           <el-button
             class="global-play-button"
@@ -277,7 +344,7 @@ onBeforeUnmount(() => {
       >
         <article
           v-for="item in resonance.videos"
-          :key="item.id"
+          :key="`${sceneGeneration}:${item.id}`"
           class="resonance-tile"
           :style="tileStyle(item.id)"
         >
@@ -290,9 +357,9 @@ onBeforeUnmount(() => {
             playsinline
             @loadedmetadata="initializeVideo(item, $event)"
             @timeupdate="trackProgress(item, $event)"
-            @play="markPlaying(item.id, true)"
-            @pause="markPlaying(item.id, false)"
-            @ended="markPlaying(item.id, false)"
+            @play="markPlaying(item.id, true, $event)"
+            @pause="markPlaying(item.id, false, $event)"
+            @ended="markPlaying(item.id, false, $event)"
           />
           <canvas
             v-if="item.isVr"
@@ -341,8 +408,8 @@ onBeforeUnmount(() => {
 .resonance-ball strong { position: relative; z-index: 2; font-size: 12px; letter-spacing: .08em; text-shadow: 0 2px 8px rgba(0,0,0,.8); }
 .resonance-orbit { position: absolute; width: 88px; height: 31px; border: 1px solid rgba(160,255,220,.38); border-radius: 50%; transform: rotate(-18deg); }
 .resonance-count { position: absolute; z-index: 3; top: -5px; right: -4px; display: grid; min-width: 25px; height: 25px; padding: 0 6px; place-items: center; border: 2px solid #10141b; border-radius: 999px; color: #102018; background: #b5f5d9; box-shadow: 0 4px 12px rgba(0,0,0,.35); font-size: 11px; font-weight: 850; }
-.resonance-overlay { position: fixed; z-index: 3000; inset: 0; display: grid; grid-template-rows: 66px minmax(0, 1fr); color: #edf5f2; background: #07090d; }
-.resonance-toolbar { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 20px; padding: 10px 18px; border-bottom: 1px solid rgba(255,255,255,.1); background: linear-gradient(90deg, rgba(21,35,38,.98), rgba(15,17,23,.98)); box-shadow: 0 8px 26px rgba(0,0,0,.28); }
+.resonance-overlay { position: fixed; z-index: 3000; inset: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); color: #edf5f2; background: #07090d; }
+.resonance-toolbar { display: flex; min-width: 0; min-height: 66px; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 20px; padding: 10px 18px; border-bottom: 1px solid rgba(255,255,255,.1); background: linear-gradient(90deg, rgba(21,35,38,.98), rgba(15,17,23,.98)); box-shadow: 0 8px 26px rgba(0,0,0,.28); }
 .resonance-heading { display: flex; min-width: 0; align-items: center; gap: 11px; }.resonance-heading > div { display: grid; gap: 2px; }.resonance-heading strong { font-size: 17px; letter-spacing: .06em; }.resonance-heading small { color: #8fa49e; font-size: 10px; }
 .resonance-heading-mark { width: 30px; height: 30px; border: 1px solid rgba(189,255,229,.52); border-radius: 50%; background: radial-gradient(circle at 35% 28%, #dffff3, #60d4aa 22%, #173b3a 70%); box-shadow: 0 0 20px rgba(96,212,170,.28); }
 .resonance-global-actions { display: flex; align-items: center; gap: 7px; }.resonance-global-actions :deep(.el-button) { margin: 0; }.resonance-global-actions :deep(svg) { width: 15px; margin-right: 5px; }.resonance-global-actions :deep(.is-circle svg) { margin: 0; }

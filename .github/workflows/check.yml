@@ -1,0 +1,26 @@
+name: Check source
+
+on:
+  pull_request:
+  push:
+    branches: ['**']
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      # Tests run inside Electron to match better-sqlite3's native ABI.
+      - run: npx electron-rebuild -f -w better-sqlite3
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test

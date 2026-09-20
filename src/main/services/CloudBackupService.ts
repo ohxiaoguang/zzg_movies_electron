@@ -39,6 +39,9 @@ export class CloudBackupService {
   private running: Promise<CloudBackupRunResultDto> | null = null;
   private activity: CloudBackupActivityDto | null = null;
   private readonly activityListeners = new Set<ActivityListener>();
+  private readonly requests = new Set<AbortController>();
+  private shutdownExpired = false;
+  private shuttingDown = false;
 
   public constructor(
     private readonly config: CloudBackupConfigService,
@@ -76,6 +79,8 @@ export class CloudBackupService {
   }
 
   public runBackup(trigger: BackupTrigger, force = false, timeoutMs = 15_000): Promise<CloudBackupRunResultDto> {
+    if (this.shuttingDown && trigger !== 'shutdown') return Promise.reject(new Error('APPLICATION_SHUTTING_DOWN'));
+    if (this.shutdownExpired) return Promise.reject(new Error('CLOUD_BACKUP_TIMEOUT'));
     if (this.running) {
       this.publishActivity(trigger, 'running');
       return this.observeRun(trigger, this.running);
@@ -113,6 +118,7 @@ export class CloudBackupService {
     commitSha: string | null = null,
     errorCode: string | null = null,
   ): void {
+    if (this.shuttingDown && trigger !== 'shutdown') return;
     this.activity = { trigger, phase, at: new Date().toISOString(), commitSha, errorCode };
     for (const listener of this.activityListeners) {
       try {
@@ -133,7 +139,34 @@ export class CloudBackupService {
 
   public async backupOnShutdown(timeoutMs = 8_000): Promise<CloudBackupRunResultDto | null> {
     if (!this.status().autoBackupOnQuit || !this.status().configured) return null;
-    return this.runBackup('shutdown', false, timeoutMs);
+    this.shuttingDown = true;
+    this.publishActivity('shutdown', 'running');
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        this.shutdownExpired = true;
+        for (const request of this.requests) request.abort();
+        // Preserve the current data, not the snapshot of an older in-flight upload.
+        try { this.savePending(this.libraryData.exportDocument()); } catch { /* Report the timeout below. */ }
+        reject(new Error('CLOUD_BACKUP_TIMEOUT'));
+      }, timeoutMs);
+    });
+    const backup = async (): Promise<CloudBackupRunResultDto> => {
+      if (this.running) {
+        try { await this.running; } catch { /* Retry the latest snapshot within the remaining deadline. */ }
+      }
+      if (this.shutdownExpired) throw new Error('CLOUD_BACKUP_TIMEOUT');
+      return this.runBackup('shutdown', false, timeoutMs);
+    };
+    try {
+      return await Promise.race([backup(), deadline]);
+    } catch (error) {
+      this.recordError(error);
+      this.publishActivity('shutdown', 'error', null, error instanceof Error ? error.message : 'CLOUD_BACKUP_FAILED');
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   public async versions(): Promise<CloudBackupVersionDto[]> {
@@ -193,10 +226,7 @@ export class CloudBackupService {
         counts: document.counts,
       };
     }
-    const json = `${JSON.stringify(document, null, 2)}\n`;
-    if (Buffer.byteLength(json, 'utf8') > MAX_BACKUP_BYTES) throw new Error('CLOUD_BACKUP_FILE_TOO_LARGE');
-    fs.mkdirSync(path.dirname(this.config.pendingFilePath), { recursive: true });
-    fs.writeFileSync(this.config.pendingFilePath, json, { encoding: 'utf8', mode: 0o600 });
+    const json = this.savePending(document);
 
     try {
       const context = await this.githubContext();
@@ -328,43 +358,62 @@ export class CloudBackupService {
     init: RequestInit,
     timeoutMs = 15_000,
   ): Promise<T> {
+    if (this.shutdownExpired) throw new Error('CLOUD_BACKUP_TIMEOUT');
     const controller = new AbortController();
+    this.requests.add(controller);
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    let response: Response;
+    const aborted = new Promise<never>((_resolve, reject) => {
+      controller.signal.addEventListener('abort', () => reject(new Error('CLOUD_BACKUP_TIMEOUT')), { once: true });
+    });
     try {
-      response = await this.fetcher(
-        `https://api.github.com/repos/${encodeURIComponent(context.owner)}/${encodeURIComponent(context.repository)}${suffix}`,
-        {
-          ...init,
-          signal: controller.signal,
-          headers: {
-            Accept: 'application/vnd.github+json',
-            Authorization: `Bearer ${context.token}`,
-            'Content-Type': 'application/json',
-            'X-GitHub-Api-Version': '2022-11-28',
-            'User-Agent': 'Local-Film-Library',
-            ...init.headers,
+      const read = async (): Promise<T> => {
+        const response = await this.fetcher(
+          `https://api.github.com/repos/${encodeURIComponent(context.owner)}/${encodeURIComponent(context.repository)}${suffix}`,
+          {
+            ...init,
+            signal: controller.signal,
+            headers: {
+              Accept: 'application/vnd.github+json',
+              Authorization: `Bearer ${context.token}`,
+              'Content-Type': 'application/json',
+              'X-GitHub-Api-Version': '2022-11-28',
+              'User-Agent': 'Local-Film-Library',
+              ...init.headers,
+            },
           },
-        },
-      );
+        );
+        if (!response.ok) {
+          if (response.status === 401) throw new Error('CLOUD_BACKUP_AUTH_FAILED');
+          if (response.status === 403) throw new Error('CLOUD_BACKUP_FORBIDDEN');
+          if (response.status === 404) throw new Error('CLOUD_BACKUP_NOT_FOUND');
+          if (response.status === 409 || response.status === 422) throw new Error('CLOUD_BACKUP_CONFLICT');
+          throw new Error('CLOUD_BACKUP_REMOTE_FAILED');
+        }
+        try {
+          return await response.json() as T;
+        } catch {
+          throw new Error('CLOUD_BACKUP_REMOTE_INVALID');
+        }
+      };
+      return await Promise.race([read(), aborted]);
     } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') throw new Error('CLOUD_BACKUP_TIMEOUT', { cause: error });
+      if (controller.signal.aborted) throw new Error('CLOUD_BACKUP_TIMEOUT', { cause: error });
+      if (error instanceof Error && error.message.startsWith('CLOUD_BACKUP_')) throw error;
       throw new Error('CLOUD_BACKUP_NETWORK_FAILED', { cause: error });
     } finally {
       clearTimeout(timeout);
+      this.requests.delete(controller);
     }
-    if (!response.ok) {
-      if (response.status === 401) throw new Error('CLOUD_BACKUP_AUTH_FAILED');
-      if (response.status === 403) throw new Error('CLOUD_BACKUP_FORBIDDEN');
-      if (response.status === 404) throw new Error('CLOUD_BACKUP_NOT_FOUND');
-      if (response.status === 409 || response.status === 422) throw new Error('CLOUD_BACKUP_CONFLICT');
-      throw new Error('CLOUD_BACKUP_REMOTE_FAILED');
-    }
-    try {
-      return await response.json() as T;
-    } catch {
-      throw new Error('CLOUD_BACKUP_REMOTE_INVALID');
-    }
+  }
+
+  private savePending(document: LibraryDataBackupDocument): string {
+    const json = `${JSON.stringify(document, null, 2)}\n`;
+    if (Buffer.byteLength(json, 'utf8') > MAX_BACKUP_BYTES) throw new Error('CLOUD_BACKUP_FILE_TOO_LARGE');
+    fs.mkdirSync(path.dirname(this.config.pendingFilePath), { recursive: true });
+    const temporary = `${this.config.pendingFilePath}.tmp`;
+    fs.writeFileSync(temporary, json, { encoding: 'utf8', mode: 0o600 });
+    fs.renameSync(temporary, this.config.pendingFilePath);
+    return json;
   }
 
   private recordError(error: unknown): void {

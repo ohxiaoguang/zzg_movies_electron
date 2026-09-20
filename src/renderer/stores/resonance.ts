@@ -3,6 +3,7 @@ import { defineStore } from 'pinia';
 import type { VrViewDto } from '../../shared/contracts';
 
 const STORAGE_KEY = 'local-film-library:resonance-v1';
+const SCENES_STORAGE_KEY = 'local-film-library:resonance-scenes-v1';
 
 export interface ResonanceVideo {
   id: string;
@@ -21,8 +22,33 @@ export interface ResonanceVideo {
 
 export type ResonanceVideoInput = Omit<ResonanceVideo, 'id' | 'addedAt' | 'vrModeKnown'>;
 
+export interface ResonanceScene {
+  id: string;
+  name: string;
+  videos: ResonanceVideo[];
+  createdAt: string;
+}
+
+interface SceneState {
+  version: 1;
+  activeSceneId: string | null;
+  draft: ResonanceVideo[];
+  scenes: ResonanceScene[];
+}
+
 export const useResonanceStore = defineStore('resonance', () => {
-  const videos = ref<ResonanceVideo[]>(restoreVideos());
+  const sceneState = ref<SceneState>(restoreSceneState());
+  const storageError = ref('');
+  const scenes = computed(() => sceneState.value.scenes);
+  const activeSceneId = computed(() => sceneState.value.activeSceneId);
+  const activeScene = computed(() => scenes.value.find((scene) => scene.id === activeSceneId.value) ?? null);
+  const videos = computed<ResonanceVideo[]>({
+    get: () => activeScene.value?.videos ?? sceneState.value.draft,
+    set: (value) => {
+      if (activeScene.value) activeScene.value.videos = value;
+      else sceneState.value.draft = value;
+    },
+  });
   const expanded = ref(false);
   const count = computed(() => videos.value.length);
 
@@ -82,16 +108,111 @@ export const useResonanceStore = defineStore('resonance', () => {
     expanded.value = false;
   }
 
-  watch(videos, (value) => {
+  function persist(state: SceneState): void {
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(value));
+      window.localStorage.setItem(SCENES_STORAGE_KEY, JSON.stringify(state));
+      storageError.value = '';
     } catch (error) {
-      console.warn('[resonance] could not persist queue', error);
+      storageError.value = '共鸣场景保存失败，请检查本机存储空间后重试';
+      console.warn('[resonance] could not persist scenes', error);
+      throw new Error(storageError.value, { cause: error });
     }
+  }
+
+  function commit(state: SceneState): void {
+    persist(state);
+    sceneState.value = state;
+  }
+
+  function validatedName(value: string, exceptId?: string): string {
+    const name = value.trim().normalize('NFKC');
+    if (!name || name.length > 60) throw new Error('场景名称需为 1 到 60 个字符');
+    if (scenes.value.some((scene) => scene.id !== exceptId && scene.name.toLocaleLowerCase() === name.toLocaleLowerCase())) {
+      throw new Error('已有同名场景，请换一个名称');
+    }
+    return name;
+  }
+
+  function saveSceneAs(name: string): string {
+    const scene: ResonanceScene = {
+      id: crypto.randomUUID(), name: validatedName(name), videos: cloneVideos(videos.value), createdAt: new Date().toISOString(),
+    };
+    commit({ ...sceneState.value, scenes: [...scenes.value, scene], activeSceneId: scene.id });
+    return scene.id;
+  }
+
+  function switchScene(id: string | null): void {
+    if (id !== null && !scenes.value.some((scene) => scene.id === id)) throw new Error('场景不存在');
+    commit({ ...sceneState.value, activeSceneId: id });
+  }
+
+  function renameScene(id: string, name: string): void {
+    if (!scenes.value.some((scene) => scene.id === id)) throw new Error('场景不存在');
+    const validName = validatedName(name, id);
+    commit({ ...sceneState.value, scenes: scenes.value.map((scene) => scene.id === id ? { ...scene, name: validName } : scene) });
+  }
+
+  function duplicateScene(id: string, name: string): string {
+    const source = scenes.value.find((scene) => scene.id === id);
+    if (!source) throw new Error('场景不存在');
+    const scene: ResonanceScene = {
+      id: crypto.randomUUID(), name: validatedName(name), videos: cloneVideos(source.videos), createdAt: new Date().toISOString(),
+    };
+    commit({ ...sceneState.value, scenes: [...scenes.value, scene] });
+    return scene.id;
+  }
+
+  function deleteScene(id: string): void {
+    // Return to the existing temporary scene without overwriting it.
+    const deletingActive = activeSceneId.value === id;
+    commit({
+      ...sceneState.value,
+      scenes: scenes.value.filter((scene) => scene.id !== id),
+      activeSceneId: deletingActive ? null : activeSceneId.value,
+    });
+  }
+
+  function flush(): void { persist(sceneState.value); }
+
+  watch(sceneState, () => {
+    try { flush(); } catch { /* The persistent error is displayed in the scene controls. */ }
   }, { deep: true });
 
-  return { videos, expanded, count, add, updateProgress, updateAspectRatio, updateVrMode, updateVrView, remove, clear };
+  return {
+    videos, expanded, count, add, updateProgress, updateAspectRatio, updateVrMode, updateVrView, remove, clear,
+    scenes, activeSceneId, activeScene, storageError, saveSceneAs, switchScene, renameScene, duplicateScene, deleteScene, flush,
+  };
 });
+
+function cloneVideos(videos: ResonanceVideo[]): ResonanceVideo[] {
+  return videos.map((video) => ({ ...video, vrView: video.vrView ? { ...video.vrView } : null }));
+}
+
+function restoreSceneState(): SceneState {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(SCENES_STORAGE_KEY) ?? 'null') as SceneState | null;
+    if (parsed?.version === 1 && Array.isArray(parsed.scenes) && Array.isArray(parsed.draft)) {
+      const ids = new Set<string>();
+      const scenes = parsed.scenes.filter((scene) => {
+        if (!scene || typeof scene.id !== 'string' || !scene.id || ids.has(scene.id)
+          || typeof scene.name !== 'string' || !scene.name.trim() || !Array.isArray(scene.videos)) return false;
+        ids.add(scene.id);
+        return true;
+      }).map((scene) => ({
+        id: scene.id,
+        name: scene.name.trim().slice(0, 60),
+        createdAt: typeof scene.createdAt === 'string' ? scene.createdAt : new Date().toISOString(),
+        videos: scene.videos.filter(isStoredVideo).map(sanitizeVideo),
+      }));
+      return {
+        version: 1, scenes,
+        activeSceneId: scenes.some((scene) => scene.id === parsed.activeSceneId) ? parsed.activeSceneId : null,
+        draft: parsed.draft.filter(isStoredVideo).map(sanitizeVideo),
+      };
+    }
+  } catch { /* Keep compatibility with the original queue if no valid scene document exists. */ }
+  return { version: 1, activeSceneId: null, draft: restoreVideos(), scenes: [] };
+}
 
 function restoreVideos(): ResonanceVideo[] {
   try {

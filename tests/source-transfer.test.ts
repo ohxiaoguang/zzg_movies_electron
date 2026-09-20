@@ -19,6 +19,23 @@ afterEach(() => {
 });
 
 describe('source transfer', () => {
+  it('enforces scan/transfer exclusion in both directions at service entry points', async () => {
+    const fixture = createFixture();
+    const source = fixture.sources.create({ name: 'source', rootPath: fixture.sourceRoot });
+    const target = fixture.sources.create({ name: 'target', rootPath: fixture.targetRoot });
+    const transfer = new SourceTransferService(fixture.database, fixture.sources, fixture.logger);
+    fixture.scan.start({ sourceIds: [source.id] });
+    await expect(transfer.transfer({ sourceId: source.id, targetSourceId: target.id })).rejects.toThrow('SOURCE_TRANSFER_SCAN_RUNNING');
+    await waitForScan(fixture.scan);
+    const moving = transfer.transfer({ sourceId: source.id, targetSourceId: target.id });
+    expect(() => fixture.scan.start({})).toThrow('SOURCE_TRANSFER_ALREADY_RUNNING');
+    expect(() => fixture.scan.startDirectory(source.id, '.')).toThrow('SOURCE_TRANSFER_ALREADY_RUNNING');
+    await moving;
+    fixture.scan.start({ sourceIds: [target.id] });
+    await waitForScan(fixture.scan);
+    expect(fixture.films.page({ page: 1, pageSize: 20 }).total).toBe(1);
+  });
+
   it('moves scanned media and sidecars, preserves organization and segments, and keeps the source folder', async () => {
     const fixture = createFixture();
     const source = fixture.sources.create({ name: '来源A', rootPath: fixture.sourceRoot });
