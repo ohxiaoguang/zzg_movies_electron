@@ -70,6 +70,10 @@ jobs:
       - name: Build Windows artifacts
         run: npm run make
 
+      # Forge rebuilds the packaged copy, not the workspace used by Vitest.
+      - name: Rebuild workspace native modules for Electron tests
+        run: npx electron-rebuild -f -w better-sqlite3
+
       - name: Test with rebuilt Electron native modules
         run: npm test
 

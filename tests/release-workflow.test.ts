@@ -24,6 +24,9 @@ describe('GitHub release workflow', () => {
 
   it('runs the Vitest suite after rebuilding native modules and before publishing', () => {
     expect(workflow).toContain('run: node node_modules/electron/install.js');
+    const rebuild = workflow.indexOf('run: npx electron-rebuild -f -w better-sqlite3');
+    expect(rebuild).toBeGreaterThan(workflow.indexOf('run: npm run make'));
+    expect(rebuild).toBeLessThan(workflow.indexOf('run: npm test'));
     expect(workflow.indexOf('run: npm test')).toBeGreaterThan(workflow.indexOf('run: npm run make'));
     expect(workflow.indexOf('run: npm test')).toBeLessThan(workflow.indexOf('name: Create GitHub Release'));
   });
