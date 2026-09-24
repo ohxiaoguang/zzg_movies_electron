@@ -266,7 +266,7 @@ export interface FilmPageQuery {
   allData?: boolean;
   duplicateFilenameOnly?: boolean;
   availability?: FilmAvailability | 'all';
-  sort?: 'added' | 'organized' | 'favorite' | 'played' | 'recent' | 'title' | 'year' | 'rating' | 'file';
+  sort?: 'added' | 'organized' | 'favorite' | 'played' | 'recent' | 'title' | 'year' | 'rating' | 'file' | 'size';
 }
 
 export interface FilmPageDto {

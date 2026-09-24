@@ -1618,6 +1618,9 @@ export class FilmRepository {
         return 'f.rating DESC, COALESCE(f.sort_title, f.title) COLLATE NOCASE ASC';
       case 'file':
         return 'f.filename COLLATE NOCASE ASC, f.id ASC';
+      case 'size':
+        return `(SELECT SUM(size_file.file_size) FROM film_file size_file WHERE size_file.film_id = f.id) DESC NULLS LAST,
+                f.filename COLLATE NOCASE ASC, f.id ASC`;
       case 'added':
       default:
         return 'f.imported_at DESC, f.rowid DESC';

@@ -53,6 +53,30 @@ async function waitForScan(scan: ScanCoordinator): Promise<void> {
 }
 
 describe('multi-part films and availability', () => {
+  it('sorts by total video size across CD parts before pagination and refreshes after scans', async () => {
+    const root = makeRoot();
+    for (const part of [1, 2, 3]) fs.writeFileSync(path.join(root, `Movie-cd${part}.mp4`), Buffer.alloc(40));
+    fs.writeFileSync(path.join(root, 'Single.mp4'), Buffer.alloc(100));
+    fs.writeFileSync(path.join(root, 'Small.mp4'), Buffer.alloc(10));
+    fs.writeFileSync(path.join(root, 'Small-poster.jpg'), Buffer.alloc(1000));
+    const context = createContext(root);
+    context.scan.start({});
+    await waitForScan(context.scan);
+
+    const query = { page: 1, pageSize: 20, sort: 'size' as const };
+    expect(context.films.page(query).items.map((film) => film.filename)).toEqual([
+      'Movie-cd1.mp4', 'Single.mp4', 'Small.mp4',
+    ]);
+    expect(context.films.page({ ...query, page: 2, pageSize: 1 }).items[0]?.filename).toBe('Single.mp4');
+
+    fs.writeFileSync(path.join(root, 'Movie-cd2.mp4'), Buffer.alloc(1));
+    context.scan.start({});
+    await waitForScan(context.scan);
+    expect(context.films.page(query).items.map((film) => film.filename)).toEqual([
+      'Single.mp4', 'Movie-cd1.mp4', 'Small.mp4',
+    ]);
+  });
+
   it('groups only exact -cdN files, keeps one film id, and is idempotent', async () => {
     const root = makeRoot();
     const context = createContext(root);
