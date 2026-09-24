@@ -83,7 +83,7 @@ export function validateFilmPageQuery(
     query.availability = payload.availability as FilmPageQuery['availability'];
   }
   if (payload.sort !== undefined) {
-    if (!['added', 'organized', 'favorite', 'played', 'recent', 'title', 'year', 'rating', 'file'].includes(String(payload.sort))) throw new Error('INVALID_PAGE_QUERY');
+    if (!['added', 'organized', 'favorite', 'played', 'recent', 'title', 'year', 'rating', 'file', 'size'].includes(String(payload.sort))) throw new Error('INVALID_PAGE_QUERY');
     query.sort = payload.sort as FilmPageQuery['sort'];
   }
   return query;

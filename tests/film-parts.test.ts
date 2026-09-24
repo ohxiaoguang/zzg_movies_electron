@@ -8,6 +8,7 @@ import { SettingsRepository } from '../src/main/database/repositories/SettingsRe
 import { SourceRepository } from '../src/main/database/repositories/SourceRepository';
 import { ScanCoordinator } from '../src/main/scanner/ScanCoordinator';
 import { AppLogger } from '../src/main/system/AppLogger';
+import { FilmLibraryReadService } from '../src/main/services/FilmLibraryReadService';
 import { groupVideoFiles } from '../src/main/scanner/SourceScanner';
 
 const roots: string[] = [];
@@ -53,7 +54,7 @@ async function waitForScan(scan: ScanCoordinator): Promise<void> {
 }
 
 describe('multi-part films and availability', () => {
-  it('sorts by total video size across CD parts before pagination and refreshes after scans', async () => {
+  it.each([false, true])('sorts by total video size through query validation (strict=%s)', async (strict) => {
     const root = makeRoot();
     for (const part of [1, 2, 3]) fs.writeFileSync(path.join(root, `Movie-cd${part}.mp4`), Buffer.alloc(40));
     fs.writeFileSync(path.join(root, 'Single.mp4'), Buffer.alloc(100));
@@ -64,15 +65,16 @@ describe('multi-part films and availability', () => {
     await waitForScan(context.scan);
 
     const query = { page: 1, pageSize: 20, sort: 'size' as const };
-    expect(context.films.page(query).items.map((film) => film.filename)).toEqual([
+    const library = new FilmLibraryReadService(context.films, context.sources, context.settings);
+    expect(library.page(query, strict).items.map((film) => film.filename)).toEqual([
       'Movie-cd1.mp4', 'Single.mp4', 'Small.mp4',
     ]);
-    expect(context.films.page({ ...query, page: 2, pageSize: 1 }).items[0]?.filename).toBe('Single.mp4');
+    expect(library.page({ ...query, page: 2, pageSize: 1 }, strict).items[0]?.filename).toBe('Single.mp4');
 
     fs.writeFileSync(path.join(root, 'Movie-cd2.mp4'), Buffer.alloc(1));
     context.scan.start({});
     await waitForScan(context.scan);
-    expect(context.films.page(query).items.map((film) => film.filename)).toEqual([
+    expect(library.page(query, strict).items.map((film) => film.filename)).toEqual([
       'Single.mp4', 'Movie-cd1.mp4', 'Small.mp4',
     ]);
   });
