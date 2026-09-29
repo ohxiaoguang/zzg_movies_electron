@@ -24,6 +24,9 @@ export function validateFilmPageQuery(
     query[key] = value;
   }
 
+  if (payload.sourceIds !== undefined) {
+    query.sourceIds = uuidArray(payload.sourceIds);
+  }
   if (payload.categoryIds !== undefined) {
     query.categoryIds = uuidArray(payload.categoryIds);
   }

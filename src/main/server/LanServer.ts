@@ -93,6 +93,7 @@ const FILM_QUERY_KEYS = new Set([
   'pageSize',
   'search',
   'sourceId',
+  'sourceIds',
   'actor',
   'organizationState',
   'categoryIds',
@@ -914,7 +915,7 @@ export class LanServer {
 function filmQueryFromUrl(url: URL): Record<string, unknown> {
   const query: Record<string, unknown> = {};
   for (const key of FILM_QUERY_KEYS) {
-    if (key === 'categoryIds' || key === 'nfoTagIds' || key === 'genreIds') {
+    if (key === 'sourceIds' || key === 'categoryIds' || key === 'nfoTagIds' || key === 'genreIds') {
       const values = url.searchParams.getAll(key).flatMap((value) => value.split(',')).filter(Boolean);
       if (values.length > 0) query[key] = values;
       continue;

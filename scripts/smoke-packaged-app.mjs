@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { verifyResonanceScenes } from './smoke-resonance-scenes.mjs';
+import { verifyDesktopLibraryFilters, verifyWebLibraryFilters } from './smoke-library-filters.mjs';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const executable = path.resolve(process.argv[2] ?? path.join(projectRoot, 'out/local-film-library-win32-x64/local-film-library.exe'));
@@ -16,6 +17,7 @@ const minimumDetailPlayerHeight = 320;
 let cdpMessageId = 0;
 
 let child;
+let browserChild;
 let smokeRoot;
 let logFile;
 
@@ -248,7 +250,44 @@ try {
     if (!result.after?.ok || !result.after.data.some((source) => source.name === 'Smoke Source')) throw new Error(`Source list did not contain the created source: ${JSON.stringify(result.after)}`);
 
     if (fs.readFileSync(path.join(mediaRoot, 'Smoke Movie.nfo'), 'utf8') !== '<movie><title>Smoke Movie</title><tag>Smoke Tag</tag><actor>Smoke Actor</actor><plot>Smoke summary</plot></movie>') throw new Error('Packaged smoke unexpectedly modified NFO');
+    await verifyDesktopLibraryFilters((expression, awaitPromise) => cdpEvaluate(socket, expression, awaitPromise));
+    if (process.env.SMOKE_WEB_FILTERS === '1') {
+      const screenshot = await cdpCommand(socket, 'Page.captureScreenshot', { format: 'png' });
+      fs.writeFileSync(path.join(projectRoot, 'out/filter-desktop.png'), Buffer.from(screenshot.data, 'base64'));
+    }
     await verifyResonanceScenes((expression, awaitPromise) => cdpEvaluate(socket, expression, awaitPromise));
+    if (process.env.SMOKE_WEB_FILTERS === '1') {
+      const browserExecutable = process.env.SMOKE_BROWSER_EXECUTABLE || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe';
+      if (!fs.existsSync(browserExecutable)) throw new Error('Web filter smoke needs an installed Edge or SMOKE_BROWSER_EXECUTABLE');
+      const browserPort = await findFreePort();
+      browserChild = spawn(browserExecutable, [
+        '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
+        '--window-size=1440,1000', '--remote-debugging-address=127.0.0.1',
+        `--remote-debugging-port=${browserPort}`, `--user-data-dir=${path.join(smokeRoot, 'web-browser')}`,
+        result.localWeb.data.baseUrl,
+      ], { windowsHide: true, stdio: 'ignore' });
+      const browserPage = await waitFor(async () => {
+        const response = await fetch(`http://127.0.0.1:${browserPort}/json/list`);
+        const pages = await response.json();
+        return pages.find((item) => item.type === 'page' && item.url.startsWith(result.localWeb.data.baseUrl) && item.webSocketDebuggerUrl);
+      }, timeoutMs, 'Web filter browser did not start');
+      const browserSocket = await connectWebSocket(browserPage.webSocketDebuggerUrl);
+      try {
+        await waitFor(async () => {
+          const ready = await cdpEvaluate(browserSocket, `document.readyState === 'complete' && document.querySelectorAll('#source-buttons button').length >= 3 && document.querySelector('#film-grid')?.getAttribute('aria-busy') === 'false'`, false);
+          return ready?.result?.value === true;
+        }, timeoutMs, 'Web filter page did not finish loading');
+        await verifyWebLibraryFilters((expression, awaitPromise) => cdpEvaluate(browserSocket, expression, awaitPromise));
+        const webScreenshot = await cdpCommand(browserSocket, 'Page.captureScreenshot', { format: 'png' });
+        fs.writeFileSync(path.join(projectRoot, 'out/filter-web.png'), Buffer.from(webScreenshot.data, 'base64'));
+        await cdpCommand(browserSocket, 'Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+        const mobile = await cdpEvaluate(browserSocket, 'document.documentElement.scrollWidth <= window.innerWidth && document.querySelectorAll(\'#source-buttons button[aria-pressed="true"]\').length === 2', false);
+        if (mobile?.result?.value !== true) throw new Error('Web filters overflow the mobile viewport');
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        const mobileScreenshot = await cdpCommand(browserSocket, 'Page.captureScreenshot', { format: 'png' });
+        fs.writeFileSync(path.join(projectRoot, 'out/filter-web-mobile.png'), Buffer.from(mobileScreenshot.data, 'base64'));
+      } finally { browserSocket.close(); }
+    }
     console.log(`SMOKE_OK health=ok database=ready ipc=ready sourceCount=${result.after.data.length} categories=${result.patchedDetail.data.customCategories.length}`);
     if (browserHoldMs > 0) {
       console.log(`SMOKE_BROWSER_URL=${result.localWeb.data.baseUrl}`);
@@ -262,13 +301,19 @@ try {
   if (logFile) console.error(`SMOKE_LOG=${logFile}`);
   process.exitCode = 1;
 } finally {
+  if (browserChild && browserChild.exitCode === null) await terminateProcessTree(browserChild);
   if (child && child.exitCode === null) {
     await terminateProcessTree(child);
     await waitFor(() => child.exitCode !== null, 2_000, () => 'packaged app did not exit after smoke test cleanup').catch(() => child.kill('SIGKILL'));
   }
   const keepSmoke = process.env.SMOKE_KEEP === '1' || (process.exitCode !== undefined && process.exitCode !== 0);
-  if (smokeRoot && !keepSmoke) fs.rmSync(smokeRoot, { recursive: true, force: true });
-  else if (smokeRoot) console.log(`SMOKE_KEEP_ROOT=${smokeRoot}`);
+  if (smokeRoot && !keepSmoke) {
+    try { fs.rmSync(smokeRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); }
+    catch (error) {
+      if (!['EPERM', 'EBUSY', 'ENOTEMPTY'].includes(error.code)) process.exitCode = 1;
+      console.warn(`SMOKE_CLEANUP_DEFERRED ${error.code}: temporary files remain at ${smokeRoot}`);
+    }
+  } else if (smokeRoot) console.log(`SMOKE_KEEP_ROOT=${smokeRoot}`);
 }
 
 function terminateProcessTree(processHandle) {
@@ -396,6 +441,10 @@ function connectWebSocket(url) {
 }
 
 function cdpEvaluate(socket, expression, awaitPromise) {
+  return cdpCommand(socket, 'Runtime.evaluate', { expression, awaitPromise, returnByValue: true, userGesture: true });
+}
+
+function cdpCommand(socket, method, params) {
   return new Promise((resolve, reject) => {
     const id = ++cdpMessageId;
     let removeListener = () => {};
@@ -412,13 +461,14 @@ function cdpEvaluate(socket, expression, awaitPromise) {
         const message = JSON.parse(raw);
         if (message.id !== id) return;
         cleanup();
-        resolve(message.result);
+        if (message.error) reject(new Error(JSON.stringify(message.error)));
+        else resolve(message.result);
       } catch (error) {
         cleanup();
         reject(error);
       }
     };
     removeListener = socket.onMessage(onMessage);
-    socket.send(JSON.stringify({ id, method: 'Runtime.evaluate', params: { expression, awaitPromise, returnByValue: true, userGesture: true } }));
+    socket.send(JSON.stringify({ id, method, params }));
   });
 }

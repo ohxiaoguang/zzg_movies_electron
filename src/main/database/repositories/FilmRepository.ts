@@ -1496,7 +1496,11 @@ export class FilmRepository {
       clauses.push("(f.title LIKE ? ESCAPE '\\' OR f.original_title LIKE ? ESCAPE '\\' OR f.filename LIKE ? ESCAPE '\\')");
       params.push(search, search, search);
     }
-    if (query.sourceId) {
+    if (query.sourceIds?.length) {
+      const ids = [...new Set(query.sourceIds)];
+      clauses.push(`f.source_id IN (${ids.map(() => '?').join(', ')})`);
+      params.push(...ids);
+    } else if (query.sourceId) {
       clauses.push('f.source_id = ?');
       params.push(query.sourceId);
     }

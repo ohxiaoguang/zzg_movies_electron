@@ -72,6 +72,12 @@ describe('localhost read-only web server', () => {
     const pageResponse = await api<FilmPageDto>(`${baseUrl}/api/v1/films?page=1&pageSize=20`);
     expect(pageResponse).toEqual({ ok: true, data: expectedPage });
 
+    const sourceId = expectedPage.items[0]!.sourceId;
+    const absentSource = '11111111-1111-4111-8111-111111111111';
+    expect(await api<FilmPageDto>(`${baseUrl}/api/v1/films?page=1&pageSize=20&sourceIds=${sourceId}&sourceIds=${absentSource}`)).toEqual(pageResponse);
+    const filtered = await api<FilmPageDto>(`${baseUrl}/api/v1/films?sourceIds=${absentSource}`);
+    expect(filtered.ok && filtered.data.total).toBe(0);
+    expect((await fetch(`${baseUrl}/api/v1/films?sourceIds=bad`)).status).toBe(400);
     const filmId = expectedPage.items[0]!.id;
     const expectedDetail = context.library.detail(filmId);
     expect(await api<FilmDetailDto>(`${baseUrl}/api/v1/films/${filmId}`)).toEqual({ ok: true, data: expectedDetail });

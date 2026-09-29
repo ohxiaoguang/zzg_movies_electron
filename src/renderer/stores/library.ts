@@ -1,8 +1,9 @@
-import { computed, reactive, ref } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import { defineStore } from 'pinia';
 import type { FilmPageDto, FilmPageQuery, SettingsDto } from '../../shared/contracts';
 import { DEFAULT_SETTINGS } from '../../shared/enums';
 import { filmLibraryClient } from '../api';
+import { LIBRARY_FILTERS_KEY, parseLibraryFilterPreferences } from '../../shared/libraryFilterPreferences';
 
 export const useLibraryStore = defineStore('library', () => {
   const pageData = ref<FilmPageDto>({ items: [], page: 1, pageSize: DEFAULT_SETTINGS.pageSize, total: 0, totalPages: 1 });
@@ -32,8 +33,18 @@ export const useLibraryStore = defineStore('library', () => {
     lanServerHost: DEFAULT_SETTINGS.lanServerHost,
     lanRequireAuthentication: DEFAULT_SETTINGS.lanRequireAuthentication,
   });
-  const filters = reactive<FilmPageQuery>({ page: 1, pageSize: DEFAULT_SETTINGS.pageSize, sort: 'added', organizationState: 'all', categoryIds: [], categoryMatch: 'all', nfoTagIds: [], nfoTagMatch: 'any', commentImages: 'all', allData: false, duplicateFilenameOnly: false, availability: 'all' });
+  const filters = reactive<FilmPageQuery>({ page: 1, pageSize: DEFAULT_SETTINGS.pageSize, sort: 'added', organizationState: 'all', sourceIds: [], categoryIds: [], categoryMatch: 'all', nfoTagIds: [], nfoTagMatch: 'any', commentImages: 'all', allData: false, duplicateFilenameOnly: false, availability: 'all' });
   const viewMode = ref<'grid' | 'table'>('grid');
+  const globalFilterStorageError = ref('');
+  try { Object.assign(filters, parseLibraryFilterPreferences(window.localStorage.getItem(LIBRARY_FILTERS_KEY))); }
+  catch { globalFilterStorageError.value = '无法读取已保存的筛选'; }
+  watch(() => [filters.sourceIds, filters.categoryIds], () => {
+    try {
+      window.localStorage.setItem(LIBRARY_FILTERS_KEY, JSON.stringify({ sourceIds: filters.sourceIds ?? [], categoryIds: filters.categoryIds ?? [] }));
+      globalFilterStorageError.value = '';
+    } catch { globalFilterStorageError.value = '筛选保存失败，重启后可能无法保留'; }
+  }, { deep: true, flush: 'sync' });
+  let latestRequest = 0;
 
   const items = computed(() => pageData.value.items);
 
@@ -46,24 +57,28 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   async function fetchPage(): Promise<void> {
+    const request = ++latestRequest;
     loading.value = true;
     error.value = null;
     try {
       const query = {
         ...filters,
+        sourceIds: filters.sourceIds ? [...filters.sourceIds] : [],
         categoryIds: filters.categoryIds ? [...filters.categoryIds] : [],
         nfoTagIds: filters.nfoTagIds ? [...filters.nfoTagIds] : [],
+        genreIds: filters.genreIds ? [...filters.genreIds] : [],
       };
       const result = query.allData
         ? await window.filmLibrary.films.recordsPageAll(query)
         : await filmLibraryClient.page(query);
+      if (request !== latestRequest) return;
       if (result.ok) pageData.value = result.data;
       else error.value = result.error.message;
     } catch (reason) {
       console.error('[library] page failed', reason);
-      error.value = '无法加载影片，请查看日志';
+      if (request === latestRequest) error.value = '无法加载影片，请查看日志';
     } finally {
-      loading.value = false;
+      if (request === latestRequest) loading.value = false;
     }
   }
 
@@ -72,9 +87,10 @@ export const useLibraryStore = defineStore('library', () => {
     filters.page = 1;
   }
 
-  function resetFilters(): void {
-    Object.assign(filters, { page: 1, pageSize: settings.value.pageSize, search: '', sourceId: '', actor: '', organizationState: 'all', categoryIds: [], categoryMatch: 'all', nfoTagIds: [], nfoTagMatch: 'any', minRating: undefined, favoriteOnly: false, commentImages: 'all', missingOnly: false, recordIssue: undefined, playbackCompatibility: undefined, allData: false, duplicateFilenameOnly: false, availability: 'all', sort: 'added' });
+  function resetPageFilters(): void {
+    // Sources and custom categories are shared across library pages and survive navigation.
+    Object.assign(filters, { page: 1, pageSize: settings.value.pageSize, search: '', sourceId: '', actor: '', organizationState: 'all', categoryMatch: 'all', nfoTagIds: [], nfoTagMatch: 'any', genreIds: [], genreMatch: 'any', minRating: undefined, favoriteOnly: false, commentImages: 'all', missingOnly: false, recordIssue: undefined, playbackCompatibility: undefined, allData: false, duplicateFilenameOnly: false, availability: 'all', sort: 'added' });
   }
 
-  return { pageData, items, loading, error, settings, filters, viewMode, loadSettings, fetchPage, setFilter, resetFilters };
+  return { pageData, items, loading, error, settings, filters, globalFilterStorageError, viewMode, loadSettings, fetchPage, setFilter, resetPageFilters };
 });

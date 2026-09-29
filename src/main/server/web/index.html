@@ -77,6 +77,17 @@
               <h1 id="library-title" class="page-title">全部影片</h1>
               <p id="library-caption" class="page-caption">正在读取影片资料…</p>
             </div>
+            <section class="global-filters" aria-label="全局筛选">
+              <div class="global-filter-heading"><strong>全局筛选</strong><span>跨页面生效 · 重启后保留</span><button id="clear-global-filters" type="button" hidden>清空全局筛选</button></div>
+              <div class="global-filter-fields">
+                <div id="source-buttons" class="source-filter" role="group" aria-label="来源（可多选）"></div>
+                <details id="category" class="category-filter">
+                  <summary id="category-summary">我的分类（同时包含全部）</summary>
+                  <div id="category-options" class="category-filter-options"></div>
+                </details>
+              </div>
+              <small id="filter-storage-error" class="filter-storage-error" role="alert" hidden></small>
+            </section>
             <div class="heading-actions">
               <span id="role-badge" class="role-badge">访客</span>
               <button id="device-revoke" type="button" hidden>退出登录</button>
@@ -84,13 +95,12 @@
             </div>
           </header>
 
-          <section class="filters toolbar" aria-label="影片筛选">
+          <div class="page-filter-heading">当前页筛选<span>切换影片页面后重置</span></div>
+          <section class="filters toolbar" aria-label="当前页筛选">
             <label class="search-field">
               <span>搜索</span>
               <input id="search" type="search" placeholder="搜索标题、文件名…" autocomplete="off" />
             </label>
-            <label><span>来源</span><select id="source"><option value="">全部来源</option></select></label>
-            <label><span>我的分类</span><select id="category"><option value="">全部分类</option></select></label>
             <label><span>NFO 标签</span><select id="tag"><option value="">全部标签</option></select></label>
             <label><span>类型</span><select id="genre"><option value="">全部类型</option></select></label>
             <label><span>演员</span><select id="actor"><option value="">全部演员</option></select></label>
@@ -137,9 +147,10 @@
 
         <section id="settings-view" class="page-view" hidden>
           <header class="page-heading">
-            <div><div class="eyebrow">WEB CONNECTION</div><h1 class="page-title">设置</h1><p class="page-caption">网页端只显示连接与安全状态；监听设置请在 Electron 客户端修改。</p></div>
+            <div><div class="eyebrow">WEB CONNECTION</div><h1 class="page-title">设置</h1><p class="page-caption">显示偏好保存在当前浏览器；监听设置请在 Electron 客户端修改。</p></div>
           </header>
           <div class="settings-grid">
+            <article class="settings-card"><h2>卡片显示</h2><label for="card-size">卡片宽度（当前浏览器）</label><input id="card-size" type="range" min="140" max="320" step="10" value="160" /><output id="card-size-value" for="card-size">160 px</output><p id="card-size-error" class="filter-storage-error" role="alert" hidden></p></article>
             <article class="settings-card"><h2>服务状态</h2><dl id="server-facts" class="settings-facts"></dl></article>
             <article class="settings-card"><h2>当前账号</h2><dl id="device-facts" class="settings-facts"></dl><button id="settings-device-revoke" class="danger" type="button">退出登录</button></article>
             <article class="settings-card wide"><h2>安全边界</h2><p>仅限受信任私有局域网。管理员操作只修改服务器电脑上的 SQLite，不写回外部 NFO，也不会删除影片文件。不要将此端口转发到公网。</p></article>

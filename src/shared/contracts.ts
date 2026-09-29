@@ -249,6 +249,7 @@ export interface FilmPageQuery {
   pageSize: number;
   search?: string;
   sourceId?: string;
+  sourceIds?: string[];
   actor?: string;
   organizationState?: OrganizationState | 'all';
   categoryIds?: string[];

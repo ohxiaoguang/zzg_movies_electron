@@ -35,6 +35,29 @@ async function scannedContext() { const context = createContext(); context.scan.
 function filmByTitle(context: Awaited<ReturnType<typeof scannedContext>>, title: string) { return context.films.page({ page: 1, pageSize: 20, search: title }).items[0]!; }
 
 describe('custom categories', () => {
+  it('unions selected sources and intersects them with categories, favorites, all-data and CSV export', async () => {
+    const context = await scannedContext();
+    const alpha = filmByTitle(context, 'Alpha');
+    const beta = filmByTitle(context, 'Beta');
+    const gamma = filmByTitle(context, 'Gamma');
+    const sources = new SourceRepository(context.database.db);
+    const second = sources.create({ name: 'Second source', rootPath: path.join(context.root, 'second') });
+    const third = sources.create({ name: 'Third source', rootPath: path.join(context.root, 'third') });
+    context.database.db.prepare('UPDATE film SET source_id = ? WHERE id = ?').run(second.id, beta.id);
+    context.database.db.prepare('UPDATE film SET source_id = ? WHERE id = ?').run(third.id, gamma.id);
+    const category = context.films.createCategory('Shared category');
+    for (const film of [alpha, beta, gamma]) context.films.updateCategories(film.id, [category.id]);
+    context.films.updateFavorite(beta.id, true);
+    const query = { page: 1, pageSize: 20, sourceIds: [context.source.id, second.id], categoryIds: [category.id], sort: 'title' as const };
+    expect(context.films.page(query).items.map((film) => film.title)).toEqual(['Alpha', 'Beta']);
+    expect(context.films.page({ ...query, sourceIds: [second.id] }).items.map((film) => film.title)).toEqual(['Beta']);
+    expect(context.films.page({ ...query, favoriteOnly: true }).items.map((film) => film.title)).toEqual(['Beta']);
+    expect(context.films.page({ ...query, allData: true }).total).toBe(2);
+    expect(context.films.csvRows(query).map((film) => film.filename)).toEqual(['Alpha.mkv', 'Beta.mkv']);
+    expect(context.films.page({ ...query, sourceIds: [] }).total).toBe(3);
+    expect(context.films.page({ page: 1, pageSize: 20, sourceId: third.id }).items.map((film) => film.title)).toEqual(['Gamma']);
+  });
+
   it('normalizes names, rejects empty/case duplicates, and persists ordering', async () => {
     const context = await scannedContext();
     expect(context.database.schemaVersion).toBe(17);

@@ -70,6 +70,16 @@ class HttpFilmLibraryClient {
   media(kind, id) { return `/media/v1/${kind}/${encodeURIComponent(id)}`; }
 }
 
+const GLOBAL_FILTERS_KEY = 'local-film-library:global-filters-v1';
+const CARD_SIZE_KEY = 'film-library-web-card-size';
+function readGlobalFilters() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(GLOBAL_FILTERS_KEY) || 'null');
+    const ids = (value) => Array.isArray(value)
+      ? [...new Set(value.filter((id) => typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)))].slice(0, 100) : [];
+    return { sourceIds: ids(saved?.sourceIds), categoryIds: ids(saved?.categoryIds) };
+  } catch { return { sourceIds: [], categoryIds: [] }; }
+}
 const client = new HttpFilmLibraryClient();
 const state = {
   view: 'library',
@@ -81,6 +91,8 @@ const state = {
   server: null,
   auth: null,
   filters: null,
+  globalFilters: readGlobalFilters(),
+  filmsRequest: 0,
   playbackCapabilities: null,
   playback: null,
 };
@@ -93,11 +105,11 @@ const elements = Object.fromEntries([
   'source-grid', 'sources-refresh', 'categories-view', 'categories-caption', 'category-grid',
   'actors-view', 'actors-caption', 'actor-search', 'actor-count', 'actor-grid', 'actors-refresh',
   'settings-view', 'server-facts', 'device-facts', 'settings-device-revoke',
-  'role-badge', 'result-summary', 'error', 'film-grid', 'search', 'source',
+  'role-badge', 'result-summary', 'error', 'film-grid', 'search', 'source-buttons', 'clear-global-filters', 'filter-storage-error',
   'category', 'tag', 'genre', 'actor', 'comment-images', 'sort', 'refresh', 'previous-page', 'next-page',
   'page-summary', 'film-detail', 'detail-content', 'close-detail', 'login-dialog',
   'login-form', 'login-error', 'account-username', 'account-password', 'device-revoke',
-  'create-category',
+  'create-category', 'category-summary', 'category-options', 'card-size', 'card-size-value', 'card-size-error',
 ].map((id) => [camel(id), document.querySelector(`#${id}`)]));
 
 void bootstrap();
@@ -145,7 +157,33 @@ function bindEvents() {
   elements.sourcesRefresh.addEventListener('click', () => void reloadLibrary());
   elements.actorsRefresh.addEventListener('click', () => void reloadLibrary());
   elements.actorSearch.addEventListener('input', renderActors);
-  for (const select of [elements.source, elements.category, elements.tag, elements.genre, elements.actor, elements.commentImages, elements.sort]) {
+  elements.sourceButtons.addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-source-id]');
+    if (!button) return;
+    const id = button.dataset.sourceId;
+    const ids = state.globalFilters.sourceIds;
+    state.globalFilters.sourceIds = !id ? [] : ids.includes(id) ? ids.filter((value) => value !== id) : [...ids, id];
+    globalFiltersChanged();
+  });
+  elements.categoryOptions.addEventListener('change', (event) => {
+    const input = event.target;
+    if (!input.matches('input[data-category-id]')) return;
+    const id = input.dataset.categoryId;
+    const ids = state.globalFilters.categoryIds;
+    state.globalFilters.categoryIds = input.checked ? [...new Set([...ids, id])] : ids.filter((value) => value !== id);
+    globalFiltersChanged();
+  });
+  elements.clearGlobalFilters.addEventListener('click', () => {
+    state.globalFilters = { sourceIds: [], categoryIds: [] };
+    globalFiltersChanged();
+  });
+  initializeCardSize();
+  elements.cardSize.addEventListener('input', () => {
+    applyCardSize(Number(elements.cardSize.value));
+    try { localStorage.setItem(CARD_SIZE_KEY, elements.cardSize.value); elements.cardSizeError.hidden = true; }
+    catch { elements.cardSizeError.textContent = '卡片大小保存失败，刷新后可能无法保留'; elements.cardSizeError.hidden = false; }
+  });
+  for (const select of [elements.tag, elements.genre, elements.actor, elements.commentImages, elements.sort]) {
     select.addEventListener('change', () => { state.page = 1; void loadFilms(); });
   }
   elements.search.addEventListener('input', () => {
@@ -191,8 +229,7 @@ function stopDetailPlayback() {
 }
 
 function populateFilters(filters) {
-  fillSelect(elements.source, filters.sources, (item) => item.id, (item) => `${item.name}${item.online ? '' : '（离线）'}`, true);
-  fillSelect(elements.category, filters.categories, (item) => item.id, countLabel, true);
+  renderGlobalFilters();
   fillSelect(elements.tag, filters.tags, (item) => item.id, countLabel, true);
   fillSelect(elements.genre, filters.genres, (item) => item.id, countLabel, true);
   fillSelect(elements.actor, filters.actors, (item) => item.name, countLabel, true);
@@ -203,6 +240,71 @@ function populateFilters(filters) {
   elements.countAllData.textContent = String(filters.navigation.allData);
 }
 
+function saveGlobalFilters() {
+  try {
+    localStorage.setItem(GLOBAL_FILTERS_KEY, JSON.stringify(state.globalFilters));
+    elements.filterStorageError.hidden = true;
+  } catch {
+    elements.filterStorageError.textContent = '筛选保存失败，刷新后可能无法保留';
+    elements.filterStorageError.hidden = false;
+  }
+}
+function globalFiltersChanged() {
+  state.page = 1;
+  saveGlobalFilters();
+  renderGlobalFilters();
+  void loadFilms();
+}
+function renderGlobalFilters() {
+  const focusedSource = document.activeElement?.dataset.sourceId;
+  const focusedCategory = document.activeElement?.dataset.categoryId;
+  const selected = state.globalFilters;
+  const sources = state.filters?.sources || [];
+  const categories = state.filters?.categories || [];
+  elements.sourceButtons.replaceChildren();
+  const appendSource = (id, name, pressed) => {
+    const button = createElement('button', 'source-filter-button', name);
+    button.type = 'button';
+    button.dataset.sourceId = id;
+    button.setAttribute('aria-pressed', String(pressed));
+    button.title = name;
+    elements.sourceButtons.append(button);
+  };
+  appendSource('', '全部来源', selected.sourceIds.length === 0);
+  for (const source of sources) appendSource(source.id, source.name, selected.sourceIds.includes(source.id));
+  for (const id of selected.sourceIds) {
+    if (!sources.some((source) => source.id === id)) appendSource(id, '已移除来源', true);
+  }
+  elements.categoryOptions.replaceChildren();
+  const visibleCategories = [...categories, ...selected.categoryIds.filter((id) => !categories.some((item) => item.id === id)).map((id) => ({ id, name: '已移除分类' }))];
+  for (const category of visibleCategories) {
+    const label = createElement('label', 'category-filter-option');
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.dataset.categoryId = category.id;
+    input.checked = selected.categoryIds.includes(category.id);
+    label.append(input, document.createTextNode(category.name));
+    elements.categoryOptions.append(label);
+  }
+  if (!visibleCategories.length) elements.categoryOptions.append(createElement('span', 'muted', '暂无分类'));
+  const names = visibleCategories.filter((item) => selected.categoryIds.includes(item.id)).map((item) => item.name);
+  elements.categorySummary.textContent = names.length ? names.join('、') : '我的分类（同时包含全部）';
+  elements.categorySummary.title = names.length ? '同时包含：' + names.join('、') : '同时包含全部所选分类';
+  elements.clearGlobalFilters.hidden = selected.sourceIds.length === 0 && selected.categoryIds.length === 0;
+  if (focusedSource !== undefined) [...elements.sourceButtons.children].find((button) => button.dataset.sourceId === focusedSource)?.focus();
+  if (focusedCategory !== undefined) [...elements.categoryOptions.querySelectorAll('input')].find((input) => input.dataset.categoryId === focusedCategory)?.focus();
+}
+function initializeCardSize() {
+  let size = 160;
+  try { const stored = Number(localStorage.getItem(CARD_SIZE_KEY)); if (Number.isFinite(stored) && stored >= 140 && stored <= 320) size = stored; } catch { /* Use the default for unavailable storage. */ }
+  applyCardSize(size);
+}
+function applyCardSize(value) {
+  const size = Math.min(320, Math.max(140, Number.isFinite(value) ? value : 160));
+  elements.cardSize.value = String(size);
+  elements.cardSizeValue.textContent = size + ' px';
+  document.documentElement.style.setProperty('--card-width', size + 'px');
+}
 function currentQuery() {
   const organizationState = state.libraryMode === 'organized' || state.libraryMode === 'unorganized'
     ? state.libraryMode
@@ -211,8 +313,9 @@ function currentQuery() {
     page: state.page,
     pageSize: state.pageSize,
     search: elements.search.value.trim(),
-    sourceId: elements.source.value,
-    categoryIds: elements.category.value ? [elements.category.value] : [],
+    sourceIds: [...state.globalFilters.sourceIds],
+    categoryIds: [...state.globalFilters.categoryIds],
+    categoryMatch: 'all',
     nfoTagIds: elements.tag.value ? [elements.tag.value] : [],
     genreIds: elements.genre.value ? [elements.genre.value] : [],
     actor: elements.actor.value,
@@ -238,10 +341,12 @@ async function reloadLibrary() {
 }
 
 async function loadFilms() {
+  const request = ++state.filmsRequest;
   setBusy(true);
   hideError();
   try {
     const page = await client.films(currentQuery());
+    if (request !== state.filmsRequest) return;
     state.page = page.page;
     state.totalPages = page.totalPages;
     elements.resultSummary.textContent = `${page.total} 部影片`;
@@ -251,10 +356,11 @@ async function loadFilms() {
     elements.nextPage.disabled = page.page >= page.totalPages;
     renderFilms(page.items);
   } catch (error) {
+    if (request !== state.filmsRequest) return;
     if (isAuthenticationError(error)) showLogin();
     else showError(error);
   } finally {
-    setBusy(false);
+    if (request === state.filmsRequest) setBusy(false);
   }
 }
 
@@ -304,9 +410,9 @@ function updateLibraryHeading() {
 }
 
 function resetLibraryFilters() {
+  if (state.searchTimer) window.clearTimeout(state.searchTimer);
+  state.searchTimer = null;
   elements.search.value = '';
-  elements.source.value = '';
-  elements.category.value = '';
   elements.tag.value = '';
   elements.genre.value = '';
   elements.actor.value = '';
@@ -322,8 +428,9 @@ function resetLibraryFilters() {
 
 function openLibraryWithFilter(filter) {
   showView('library', 'all', { load: false });
-  if (filter.sourceId) elements.source.value = filter.sourceId;
-  if (filter.categoryId) elements.category.value = filter.categoryId;
+  if (filter.sourceId) state.globalFilters.sourceIds = [filter.sourceId];
+  if (filter.categoryId) state.globalFilters.categoryIds = [filter.categoryId];
+  if (filter.sourceId || filter.categoryId) { saveGlobalFilters(); renderGlobalFilters(); }
   if (filter.actor) elements.actor.value = filter.actor;
   void loadFilms();
 }
