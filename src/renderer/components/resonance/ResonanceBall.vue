@@ -17,6 +17,7 @@ const sceneGeneration = ref(0);
 const sceneBusy = ref(false);
 let stopFlush: (() => void) | null = null;
 const videoElements = new Map<string, HTMLVideoElement>();
+const playbackStates = ref(new Map<string, { compatibility: boolean; ready: boolean; wantsPlay: boolean; error: string }>());
 const canvasElements = new Map<string, HTMLCanvasElement>();
 const sphericalRenderers = new Map<string, SphericalVideoRenderer>();
 const vrActiveIds = ref(new Set<string>());
@@ -71,11 +72,15 @@ function tileStyle(id: string): Record<string, string> {
 
 function registerVideo(item: ResonanceVideo, element: unknown): void {
   if (element instanceof HTMLVideoElement) {
+    if (!playbackStates.value.has(item.id)) {
+      playbackStates.value.set(item.id, { compatibility: false, ready: false, wantsPlay: false, error: '' });
+    }
     videoElements.set(item.id, element);
     ensureSphericalRenderer(item);
   } else {
     destroySphericalRenderer(item.id);
     videoElements.delete(item.id);
+    playbackStates.value.delete(item.id);
   }
 }
 
@@ -97,12 +102,32 @@ function initializeVideo(item: ResonanceVideo, event: Event): void {
   const target = Math.min(Math.max(0, item.currentSeconds), Math.max(0, duration - 0.05));
   if (Math.abs(element.currentTime - target) > 0.1) element.currentTime = target;
   resonance.updateProgress(item.id, target, duration);
+  const state = playbackStates.value.get(item.id);
+  if (state) {
+    state.ready = true;
+    if (state.wantsPlay) void element.play().catch(() => undefined);
+  }
+}
+
+function onPlaybackError(item: ResonanceVideo, event: Event): void {
+  const element = event.currentTarget as HTMLVideoElement;
+  const state = playbackStates.value.get(item.id);
+  if (videoElements.get(item.id) !== element || !resonance.videos.includes(item) || !state) return;
+  markPlaying(item.id, false);
+  if (state.compatibility) {
+    state.error = '兼容版本也无法播放，请在详情页使用本地播放器';
+    state.wantsPlay = false;
+    return;
+  }
+  if (element.readyState >= 1) resonance.updateProgress(item.id, element.currentTime, element.duration);
+  state.ready = false;
+  state.compatibility = true;
 }
 
 function trackProgress(item: ResonanceVideo, event: Event): void {
   const element = event.currentTarget as HTMLVideoElement;
   if (videoElements.get(item.id) !== element || !resonance.videos.includes(item)) return;
-  resonance.updateProgress(item.id, element.currentTime, element.duration);
+  if (element.readyState >= 1) resonance.updateProgress(item.id, element.currentTime, element.duration);
 }
 
 function markPlaying(id: string, playing: boolean, event?: Event): void {
@@ -116,6 +141,8 @@ function markPlaying(id: string, playing: boolean, event?: Event): void {
 function toggleOne(id: string): void {
   const element = videoElements.get(id);
   if (!element) return;
+  const state = playbackStates.value.get(id);
+  if (state) state.wantsPlay = element.paused;
   if (element.paused) void element.play().catch(() => undefined);
   else element.pause();
 }
@@ -126,10 +153,15 @@ function toggleAll(): void {
 }
 
 function playAll(): void {
-  for (const element of videoElements.values()) void element.play().catch(() => undefined);
+  for (const [id, element] of videoElements) {
+    const state = playbackStates.value.get(id);
+    if (state) state.wantsPlay = true;
+    void element.play().catch(() => undefined);
+  }
 }
 
 function pauseAll(): void {
+  for (const state of playbackStates.value.values()) state.wantsPlay = false;
   for (const element of videoElements.values()) element.pause();
 }
 
@@ -363,7 +395,7 @@ onBeforeUnmount(() => {
             :ref="(element) => registerVideo(item, element)"
             :class="{ 'vr-video-source': vrActiveIds.has(item.id) }"
             crossorigin="anonymous"
-            :src="mediaUrl('part', item.partId)"
+            :src="mediaUrl(playbackStates.get(item.id)?.compatibility ? 'part' : 'original-part', item.partId)"
             preload="metadata"
             playsinline
             @loadedmetadata="initializeVideo(item, $event)"
@@ -371,6 +403,7 @@ onBeforeUnmount(() => {
             @play="markPlaying(item.id, true, $event)"
             @pause="markPlaying(item.id, false, $event)"
             @ended="markPlaying(item.id, false, $event)"
+            @error="onPlaybackError(item, $event)"
           />
           <canvas
             v-if="item.isVr"
@@ -383,6 +416,8 @@ onBeforeUnmount(() => {
           <div class="tile-caption">
             <strong>{{ item.title }}</strong>
             <span>{{ item.filename }}</span>
+            <span v-if="playbackStates.get(item.id)?.error" role="alert">{{ playbackStates.get(item.id)?.error }}</span>
+            <span v-else-if="playbackStates.get(item.id)?.compatibility && !playbackStates.get(item.id)?.ready">正在准备兼容版本…</span>
           </div>
           <button class="tile-remove" type="button" aria-label="从共鸣球移除" @click="removeVideo(item.id)"><Close /></button>
           <div class="tile-controls">

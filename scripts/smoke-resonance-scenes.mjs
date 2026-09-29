@@ -1,7 +1,7 @@
 /* global document, location, window, MouseEvent */
 
-export async function verifyResonanceScenes(evaluate) {
-  const evaluation = await evaluate(`(${sceneFlow.toString()})()`, true);
+export async function verifyResonanceScenes(evaluate, expectedRoute = null) {
+  const evaluation = await evaluate(`(${sceneFlow.toString()})(${JSON.stringify(expectedRoute)})`, true);
   if (evaluation?.exceptionDetails) throw new Error(`Resonance scenes failed: ${JSON.stringify(evaluation.exceptionDetails)}`);
   const result = evaluation?.result?.value;
   if (!result?.id || result.videoCount !== 1) throw new Error(`Resonance scene result invalid: ${JSON.stringify(result)}`);
@@ -29,7 +29,7 @@ export async function verifyResonanceScenes(evaluate) {
   console.log('RESONANCE_SCENES_OK save=ok copy=ok switch=ok rename=ok delete=ok reload=ok');
 }
 
-async function sceneFlow() {
+async function sceneFlow(expectedRoute) {
   const delay = (ms = 80) => new Promise((resolve) => setTimeout(resolve, ms));
   const assert = (condition, message) => { if (!condition) throw new Error(message); };
   async function waitFor(read) {
@@ -76,6 +76,19 @@ async function sceneFlow() {
   await delay();
   document.querySelector('.resonance-ball').click();
   await waitFor(() => document.querySelector('.resonance-tile'));
+  if (expectedRoute) {
+    const player = await waitFor(() => {
+      const video = document.querySelector('.resonance-tile video');
+      return video?.readyState >= 2 && video;
+    });
+    assert(new URL(player.currentSrc).hostname === expectedRoute, `Wrong resonance route: ${player.currentSrc}`);
+    player.currentTime = 0.2;
+    await delay(150);
+    document.querySelector('.tile-controls button').click();
+    await waitFor(() => player.currentTime > 0.3);
+    document.querySelector('.resonance-global-actions .global-play-button').click();
+    assert(player.paused, 'Global pause did not stop resonance playback');
+  }
   document.querySelector('.scene-save-as').click();
   await confirmName('Smoke 场景 A');
   const saved = (await read());
