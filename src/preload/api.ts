@@ -31,7 +31,22 @@ import type {
 } from '../shared/contracts';
 import type { FilmLibraryApi } from './types';
 
+let resonanceFlushListener: (() => Promise<void>) | null = null;
+ipcRenderer.on(IPC_CHANNELS.resonanceFlush, async (_event, requestId: string) => {
+  let ok = false;
+  try { await resonanceFlushListener?.(); ok = true; } catch { /* Report the failure to the main process. */ }
+  ipcRenderer.send(IPC_CHANNELS.resonanceFlushed, { requestId, ok });
+});
+
 export const filmLibraryApi: FilmLibraryApi = {
+  resonance: {
+    load: (legacy) => invoke(IPC_CHANNELS.resonanceLoad, legacy),
+    save: (state) => invoke(IPC_CHANNELS.resonanceSave, state),
+    onFlush: (listener) => {
+      resonanceFlushListener = listener;
+      return () => { if (resonanceFlushListener === listener) resonanceFlushListener = null; };
+    },
+  },
   account: {
     status: () => invoke(IPC_CHANNELS.accountStatus),
     setup: (input: AccountCredentialsInput) => invoke(IPC_CHANNELS.accountSetup, input),

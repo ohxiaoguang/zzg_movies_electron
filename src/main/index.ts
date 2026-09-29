@@ -7,6 +7,7 @@ import { SettingsRepository } from './database/repositories/SettingsRepository';
 import { SourceRepository } from './database/repositories/SourceRepository';
 import { LanDeviceRepository } from './database/repositories/LanDeviceRepository';
 import { registerIpcHandlers } from './ipc/registerIpcHandlers';
+import { flushResonance } from './ipc/flushResonance';
 import { MediaProtocol } from './media/MediaProtocol';
 import { MediaCapabilityService } from './media/MediaCapabilityService';
 import { PreviewTranscoder } from './media/PreviewTranscoder';
@@ -251,11 +252,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
 
   showMainWindow = () => desktopIntegration!.showMainWindow();
   const initialWindow = createWindow();
-  void cloudBackup.backupOnStartup().catch((error: unknown) => {
-    logger.warn('Automatic startup cloud backup failed', {
-      errorCode: error instanceof Error ? error.message : 'CLOUD_BACKUP_FAILED',
-    });
-  });
+  // Startup backup is triggered after the authenticated renderer migrates its legacy scenes.
   if (settings.get().autoScanOnStartup) {
     initialWindow.webContents.once('did-finish-load', () => {
       try {
@@ -302,7 +299,10 @@ app.on('before-quit', (event) => {
     const shutdownUiStartedAt = Date.now();
     if (shouldShowBackup) desktopIntegration?.showMainWindow();
     for (const window of BrowserWindow.getAllWindows()) window.setEnabled(false);
-    const [backupResult] = await Promise.allSettled([cloudBackup?.backupOnShutdown()]);
+    const [backupResult] = await Promise.allSettled([(async () => {
+      for (const window of BrowserWindow.getAllWindows()) await flushResonance(window);
+      await cloudBackup?.backupOnShutdown();
+    })()]);
     if (lanResult?.status === 'rejected') {
       applicationLogger?.warn('Local web server shutdown failed', {
         errorCode: lanResult.reason instanceof Error ? lanResult.reason.message : 'HTTP_SERVER_ERROR',

@@ -4,17 +4,19 @@ import { useResonanceStore, type ResonanceScene } from '../../stores/resonance';
 
 const emit = defineEmits<{
   capture: [];
+  runAction: [action: () => Promise<unknown>, done: (error?: string) => void];
   switchScene: [id: string | null];
-  deleteScene: [id: string];
 }>();
+defineProps<{ busy: boolean }>();
 const resonance = useResonanceStore();
 const visible = ref(false);
-const mode = ref<'manage' | 'save' | 'rename' | 'copy' | 'delete'>('manage');
+const mode = ref<'manage' | 'create' | 'save' | 'rename' | 'copy' | 'delete'>('manage');
 const selectedId = ref('');
 const name = ref('');
 const error = ref('');
+const saving = ref(false);
 const nameInput = ref<{ focus: () => void } | null>(null);
-const title = computed(() => ({ manage: '管理共鸣场景', save: '保存为共鸣场景', rename: '重命名场景', copy: '复制场景', delete: '删除场景' })[mode.value]);
+const title = computed(() => ({ manage: '管理共鸣场景', create: '新建空白场景', save: '另存为新场景', rename: '重命名场景', copy: '复制场景', delete: '删除场景' })[mode.value]);
 
 function open(action: typeof mode.value, scene?: ResonanceScene): void {
   mode.value = action;
@@ -26,20 +28,20 @@ function open(action: typeof mode.value, scene?: ResonanceScene): void {
 }
 
 function confirm(): void {
+  if (saving.value) return;
   error.value = '';
-  try {
-    emit('capture');
-    if (mode.value === 'save') resonance.saveSceneAs(name.value);
-    else if (mode.value === 'rename') resonance.renameScene(selectedId.value, name.value);
-    else if (mode.value === 'copy') resonance.duplicateScene(selectedId.value, name.value);
-    else if (mode.value === 'delete') {
-      emit('deleteScene', selectedId.value);
-      if (resonance.scenes.some((scene) => scene.id === selectedId.value)) return;
-    }
-    visible.value = false;
-  } catch (reason) {
-    error.value = reason instanceof Error ? reason.message : '场景保存失败，请重试';
-  }
+  saving.value = true;
+  emit('runAction', async () => {
+    if (mode.value === 'create') await resonance.createScene(name.value);
+    else if (mode.value === 'save') await resonance.saveSceneAs(name.value);
+    else if (mode.value === 'rename') await resonance.renameScene(selectedId.value, name.value);
+    else if (mode.value === 'copy') await resonance.duplicateScene(selectedId.value, name.value);
+    else if (mode.value === 'delete') await resonance.deleteScene(selectedId.value);
+  }, (reason) => {
+    saving.value = false;
+    if (reason) error.value = reason;
+    else visible.value = false;
+  });
 }
 
 function loadScene(id: string): void {
@@ -53,29 +55,30 @@ function selectScene(event: Event): void {
   select.value = resonance.activeSceneId ?? '';
 }
 
-function retrySave(): void {
+async function retrySave(): Promise<void> {
   emit('capture');
-  try { resonance.flush(); } catch { /* Keep the visible storage error. */ }
+  try { await resonance.flush(); } catch { /* Keep the visible storage error. */ }
 }
 </script>
 
 <template>
   <div class="resonance-scene-controls">
     <label for="resonance-scene-select">场景</label>
-    <select id="resonance-scene-select" :value="resonance.activeSceneId ?? ''" aria-label="切换共鸣场景" @change="selectScene">
+    <select id="resonance-scene-select" :disabled="!resonance.ready || busy" :value="resonance.activeSceneId ?? ''" aria-label="切换共鸣场景" @change="selectScene">
       <option value="">临时场景</option>
       <option v-for="scene in resonance.scenes" :key="scene.id" :value="scene.id">{{ scene.name }}（{{ scene.videos.length }}）</option>
     </select>
-    <el-button class="scene-save-as" size="small" @click="open('save')">保存为场景</el-button>
-    <el-button class="scene-manage" size="small" @click="open('manage')">管理场景</el-button>
-    <small v-if="!resonance.storageError" class="scene-autosave">自动保存</small>
+    <el-button class="scene-create" size="small" type="primary" :disabled="!resonance.ready || busy" @click="open('create')">新建场景</el-button>
+    <el-button class="scene-save-as" size="small" :disabled="!resonance.ready || busy" @click="open('save')">{{ resonance.activeSceneId ? '另存为新场景' : '保存为场景' }}</el-button>
+    <el-button class="scene-manage" size="small" :disabled="!resonance.ready || busy" @click="open('manage')">管理场景</el-button>
+    <small v-if="!resonance.storageError" class="scene-autosave">修改自动保存到当前场景</small>
     <button v-else class="scene-save-error" type="button" :title="resonance.storageError" @click="retrySave">保存失败 · 重试</button>
   </div>
 
   <el-dialog v-model="visible" :title="title" width="560px" :z-index="4000" append-to-body class="resonance-scene-dialog" @keydown.stop>
     <template v-if="mode === 'manage'">
       <p class="scene-description">每套场景独立保存视频列表、顺序、播放位置和 VR 视角，使用时自动保存。</p>
-      <div v-if="!resonance.scenes.length" class="scene-empty">还没有保存的场景。先把当前视频“保存为场景”。</div>
+      <div v-if="!resonance.scenes.length" class="scene-empty">还没有保存的场景。可以新建空白场景，或把当前视频“保存为场景”。</div>
       <div v-else class="scene-list">
         <div v-for="scene in resonance.scenes" :key="scene.id" class="scene-row">
           <div class="scene-row-info"><strong :title="scene.name">{{ scene.name }}</strong><small>{{ scene.videos.length }} 个视频{{ scene.id === resonance.activeSceneId ? ' · 当前场景' : '' }}</small></div>
@@ -95,13 +98,14 @@ function retrySave(): void {
     <template v-else>
       <label class="scene-name-label" for="resonance-scene-name">场景名称</label>
       <el-input id="resonance-scene-name" ref="nameInput" v-model="name" maxlength="60" show-word-limit placeholder="例如：今晚待看、镜头对比" @keydown.enter.prevent="confirm" />
+      <p v-if="mode === 'create'" class="scene-description">创建并切换到空白场景，保留原场景的影片和播放位置。然后关闭共鸣球，从影片详情添加新影片。</p>
       <p v-if="mode === 'save'" class="scene-description">保存当前 {{ resonance.count }} 个视频，并切换到新场景。之后的播放进度和视频增减会自动保存。</p>
       <p v-if="mode === 'copy'" class="scene-description">复制后的场景独立保存，修改副本不会影响原场景。</p>
     </template>
     <p v-if="error || resonance.storageError" class="scene-error" role="alert">{{ error || resonance.storageError }}</p>
     <template #footer>
-      <el-button @click="visible = false">{{ mode === 'manage' ? '关闭' : '取消' }}</el-button>
-      <el-button v-if="mode !== 'manage'" :type="mode === 'delete' ? 'danger' : 'primary'" class="scene-confirm" @click="confirm">{{ mode === 'delete' ? '删除场景' : '保存' }}</el-button>
+      <el-button :disabled="saving" @click="visible = false">{{ mode === 'manage' ? '关闭' : '取消' }}</el-button>
+      <el-button v-if="mode !== 'manage'" :loading="saving" :type="mode === 'delete' ? 'danger' : 'primary'" class="scene-confirm" @click="confirm">{{ mode === 'delete' ? '删除场景' : mode === 'create' ? '创建并切换' : '保存' }}</el-button>
     </template>
   </el-dialog>
 </template>

@@ -196,7 +196,7 @@ export class CloudBackupService {
   public async restore(input: CloudBackupRestoreInput): Promise<CloudBackupRestoreResultDto> {
     const document = await this.readRemoteDocument(input.commitSha);
     const preview = this.libraryData.preview(document, input.commitSha);
-    if (!preview.matchedFilms) throw new Error('CLOUD_BACKUP_NO_MATCHES');
+    if (!preview.matchedFilms && !preview.replacesScenes) throw new Error('CLOUD_BACKUP_NO_MATCHES');
     const safetyDocument = this.libraryData.exportDocument();
     const safetyStamp = new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14);
     const safetyPath = path.join(path.dirname(this.config.configFilePath), `library-data-before-restore-${safetyStamp}.json`);
@@ -425,6 +425,9 @@ export class CloudBackupService {
 }
 
 function assertSafeAutomaticBackup(local: LibraryDataBackupDocument, remote: LibraryDataBackupDocument): void {
+  if ((remote.counts.scenes ?? 0) > 0 && (local.counts.scenes ?? 0) === 0) {
+    throw new Error('CLOUD_BACKUP_SCENE_REGRESSION');
+  }
   if (local.counts.films === 0 && remote.counts.films > 0) throw new Error('CLOUD_BACKUP_EMPTY_LIBRARY');
   if (remote.counts.films >= 20 && local.counts.films < Math.floor(remote.counts.films * 0.5)) {
     throw new Error('CLOUD_BACKUP_LIBRARY_REGRESSION');

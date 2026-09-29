@@ -14,6 +14,8 @@ const stageSize = ref({ width: 0, height: 0 });
 const playingIds = ref(new Set<string>());
 const clearPending = ref(false);
 const sceneGeneration = ref(0);
+const sceneBusy = ref(false);
+let stopFlush: (() => void) | null = null;
 const videoElements = new Map<string, HTMLVideoElement>();
 const canvasElements = new Map<string, HTMLCanvasElement>();
 const sphericalRenderers = new Map<string, SphericalVideoRenderer>();
@@ -46,7 +48,7 @@ watch(stage, (element) => {
 watch(() => resonance.expanded, async (expanded) => {
   if (!expanded) {
     captureSceneState();
-    try { resonance.flush(); } catch { /* Scene controls show persistence failures. */ }
+    void resonance.flush().catch(() => undefined);
     vrHydrationGeneration += 1;
     pauseAll();
     return;
@@ -132,6 +134,7 @@ function pauseAll(): void {
 }
 
 function captureSceneState(): void {
+  if (resonance.restoring) return;
   for (const item of resonance.videos) {
     const element = videoElements.get(item.id);
     // Before metadata arrives, currentTime is zero rather than the saved bookmark.
@@ -141,49 +144,54 @@ function captureSceneState(): void {
   }
 }
 
-function persistSceneState(): void {
-  captureSceneState();
-  try { resonance.flush(); } catch { /* Scene controls show persistence failures. */ }
-}
-
-onMounted(() => window.addEventListener('pagehide', persistSceneState));
-
-function changeScene(action: () => void): void {
+async function persistSceneState(): Promise<void> {
   captureSceneState();
   pauseAll();
-  try {
-    action();
-  } catch (error) {
-    ElMessage({ type: 'error', message: error instanceof Error ? error.message : '场景切换失败', zIndex: 4500 });
-    return;
-  }
+  await resonance.flush();
+}
+
+function persistOnHide(): void { void persistSceneState().catch(() => undefined); }
+onMounted(() => {
+  void resonance.initialize().catch(() => undefined);
+  window.addEventListener('pagehide', persistOnHide);
+  stopFlush = window.filmLibrary.resonance.onFlush(persistSceneState);
+});
+
+async function changeScene(action: () => Promise<unknown>): Promise<void> {
+  if (sceneBusy.value) throw new Error('场景正在保存，请稍后重试');
+  sceneBusy.value = true;
+  captureSceneState();
+  pauseAll();
   vrHydrationGeneration += 1;
   for (const id of sphericalRenderers.keys()) destroySphericalRenderer(id, false);
   videoElements.clear();
   canvasElements.clear();
   playingIds.value = new Set();
+  try {
+    await action();
+  } finally {
+    sceneBusy.value = false;
+    // Remount even when two scenes contain the same file, restoring independent positions/views.
+    sceneGeneration.value += 1;
+    void nextTick(() => {
+      stage.value?.focus();
+      void hydrateLegacyVrModes();
+    });
+  }
   if (clearTimer) clearTimeout(clearTimer);
   clearTimer = null;
   clearPending.value = false;
-  // Remount even when two scenes contain the same file, restoring their independent positions/views.
-  sceneGeneration.value += 1;
-  void nextTick(() => {
-    stage.value?.focus();
-    void hydrateLegacyVrModes();
-  });
 }
 
-function switchScene(id: string | null): void {
+async function switchScene(id: string | null): Promise<void> {
   if (id === resonance.activeSceneId) return;
-  changeScene(() => resonance.switchScene(id));
+  try { await changeScene(() => resonance.switchScene(id)); }
+  catch (error) { ElMessage({ type: 'error', message: error instanceof Error ? error.message : '场景切换失败', zIndex: 4500 }); }
 }
 
-function deleteScene(id: string): void {
-  if (id === resonance.activeSceneId) changeScene(() => resonance.deleteScene(id));
-  else {
-    try { resonance.deleteScene(id); }
-    catch (error) { ElMessage({ type: 'error', message: error instanceof Error ? error.message : '场景删除失败', zIndex: 4500 }); }
-  }
+async function runSceneAction(action: () => Promise<unknown>, done: (error?: string) => void): Promise<void> {
+  try { await changeScene(action); done(); }
+  catch (error) { done(error instanceof Error ? error.message : '场景保存失败'); }
 }
 
 function seekOne(item: ResonanceVideo, event: Event): void {
@@ -288,9 +296,10 @@ function handleOverlayKeydown(event: KeyboardEvent): void {
 }
 
 onBeforeUnmount(() => {
-  window.removeEventListener('pagehide', persistSceneState);
+  window.removeEventListener('pagehide', persistOnHide);
+  stopFlush?.();
   captureSceneState();
-  try { resonance.flush(); } catch { /* Keep the in-memory scene and visible error. */ }
+  void resonance.flush().catch(() => undefined);
   stageObserver?.disconnect();
   if (clearTimer) clearTimeout(clearTimer);
   pauseAll();
@@ -305,6 +314,7 @@ onBeforeUnmount(() => {
     v-if="!resonance.expanded"
     type="button"
     class="resonance-ball"
+    :disabled="resonance.restoring"
     :aria-label="`打开共鸣球，当前有 ${resonance.count} 个视频`"
     @click="resonance.expanded = true"
   >
@@ -315,12 +325,12 @@ onBeforeUnmount(() => {
 
   <Teleport to="body">
     <section v-if="resonance.expanded" class="resonance-overlay" aria-label="共鸣球多视频播放界面">
-      <header class="resonance-toolbar">
+      <header class="resonance-toolbar" :inert="sceneBusy || resonance.restoring">
         <div class="resonance-heading">
           <span class="resonance-heading-mark" />
           <div><strong>共鸣球</strong><small>{{ resonance.count }} 个视频正在共鸣</small></div>
         </div>
-        <ResonanceSceneControls @capture="captureSceneState" @switch-scene="switchScene" @delete-scene="deleteScene" />
+        <ResonanceSceneControls :busy="sceneBusy" @capture="captureSceneState" @run-action="runSceneAction" @switch-scene="switchScene" />
         <div class="resonance-global-actions">
           <el-button
             class="global-play-button"
@@ -339,11 +349,12 @@ onBeforeUnmount(() => {
       <div
         ref="stage"
         class="resonance-stage"
+        :inert="sceneBusy || resonance.restoring"
         tabindex="-1"
         @keydown="handleOverlayKeydown"
       >
         <article
-          v-for="item in resonance.videos"
+          v-for="item in sceneBusy ? [] : resonance.videos"
           :key="`${sceneGeneration}:${item.id}`"
           class="resonance-tile"
           :style="tileStyle(item.id)"

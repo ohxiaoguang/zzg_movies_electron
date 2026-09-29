@@ -34,14 +34,18 @@ async function sceneFlow() {
   const assert = (condition, message) => { if (!condition) throw new Error(message); };
   async function waitFor(read) {
     for (let attempt = 0; attempt < 60; attempt += 1) {
-      const result = read();
+      const result = (await read());
       if (result) return result;
       await delay();
     }
     throw new Error('Scene UI did not become ready');
   }
   const button = (root, label) => [...root.querySelectorAll('button')].find((item) => item.textContent.trim() === label);
-  const read = () => JSON.parse(window.localStorage.getItem('local-film-library:resonance-scenes-v1') ?? '{}');
+  const read = async () => {
+    const result = await window.filmLibrary.resonance.load();
+    if (!result.ok) throw new Error(result.error.message);
+    return result.data;
+  };
   async function confirmName(name) {
     const input = await waitFor(() => document.querySelector('#resonance-scene-name'));
     input.value = name;
@@ -61,7 +65,7 @@ async function sceneFlow() {
     element.value = id;
     element.dispatchEvent(new Event('change', { bubbles: true }));
     await delay();
-    assert(read().activeSceneId === id, 'Scene selection was not persisted');
+    assert((await read()).activeSceneId === id, 'Scene selection was not persisted');
   }
 
   location.hash = '#/library?resonance-smoke=1';
@@ -74,26 +78,37 @@ async function sceneFlow() {
   await waitFor(() => document.querySelector('.resonance-tile'));
   document.querySelector('.scene-save-as').click();
   await confirmName('Smoke 场景 A');
-  const saved = read();
+  const saved = (await read());
   assert(saved.scenes.length === 1 && saved.scenes[0].videos.length === 1, 'Scene save did not retain the video');
   const firstId = saved.activeSceneId;
 
+  document.querySelector('.scene-create').click();
+  await confirmName('Smoke 空白场景');
+  const fresh = await read();
+  assert(fresh.activeSceneId !== firstId && fresh.scenes.find((scene) => scene.id === fresh.activeSceneId)?.videos.length === 0, 'New scene was not empty');
+  assert(document.querySelectorAll('.resonance-tile').length === 0, 'New scene kept old players');
+  assert(fresh.scenes.find((scene) => scene.id === firstId)?.videos.length === 1, 'New scene changed the original');
+  await manage('Smoke 空白场景', '删除');
+  document.querySelector('.scene-confirm').click();
+  await delay(350);
+  await select(firstId);
+
   await manage('Smoke 场景 A', '复制');
   await confirmName('Smoke 场景 B');
-  const copy = read().scenes.find((scene) => scene.name === 'Smoke 场景 B');
-  assert(copy && copy.id !== firstId && read().activeSceneId === firstId, 'Copy changed the active scene');
+  const copy = (await read()).scenes.find((scene) => scene.name === 'Smoke 场景 B');
+  assert(copy && copy.id !== firstId && (await read()).activeSceneId === firstId, 'Copy changed the active scene');
   const previousPlayer = document.querySelector('.resonance-tile video');
   await select(copy.id);
   assert(document.querySelector('.resonance-tile video') !== previousPlayer, 'Switch reused the old player for the same file');
   assert(document.querySelector('.resonance-tile video').paused, 'Switch unexpectedly started playback');
   await manage('Smoke 场景 B', '重命名');
   await confirmName('Smoke 场景 B 改名');
-  assert(read().scenes.find((scene) => scene.id === copy.id)?.name === 'Smoke 场景 B 改名', 'Rename failed');
+  assert((await read()).scenes.find((scene) => scene.id === copy.id)?.name === 'Smoke 场景 B 改名', 'Rename failed');
 
   await select(firstId);
   await manage('Smoke 场景 B 改名', '删除');
   document.querySelector('.scene-confirm').click();
   await delay(350);
-  assert(read().scenes.length === 1 && read().activeSceneId === firstId, 'Delete affected another scene');
-  return { id: firstId, videoCount: read().scenes[0].videos.length };
+  assert((await read()).scenes.length === 1 && (await read()).activeSceneId === firstId, 'Delete affected another scene');
+  return { id: firstId, videoCount: (await read()).scenes[0].videos.length };
 }

@@ -10,6 +10,9 @@ import type {
   VrViewDto,
 } from '../../shared/contracts';
 import type { DatabaseManager } from '../database/DatabaseManager';
+import { ResonanceRepository } from '../database/repositories/ResonanceRepository';
+import { ResonanceBackupService } from './ResonanceBackupService';
+import { parseResonanceBackup, type ResonanceBackupState } from '../../shared/resonanceBackup';
 
 interface ExportFilmRow {
   id: string;
@@ -106,16 +109,18 @@ export class LibraryDataBackupService {
         categories: categoryMap.get(row.id) ?? [],
         segments: segmentMap.get(row.id) ?? [],
       }));
-      const dataHash = hashBackupData(categories, films);
+      const resonance = new ResonanceBackupService(this.database).export(filmRows.map((row) => row.id));
+      const dataHash = hashBackupData(categories, films, resonance);
       return {
         format: 'local-film-library-user-data',
-        formatVersion: 1,
+        formatVersion: 2,
         appVersion: this.appVersion,
         exportedAt: this.clock().toISOString(),
         dataHash,
-        counts: backupCounts(categories, films),
+        counts: backupCounts(categories, films, resonance),
         categories,
         films,
+        resonance,
       };
     });
   }
@@ -123,7 +128,7 @@ export class LibraryDataBackupService {
   public parseDocument(value: unknown): LibraryDataBackupDocument {
     if (!isRecord(value)
       || value.format !== 'local-film-library-user-data'
-      || value.formatVersion !== 1
+      || (value.formatVersion !== 1 && value.formatVersion !== 2)
       || typeof value.appVersion !== 'string'
       || typeof value.exportedAt !== 'string'
       || typeof value.dataHash !== 'string'
@@ -136,22 +141,26 @@ export class LibraryDataBackupService {
     const films = value.films.map(parseFilm);
     const segmentCount = films.reduce((total, film) => total + film.segments.length, 0);
     if (segmentCount > MAX_BACKUP_SEGMENTS) throw new Error('CLOUD_BACKUP_FILE_INVALID');
-    const expectedHash = hashBackupData(categories, films);
+    if (value.formatVersion === 1 && 'resonance' in value) throw new Error('CLOUD_BACKUP_FILE_INVALID');
+    const resonance = value.formatVersion === 2 ? parseResonanceBackup(value.resonance, films.length) : undefined;
+    const expectedHash = hashBackupData(categories, films, resonance);
     if (value.dataHash !== expectedHash) throw new Error('CLOUD_BACKUP_CHECKSUM_MISMATCH');
     return {
       format: 'local-film-library-user-data',
-      formatVersion: 1,
+      formatVersion: value.formatVersion,
       appVersion: value.appVersion.slice(0, 100),
       exportedAt: value.exportedAt,
       dataHash: expectedHash,
-      counts: backupCounts(categories, films),
+      counts: backupCounts(categories, films, resonance),
       categories,
       films,
+      ...(resonance ? { resonance } : {}),
     };
   }
 
   public preview(document: LibraryDataBackupDocument, commitSha: string): CloudBackupRestorePreviewDto {
     const result = this.matchFilms(document);
+    const sceneResult = document.resonance ? new ResonanceBackupService(this.database).resolve(document.resonance, result.matches) : null;
     let restorableFavorites = 0;
     let restorableCategoryLinks = 0;
     let restorableSegments = 0;
@@ -173,6 +182,10 @@ export class LibraryDataBackupService {
       restorableFavorites,
       restorableCategoryLinks,
       restorableSegments,
+      replacesScenes: Boolean(sceneResult),
+      restorableScenes: sceneResult?.state.scenes.length ?? 0,
+      restorableSceneVideos: sceneResult?.restored ?? 0,
+      skippedSceneVideos: sceneResult?.skipped ?? 0,
       issues: result.issues.slice(0, 500),
     };
   }
@@ -183,7 +196,9 @@ export class LibraryDataBackupService {
     let categoryLinksRestored = 0;
     let segmentsRestored = 0;
     let segmentsSkipped = 0;
+    const sceneResult = document.resonance ? new ResonanceBackupService(this.database).resolve(document.resonance, matchResult.matches) : null;
     this.database.transaction(() => {
+      if (sceneResult) new ResonanceRepository(this.database).save(sceneResult.state);
       const categoryIds = this.ensureCategories(document.categories);
       const updateFavorite = this.database.db.prepare(
         `UPDATE film
@@ -257,6 +272,9 @@ export class LibraryDataBackupService {
       categoryLinksRestored,
       segmentsRestored,
       segmentsSkipped,
+      scenesRestored: sceneResult?.state.scenes.length ?? 0,
+      sceneVideosRestored: sceneResult?.restored ?? 0,
+      sceneVideosSkipped: sceneResult?.skipped ?? 0,
     };
   }
 
@@ -389,18 +407,19 @@ function toBackupSegment(row: SegmentRow): LibraryDataBackupSegment {
   };
 }
 
-function backupCounts(categories: LibraryDataBackupCategory[], films: LibraryDataBackupFilm[]): LibraryDataBackupDocument['counts'] {
+function backupCounts(categories: LibraryDataBackupCategory[], films: LibraryDataBackupFilm[], resonance?: ResonanceBackupState): LibraryDataBackupDocument['counts'] {
   return {
     films: films.length,
     favorites: films.filter((film) => film.favorite).length,
     categories: categories.length,
     categoryLinks: films.reduce((total, film) => total + film.categories.length, 0),
     segments: films.reduce((total, film) => total + film.segments.length, 0),
+    ...(resonance ? { scenes: resonance.scenes.length, sceneVideos: resonance.draft.length + resonance.scenes.reduce((sum, scene) => sum + scene.videos.length, 0) } : {}),
   };
 }
 
-function hashBackupData(categories: LibraryDataBackupCategory[], films: LibraryDataBackupFilm[]): string {
-  return createHash('sha256').update(JSON.stringify({ categories, films })).digest('hex');
+function hashBackupData(categories: LibraryDataBackupCategory[], films: LibraryDataBackupFilm[], resonance?: ResonanceBackupState): string {
+  return createHash('sha256').update(JSON.stringify({ categories, films, ...(resonance ? { resonance } : {}) })).digest('hex');
 }
 
 function parseCategory(value: unknown): LibraryDataBackupCategory {

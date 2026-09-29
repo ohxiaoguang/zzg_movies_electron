@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { DatabaseManager } from '../src/main/database/DatabaseManager';
 import { FilmRepository } from '../src/main/database/repositories/FilmRepository';
@@ -9,6 +9,8 @@ import { AppLogger } from '../src/main/system/AppLogger';
 import { CloudBackupConfigService, parseGitHubRepository } from '../src/main/services/CloudBackupConfigService';
 import { CloudBackupService } from '../src/main/services/CloudBackupService';
 import { LibraryDataBackupService } from '../src/main/services/LibraryDataBackupService';
+import { ResonanceRepository } from '../src/main/database/repositories/ResonanceRepository';
+import { emptyResonanceState, type ResonanceState, type ResonanceVideo } from '../src/shared/resonance';
 
 const roots: string[] = [];
 const databases: DatabaseManager[] = [];
@@ -19,6 +21,103 @@ afterEach(() => {
 });
 
 describe('logical cloud backup', () => {
+  it('migrates scene snapshots once, validates writes, and persists them across database reopen', () => {
+    const { database } = createDatabase();
+    const repository = new ResonanceRepository(database);
+    const state = sceneFixture({ filmId: 'film', partId: 'part' });
+    expect(repository.initialize(state)).toEqual(state);
+    expect(repository.initialize(emptyResonanceState())).toEqual(state);
+    expect(() => repository.save({ ...state, activeSceneId: 'missing' })).toThrow('RESONANCE_STATE_INVALID');
+    expect(repository.read()).toEqual(state);
+    database.db.exec("CREATE TRIGGER reject_scene_write BEFORE UPDATE ON resonance_state BEGIN SELECT RAISE(ABORT, 'test write failure'); END");
+    expect(() => repository.save(emptyResonanceState())).toThrow('test write failure');
+    expect(repository.read()).toEqual(state);
+    database.db.exec('DROP TRIGGER reject_scene_write');
+    database.close();
+    const reopened = new DatabaseManager(database.databasePath);
+    databases.push(reopened);
+    expect(new ResonanceRepository(reopened).read()).toEqual(state);
+  });
+
+  it('backs up scenes without local film IDs or paths and restores files against a different database', () => {
+    const source = createDatabase();
+    const sourceId = insertSource(source.database, 'source');
+    const original = insertFilm(source.database, sourceId, 'movie.mp4', 100, 300);
+    const repository = new ResonanceRepository(source.database);
+    repository.save(sceneFixture(original));
+    const exporter = new LibraryDataBackupService(source.database, '1.2.25');
+    const document = exporter.exportDocument();
+    expect(document.formatVersion).toBe(2);
+    expect(document.counts).toMatchObject({ scenes: 2, sceneVideos: 2 });
+    const serialized = JSON.stringify(document);
+    expect(serialized).not.toContain(original.filmId);
+    expect(serialized).not.toContain(original.partId);
+    expect(serialized).not.toContain(source.root);
+    expect(exporter.parseDocument(JSON.parse(serialized))).toEqual(document);
+
+    const target = createDatabase();
+    const targetSource = insertSource(target.database, 'other-drive');
+    const destination = insertFilm(target.database, targetSource, 'movie.mp4', 100, 300);
+    const importer = new LibraryDataBackupService(target.database, '1.2.25');
+    expect(importer.preview(document, 'sha')).toMatchObject({ restorableScenes: 2, restorableSceneVideos: 2, skippedSceneVideos: 0, replacesScenes: true });
+    expect(importer.restore(document)).toMatchObject({ scenesRestored: 2, sceneVideosRestored: 2, sceneVideosSkipped: 0 });
+    const restored = new ResonanceRepository(target.database).read()!;
+    expect(restored.activeSceneId).toBe('scene-one');
+    expect(restored.scenes[0].videos[0]).toMatchObject({ ...destination, currentSeconds: 42, vrView: { yawDegrees: 20, pitchDegrees: -5, fovDegrees: 70 } });
+    expect(restored.scenes[1].videos).toEqual([]);
+    expect(restored.draft[0].currentSeconds).toBe(8);
+    const before = document.dataHash;
+    const updated = repository.read()!;
+    updated.scenes[0].videos[0].currentSeconds = 99;
+    repository.save(updated);
+    expect(exporter.exportDocument().dataHash).not.toBe(before);
+    const tampered = structuredClone(document);
+    tampered.resonance!.scenes[0].name = 'tampered';
+    expect(() => exporter.parseDocument(tampered)).toThrow('CHECKSUM');
+  });
+
+  it('keeps scene definitions but skips missing, ambiguous and wrong-size videos on restore', () => {
+    const source = createDatabase();
+    const sourceId = insertSource(source.database, 'source');
+    const film = insertFilm(source.database, sourceId, 'movie.mp4', 100, 300);
+    new ResonanceRepository(source.database).save(sceneFixture(film));
+    const document = new LibraryDataBackupService(source.database, '1').exportDocument();
+    const target = createDatabase();
+    const importer = new LibraryDataBackupService(target.database, '1');
+    expect(importer.restore(document)).toMatchObject({ scenesRestored: 2, sceneVideosRestored: 0, sceneVideosSkipped: 2 });
+    const targetSource = insertSource(target.database, 'source');
+    insertFilm(target.database, targetSource, 'movie.mp4', 101, 300);
+    expect(importer.preview(document, 'sha')).toMatchObject({ restorableSceneVideos: 0, skippedSceneVideos: 2 });
+    insertFilm(target.database, insertSource(target.database, 'duplicate-one'), 'movie.mp4', 100, 300);
+    insertFilm(target.database, insertSource(target.database, 'duplicate-two'), 'movie.mp4', 100, 300);
+    expect(importer.restore(document)).toMatchObject({ sceneVideosRestored: 0, sceneVideosSkipped: 2 });
+    expect(new ResonanceRepository(target.database).read()!.scenes[0].videos).toEqual([]);
+  });
+
+  it('restores version 1 backups without changing scenes and rejects malformed version 2 scene metadata', () => {
+    const context = createDatabase();
+    const repository = new ResonanceRepository(context.database);
+    const state = sceneFixture({ filmId: 'film', partId: 'part' });
+    repository.save(state);
+    const service = new LibraryDataBackupService(context.database, '1');
+    const latest = service.exportDocument();
+    const old: Record<string, unknown> = { ...latest, formatVersion: 1, dataHash: createHash('sha256').update(JSON.stringify({ categories: latest.categories, films: latest.films })).digest('hex') };
+    delete old.resonance;
+    const parsed = service.parseDocument(old);
+    expect(service.preview(parsed, 'sha').replacesScenes).toBe(false);
+    service.restore(parsed);
+    expect(repository.read()).toEqual(state);
+    const invalid = structuredClone(latest);
+    invalid.resonance!.draft[0].filmIndex = 500;
+    expect(() => service.parseDocument(invalid)).toThrow('FILE_INVALID');
+    // Use the canonical format emitted by the exporter for empty scenes.
+    repository.save(emptyResonanceState());
+    const emptyBackup = service.exportDocument();
+    repository.save(state);
+    service.restore(service.parseDocument(emptyBackup));
+    expect(repository.read()).toEqual(emptyResonanceState());
+  });
+
   it('times out stalled response bodies and retains a retry snapshot', async () => {
     const context = await backupFixture();
     let aborted = false;
@@ -135,7 +234,7 @@ describe('logical cloud backup', () => {
     });
 
     const document = new LibraryDataBackupService(source.database, '1.0.0').exportDocument();
-    expect(document.counts).toEqual({ films: 2, favorites: 1, categories: 1, categoryLinks: 1, segments: 1 });
+    expect(document.counts).toEqual({ films: 2, favorites: 1, categories: 1, categoryLinks: 1, segments: 1, scenes: 0, sceneVideos: 0 });
     expect(JSON.stringify(document)).not.toContain(source.root);
     expect(document.films.find((film) => film.filename === 'movie.mkv')).toMatchObject({
       fileSize: 100,
@@ -230,7 +329,8 @@ describe('logical cloud backup', () => {
   it('uploads one JSON file through the GitHub contents API and removes the pending outbox', async () => {
     const context = createDatabase();
     const sourceId = insertSource(context.database, 'source');
-    insertFilm(context.database, sourceId, 'movie.mkv', 123, 45);
+    const film = insertFilm(context.database, sourceId, 'movie.mkv', 123, 45);
+    new ResonanceRepository(context.database).save(sceneFixture(film));
     const config = new CloudBackupConfigService(
       path.join(context.root, 'cloud-config.json'),
       path.join(context.root, 'cloud-pending.json'),
@@ -281,8 +381,9 @@ describe('logical cloud backup', () => {
     const upload = requests.find((request) => request.init?.method === 'PUT');
     expect(upload?.init?.headers).toMatchObject({ Authorization: 'Bearer github_pat_secret' });
     const body = JSON.parse(String(upload?.init?.body)) as { content: string };
-    const uploaded = JSON.parse(Buffer.from(body.content, 'base64').toString('utf8')) as { films: unknown[] };
+    const uploaded = JSON.parse(Buffer.from(body.content, 'base64').toString('utf8')) as { films: unknown[]; resonance: { scenes: unknown[] } };
     expect(uploaded.films).toHaveLength(1);
+    expect(uploaded.resonance.scenes).toHaveLength(2);
     expect(await service.versions()).toEqual([{
       commitSha: 'abcdef1234567890',
       committedAt: '2026-08-25T00:00:00.000Z',
@@ -291,6 +392,21 @@ describe('logical cloud backup', () => {
     expect(await service.previewRestore('abcdef1234567890')).toMatchObject({ matchedFilms: 1, missingFilms: 0 });
   });
 });
+
+function sceneFixture(ids: { filmId: string; partId: string }): ResonanceState {
+  const video: ResonanceVideo = {
+    ...ids, id: `${ids.filmId}:${ids.partId}`, title: 'movie', filename: 'movie.mp4',
+    currentSeconds: 42, durationSeconds: 300, aspectRatio: 16 / 9, isVr: true, vrModeKnown: true,
+    vrView: { yawDegrees: 20, pitchDegrees: -5, fovDegrees: 70 }, addedAt: '2026-09-29T00:00:00.000Z',
+  };
+  return {
+    version: 1, activeSceneId: 'scene-one', draft: [{ ...video, currentSeconds: 8 }],
+    scenes: [
+      { id: 'scene-one', name: '第一场景', videos: [video], createdAt: video.addedAt },
+      { id: 'scene-empty', name: '空场景', videos: [], createdAt: video.addedAt },
+    ],
+  };
+}
 
 const fakeSecrets = {
   async encryptStringAsync(value: string): Promise<Buffer> {

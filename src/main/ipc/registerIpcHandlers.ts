@@ -42,6 +42,8 @@ import { isTrustedWindowUrl } from '../window/WindowTrust';
 import { FilmRepository } from '../database/repositories/FilmRepository';
 import { SettingsRepository } from '../database/repositories/SettingsRepository';
 import { SourceRepository } from '../database/repositories/SourceRepository';
+import { ResonanceRepository } from '../database/repositories/ResonanceRepository';
+import { flushResonance } from './flushResonance';
 import { ScanCoordinator } from '../scanner/ScanCoordinator';
 import { FileOpenService } from '../system/FileOpenService';
 import type { AppLogger } from '../system/AppLogger';
@@ -109,6 +111,20 @@ export function registerIpcHandlers(context: IpcContext): () => void {
     context.accountCredentials.login(validateAccountCredentials(payload), event.sender.id)
   ));
   handle(IPC_CHANNELS.accountLogout, (event) => context.accountCredentials.logout(event.sender.id));
+
+  const resonance = new ResonanceRepository(context.database);
+  let startupBackupStarted = false;
+  handle(IPC_CHANNELS.resonanceLoad, (_event, legacy) => {
+    const state = resonance.initialize(legacy);
+    if (!startupBackupStarted) {
+      startupBackupStarted = true;
+      void context.cloudBackup.backupOnStartup().catch((error: unknown) => {
+        context.logger.warn('Automatic startup cloud backup failed', { errorCode: error instanceof Error ? error.message : 'CLOUD_BACKUP_FAILED' });
+      });
+    }
+    return state;
+  });
+  handle(IPC_CHANNELS.resonanceSave, (_event, state) => { resonance.save(state); return null; });
 
   handle(IPC_CHANNELS.sourcesList, () => context.libraryRead.listSources());
   handle(IPC_CHANNELS.sourcesChooseDirectory, async () => {
@@ -387,9 +403,10 @@ export function registerIpcHandlers(context: IpcContext): () => void {
     context.cloudBackup.updateConfig(validateCloudBackupConfig(payload))
   ));
   handle(IPC_CHANNELS.cloudBackupTestConnection, () => context.cloudBackup.testConnection());
-  handle(IPC_CHANNELS.cloudBackupRun, (_event, payload) => (
-    context.cloudBackup.runBackup('manual', isRecord(payload) && payload.force === true)
-  ));
+  handle(IPC_CHANNELS.cloudBackupRun, async (_event, payload) => {
+    await flushResonance(context.window);
+    return context.cloudBackup.runBackup('manual', isRecord(payload) && payload.force === true);
+  });
   handle(IPC_CHANNELS.cloudBackupVersions, () => context.cloudBackup.versions());
   handle(IPC_CHANNELS.cloudBackupPreviewRestore, (_event, payload) => {
     const input = validateCloudBackupRestore(payload);
@@ -495,6 +512,10 @@ function publicMessage(code: string): string {
     CLOUD_BACKUP_FILE_TOO_LARGE: '备份文件超过 20 MB，已停止上传',
     CLOUD_BACKUP_EMPTY_LIBRARY: '当前影片库为空，为避免覆盖有效备份已停止自动上传',
     CLOUD_BACKUP_LIBRARY_REGRESSION: '当前影片数量大幅减少，为避免覆盖有效备份已停止自动上传',
+    CLOUD_BACKUP_SCENE_REGRESSION: '本机没有命名场景，但云端已有场景，为避免覆盖已停止自动上传',
+    RESONANCE_STATE_INVALID: '场景数据格式无效，原有数据未被覆盖',
+    RESONANCE_SAVE_FAILED: '共鸣场景保存失败，请在共鸣球中重试后再备份',
+    RESONANCE_SAVE_TIMEOUT: '等待共鸣场景保存超时，请稍后重试',
     CLOUD_BACKUP_NO_MATCHES: '没有找到可按文件名恢复的影片',
     CLOUD_BACKUP_RESTORE_SCAN_RUNNING: '扫描进行中，完成或取消扫描后再恢复',
     CLOUD_BACKUP_COMMIT_INVALID: '备份版本无效',

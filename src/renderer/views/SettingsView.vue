@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue';
+import { nextTick, onMounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { FolderOpened, Setting, VideoCamera } from '@element-plus/icons-vue';
 import type {
@@ -13,8 +13,10 @@ import type {
   SettingsDto,
 } from '../../shared/contracts';
 import { useLibraryStore } from '../stores/library';
+import { useResonanceStore } from '../stores/resonance';
 
 const library = useLibraryStore();
+const resonance = useResonanceStore();
 const info = ref<AppInfoDto | null>(null);
 const form = reactive<SettingsDto>({
   cardSize: 220,
@@ -307,7 +309,7 @@ async function runCloudBackup(force = false): Promise<void> {
     if (!(await saveCloudConfig(false))) return;
     const result = await window.filmLibrary.cloudBackup.run(force);
     if (!result.ok) {
-      if (!force && ['CLOUD_BACKUP_EMPTY_LIBRARY', 'CLOUD_BACKUP_LIBRARY_REGRESSION'].includes(result.error.code)) {
+      if (!force && ['CLOUD_BACKUP_EMPTY_LIBRARY', 'CLOUD_BACKUP_LIBRARY_REGRESSION', 'CLOUD_BACKUP_SCENE_REGRESSION'].includes(result.error.code)) {
         try {
           await ElMessageBox.confirm(`${result.error.message}。确认当前数据正确后，可以强制创建新版本。`, '备份安全保护', {
             type: 'warning',
@@ -361,22 +363,30 @@ async function restoreSelectedBackup(): Promise<void> {
   if (!restorePreview.value) return;
   try {
     await ElMessageBox.confirm(
-      `将精确覆盖 ${restorePreview.value.matchedFilms} 部匹配影片的收藏、分类和精彩片段；未匹配及同名冲突影片不会修改。`,
+      `将精确覆盖 ${restorePreview.value.matchedFilms} 部匹配影片的收藏、分类和精彩片段；未匹配及同名冲突影片不会修改。${restorePreview.value.replacesScenes ? '同时替换本机全部共鸣场景和临时场景；无法唯一匹配的场景视频将跳过。' : '此备份不含场景，本机场景保持不变。'}`,
       '确认恢复云端数据',
       { type: 'warning', confirmButtonText: '开始恢复', cancelButtonText: '取消' },
     );
   } catch { return; }
   cloudChanging.value = true;
   try {
+    resonance.expanded = false;
+    await nextTick();
+    await resonance.flush();
+    resonance.restoring = true;
     const result = await window.filmLibrary.cloudBackup.restore({ commitSha: selectedBackupSha.value });
     if (!result.ok) {
       ElMessage.error(result.error.message);
       return;
     }
     restoreDialogVisible.value = false;
+    await resonance.reload();
     await library.fetchPage();
-    ElMessage.success(`恢复完成：匹配 ${result.data.matchedFilms} 部，片段 ${result.data.segmentsRestored} 条`);
+    ElMessage.success(`恢复完成：匹配 ${result.data.matchedFilms} 部，片段 ${result.data.segmentsRestored} 条，场景 ${result.data.scenesRestored ?? 0} 个，跳过场景视频 ${result.data.sceneVideosSkipped ?? 0} 个`);
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '恢复失败，请重试');
   } finally {
+    resonance.restoring = false;
     cloudChanging.value = false;
   }
 }
@@ -401,7 +411,7 @@ function formatDate(value: string | null | undefined): string {
       </section>
       <section class="settings-card wide cloud-backup-card">
         <div class="settings-title"><span>GitHub 云备份</span><span class="muted">文件名匹配 · 文件大小和时长辅助</span></div>
-        <p class="cloud-description">只备份文件名、收藏状态、自定义分类和精彩片段，不上传影片、路径、海报或数据库。请使用专门的 GitHub 私有仓库。</p>
+        <p class="cloud-description">备份文件名、收藏状态、自定义分类、精彩片段和共鸣场景（含临时场景、播放位置与 VR 视角），不上传影片、路径、海报或数据库。请使用专门的 GitHub 私有仓库。</p>
         <div class="cloud-config-grid">
           <el-form label-position="top">
             <el-form-item label="私有仓库地址">
@@ -495,6 +505,9 @@ function formatDate(value: string | null | undefined): string {
           <div><span>同名冲突</span><strong>{{ restorePreview.ambiguousFilms }}</strong></div>
           <div><span>可恢复分类关系</span><strong>{{ restorePreview.restorableCategoryLinks }}</strong></div>
           <div><span>可恢复片段</span><strong>{{ restorePreview.restorableSegments }}</strong></div>
+          <div><span>可恢复场景</span><strong>{{ restorePreview.restorableScenes ?? 0 }}</strong></div>
+          <div><span>可恢复场景视频</span><strong>{{ restorePreview.restorableSceneVideos ?? 0 }}</strong></div>
+          <div><span>将跳过场景视频</span><strong>{{ restorePreview.skippedSceneVideos ?? 0 }}</strong></div>
         </div>
         <div v-if="restorePreview.issues.length" class="restore-issues">
           <div v-for="issue in restorePreview.issues.slice(0, 20)" :key="`${issue.backupIndex}:${issue.filename}`">
@@ -503,7 +516,7 @@ function formatDate(value: string | null | undefined): string {
           <p v-if="restorePreview.issues.length > 20">另有 {{ restorePreview.issues.length - 20 }} 项未显示</p>
         </div>
       </div>
-      <template #footer><el-button @click="restoreDialogVisible = false">取消</el-button><el-button type="primary" :loading="cloudChanging" :disabled="!restorePreview?.matchedFilms" @click="restoreSelectedBackup">恢复匹配数据</el-button></template>
+      <template #footer><el-button @click="restoreDialogVisible = false">取消</el-button><el-button type="primary" :loading="cloudChanging" :disabled="!restorePreview || (!restorePreview.matchedFilms && !restorePreview.replacesScenes)" @click="restoreSelectedBackup">恢复匹配数据</el-button></template>
     </el-dialog>
   </div>
 </template>

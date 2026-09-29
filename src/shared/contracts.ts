@@ -646,7 +646,7 @@ export interface LibraryDataBackupFilm {
 
 export interface LibraryDataBackupDocument {
   format: 'local-film-library-user-data';
-  formatVersion: 1;
+  formatVersion: 1 | 2;
   appVersion: string;
   exportedAt: string;
   dataHash: string;
@@ -656,9 +656,12 @@ export interface LibraryDataBackupDocument {
     categories: number;
     categoryLinks: number;
     segments: number;
+    scenes?: number;
+    sceneVideos?: number;
   };
   categories: LibraryDataBackupCategory[];
   films: LibraryDataBackupFilm[];
+  resonance?: import('./resonanceBackup').ResonanceBackupState;
 }
 
 export type CloudBackupState = 'disabled' | 'ready' | 'running' | 'success' | 'error';
@@ -734,6 +737,10 @@ export interface CloudBackupRestorePreviewDto {
   restorableFavorites: number;
   restorableCategoryLinks: number;
   restorableSegments: number;
+  restorableScenes?: number;
+  restorableSceneVideos?: number;
+  skippedSceneVideos?: number;
+  replacesScenes?: boolean;
   issues: CloudBackupMatchIssueDto[];
 }
 
@@ -749,6 +756,9 @@ export interface CloudBackupRestoreResultDto {
   categoryLinksRestored: number;
   segmentsRestored: number;
   segmentsSkipped: number;
+  scenesRestored?: number;
+  sceneVideosRestored?: number;
+  sceneVideosSkipped?: number;
 }
 
 export interface FfprobeTestResult {

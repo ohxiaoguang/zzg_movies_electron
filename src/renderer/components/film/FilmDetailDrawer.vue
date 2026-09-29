@@ -331,7 +331,10 @@ function updateSegments(segments: FilmDetailDto['segments']): void {
 function updatePlaybackPosition(currentSeconds: number, durationSeconds: number, partId: string): void {
   Object.assign(playbackPosition, { currentSeconds, durationSeconds, partId });
 }
-function addToResonance(): void {
+async function addToResonance(): Promise<void> {
+  try { await resonance.initialize(); }
+  catch { ElMessage.error('场景读取失败，请稍后重试'); return; }
+  if (resonance.restoring) { ElMessage.warning('正在恢复场景，请稍后重试'); return; }
   if (!detail.value) return;
   const snapshot = detailPlayer.value?.getPlaybackSnapshot();
   if (!snapshot) {
@@ -350,6 +353,8 @@ function addToResonance(): void {
     isVr: snapshot.isVr,
     vrView: snapshot.vrView,
   });
+  try { await resonance.flush(); }
+  catch { ElMessage.error('影片已加入，但场景保存失败，请在共鸣球中重试'); return; }
   ElMessage.success(result === 'added' ? '已添加进共鸣球，当前视频已暂停' : '已更新共鸣球中的播放进度，当前视频已暂停');
 }
 function handleKeydown(event: KeyboardEvent): void {

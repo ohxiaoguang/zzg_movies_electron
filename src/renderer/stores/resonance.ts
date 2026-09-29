@@ -1,44 +1,47 @@
-import { computed, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import { defineStore } from 'pinia';
 import type { VrViewDto } from '../../shared/contracts';
+import { emptyResonanceState, type ResonanceState as SceneState, type ResonanceVideo, type ResonanceVideoInput, type ResonanceScene } from '../../shared/resonance';
+export type { ResonanceVideo, ResonanceVideoInput, ResonanceScene } from '../../shared/resonance';
 
 const STORAGE_KEY = 'local-film-library:resonance-v1';
 const SCENES_STORAGE_KEY = 'local-film-library:resonance-scenes-v1';
 
-export interface ResonanceVideo {
-  id: string;
-  filmId: string;
-  partId: string;
-  title: string;
-  filename: string;
-  currentSeconds: number;
-  durationSeconds: number;
-  aspectRatio: number;
-  isVr: boolean;
-  vrView: VrViewDto | null;
-  vrModeKnown: boolean;
-  addedAt: string;
-}
-
-export type ResonanceVideoInput = Omit<ResonanceVideo, 'id' | 'addedAt' | 'vrModeKnown'>;
-
-export interface ResonanceScene {
-  id: string;
-  name: string;
-  videos: ResonanceVideo[];
-  createdAt: string;
-}
-
-interface SceneState {
-  version: 1;
-  activeSceneId: string | null;
-  draft: ResonanceVideo[];
-  scenes: ResonanceScene[];
-}
-
 export const useResonanceStore = defineStore('resonance', () => {
-  const sceneState = ref<SceneState>(restoreSceneState());
+  const sceneState = ref<SceneState>(emptyResonanceState());
+  const ready = ref(false);
+  const restoring = ref(false);
   const storageError = ref('');
+  let loading: Promise<void> | null = null;
+  let writes: Promise<void> = Promise.resolve();
+  let committing: Promise<void> | null = null;
+  let replacing = false;
+
+  async function initialize(): Promise<void> {
+    if (ready.value) return;
+    if (loading) return loading;
+    loading = (async () => {
+      try {
+        const result = await window.filmLibrary.resonance.load(restoreSceneState());
+        if (!result.ok) throw new Error(result.error.message);
+        sceneState.value = result.data;
+        await nextTick();
+        ready.value = true;
+        storageError.value = '';
+        // Leave legacy localStorage untouched as a recovery copy. SQLite wins on subsequent loads.
+      } catch (error) {
+        storageError.value = '共鸣场景读取失败，请重试；原有数据未被覆盖';
+        throw error;
+      } finally { loading = null; }
+    })();
+    return loading;
+  }
+
+  async function reload(): Promise<void> {
+    await writes;
+    ready.value = false;
+    await initialize();
+  }
   const scenes = computed(() => sceneState.value.scenes);
   const activeSceneId = computed(() => sceneState.value.activeSceneId);
   const activeScene = computed(() => scenes.value.find((scene) => scene.id === activeSceneId.value) ?? null);
@@ -53,6 +56,7 @@ export const useResonanceStore = defineStore('resonance', () => {
   const count = computed(() => videos.value.length);
 
   function add(input: ResonanceVideoInput): 'added' | 'updated' {
+    if (!ready.value || restoring.value) throw new Error('场景尚未读取完成，请稍后重试');
     const id = identity(input.filmId, input.partId);
     const existing = videos.value.find((item) => item.id === id);
     if (existing) {
@@ -108,20 +112,34 @@ export const useResonanceStore = defineStore('resonance', () => {
     expanded.value = false;
   }
 
-  function persist(state: SceneState): void {
-    try {
-      window.localStorage.setItem(SCENES_STORAGE_KEY, JSON.stringify(state));
-      storageError.value = '';
-    } catch (error) {
-      storageError.value = '共鸣场景保存失败，请检查本机存储空间后重试';
-      console.warn('[resonance] could not persist scenes', error);
-      throw new Error(storageError.value, { cause: error });
-    }
+  function persist(state: SceneState): Promise<void> {
+    const snapshot = JSON.parse(JSON.stringify(state)) as SceneState;
+    const operation = writes.catch(() => undefined).then(async () => {
+      try {
+        const result = await window.filmLibrary.resonance.save(snapshot);
+        if (!result.ok) throw new Error(result.error.message);
+        storageError.value = '';
+      } catch (error) {
+        storageError.value = '共鸣场景保存失败，请检查数据库后重试';
+        throw new Error(storageError.value, { cause: error });
+      }
+    });
+    writes = operation;
+    return operation;
   }
 
-  function commit(state: SceneState): void {
-    persist(state);
-    sceneState.value = state;
+  async function commit(state: SceneState): Promise<void> {
+    if (!ready.value || restoring.value) throw new Error('场景尚未读取完成，请稍后重试');
+    if (committing) throw new Error('场景正在保存，请稍后重试');
+    committing = (async () => {
+      await nextTick();
+      await persist(state);
+      replacing = true;
+      sceneState.value = state;
+      await nextTick();
+      replacing = false;
+    })();
+    try { await committing; } finally { committing = null; }
   }
 
   function validatedName(value: string, exceptId?: string): string {
@@ -133,54 +151,65 @@ export const useResonanceStore = defineStore('resonance', () => {
     return name;
   }
 
-  function saveSceneAs(name: string): string {
+  function saveSceneAs(name: string): Promise<string> {
+    return createScene(name, videos.value);
+  }
+
+  async function createScene(name: string, initialVideos: ResonanceVideo[] = []): Promise<string> {
     const scene: ResonanceScene = {
-      id: crypto.randomUUID(), name: validatedName(name), videos: cloneVideos(videos.value), createdAt: new Date().toISOString(),
+      id: crypto.randomUUID(), name: validatedName(name), videos: cloneVideos(initialVideos), createdAt: new Date().toISOString(),
     };
-    commit({ ...sceneState.value, scenes: [...scenes.value, scene], activeSceneId: scene.id });
+    await commit({ ...sceneState.value, scenes: [...scenes.value, scene], activeSceneId: scene.id });
     return scene.id;
   }
 
-  function switchScene(id: string | null): void {
+  async function switchScene(id: string | null): Promise<void> {
     if (id !== null && !scenes.value.some((scene) => scene.id === id)) throw new Error('场景不存在');
-    commit({ ...sceneState.value, activeSceneId: id });
+    await commit({ ...sceneState.value, activeSceneId: id });
   }
 
-  function renameScene(id: string, name: string): void {
+  async function renameScene(id: string, name: string): Promise<void> {
     if (!scenes.value.some((scene) => scene.id === id)) throw new Error('场景不存在');
     const validName = validatedName(name, id);
-    commit({ ...sceneState.value, scenes: scenes.value.map((scene) => scene.id === id ? { ...scene, name: validName } : scene) });
+    await commit({ ...sceneState.value, scenes: scenes.value.map((scene) => scene.id === id ? { ...scene, name: validName } : scene) });
   }
 
-  function duplicateScene(id: string, name: string): string {
+  async function duplicateScene(id: string, name: string): Promise<string> {
     const source = scenes.value.find((scene) => scene.id === id);
     if (!source) throw new Error('场景不存在');
     const scene: ResonanceScene = {
       id: crypto.randomUUID(), name: validatedName(name), videos: cloneVideos(source.videos), createdAt: new Date().toISOString(),
     };
-    commit({ ...sceneState.value, scenes: [...scenes.value, scene] });
+    await commit({ ...sceneState.value, scenes: [...scenes.value, scene] });
     return scene.id;
   }
 
-  function deleteScene(id: string): void {
+  async function deleteScene(id: string): Promise<void> {
     // Return to the existing temporary scene without overwriting it.
     const deletingActive = activeSceneId.value === id;
-    commit({
+    await commit({
       ...sceneState.value,
       scenes: scenes.value.filter((scene) => scene.id !== id),
       activeSceneId: deletingActive ? null : activeSceneId.value,
     });
   }
 
-  function flush(): void { persist(sceneState.value); }
+  async function flush(): Promise<void> {
+    if (restoring.value) { await writes; return; }
+    await initialize();
+    await committing?.catch(() => undefined);
+    await nextTick();
+    await persist(sceneState.value);
+  }
 
   watch(sceneState, () => {
-    try { flush(); } catch { /* The persistent error is displayed in the scene controls. */ }
+    if (ready.value && !replacing && !restoring.value) void persist(sceneState.value).catch(() => undefined);
   }, { deep: true });
 
   return {
+    ready, restoring, initialize, reload,
     videos, expanded, count, add, updateProgress, updateAspectRatio, updateVrMode, updateVrView, remove, clear,
-    scenes, activeSceneId, activeScene, storageError, saveSceneAs, switchScene, renameScene, duplicateScene, deleteScene, flush,
+    scenes, activeSceneId, activeScene, storageError, createScene, saveSceneAs, switchScene, renameScene, duplicateScene, deleteScene, flush,
   };
 });
 

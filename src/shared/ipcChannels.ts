@@ -1,4 +1,8 @@
 export const IPC_CHANNELS = {
+  resonanceLoad: 'resonance:load',
+  resonanceSave: 'resonance:save',
+  resonanceFlush: 'resonance:flush',
+  resonanceFlushed: 'resonance:flushed',
   sourcesList: 'sources:list',
   sourcesChooseDirectory: 'sources:choose-directory',
   sourcesCreate: 'sources:create',

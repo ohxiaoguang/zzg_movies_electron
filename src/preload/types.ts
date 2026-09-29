@@ -55,7 +55,14 @@ import type {
   UpdateSourceInput,
 } from '../shared/contracts';
 
+import type { ResonanceState } from '../shared/resonance';
+
 export interface FilmLibraryApi {
+  resonance: {
+    load(legacy?: ResonanceState): Promise<ApiResult<ResonanceState>>;
+    save(state: ResonanceState): Promise<ApiResult<null>>;
+    onFlush(listener: () => Promise<void>): () => void;
+  };
   account: {
     status(): Promise<ApiResult<AccountAuthStatusDto>>;
     setup(input: AccountCredentialsInput): Promise<ApiResult<AccountAuthStatusDto>>;
