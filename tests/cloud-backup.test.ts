@@ -54,6 +54,15 @@ describe('logical cloud backup', () => {
     expect(serialized).not.toContain(original.partId);
     expect(serialized).not.toContain(source.root);
     expect(exporter.parseDocument(JSON.parse(serialized))).toEqual(document);
+    const legacy = JSON.parse(serialized);
+    for (const item of [...legacy.resonance.draft, ...legacy.resonance.scenes.flatMap((scene: { videos: unknown[] }) => scene.videos)]) {
+      delete item.highlightSeconds;
+    }
+    legacy.dataHash = createHash('sha256').update(JSON.stringify({ categories: legacy.categories, films: legacy.films, resonance: legacy.resonance })).digest('hex');
+    expect(exporter.parseDocument(legacy).resonance?.scenes[0].videos[0].highlightSeconds).toBeUndefined();
+    const changedPoint = JSON.parse(serialized);
+    changedPoint.resonance.scenes[0].videos[0].highlightSeconds = 100;
+    expect(() => exporter.parseDocument(changedPoint)).toThrow('CHECKSUM');
 
     const target = createDatabase();
     const targetSource = insertSource(target.database, 'other-drive');
@@ -63,7 +72,7 @@ describe('logical cloud backup', () => {
     expect(importer.restore(document)).toMatchObject({ scenesRestored: 2, sceneVideosRestored: 2, sceneVideosSkipped: 0 });
     const restored = new ResonanceRepository(target.database).read()!;
     expect(restored.activeSceneId).toBe('scene-one');
-    expect(restored.scenes[0].videos[0]).toMatchObject({ ...destination, currentSeconds: 42, vrView: { yawDegrees: 20, pitchDegrees: -5, fovDegrees: 70 } });
+    expect(restored.scenes[0].videos[0]).toMatchObject({ ...destination, currentSeconds: 42, highlightSeconds: 17.5, vrView: { yawDegrees: 20, pitchDegrees: -5, fovDegrees: 70 } });
     expect(restored.scenes[1].videos).toEqual([]);
     expect(restored.draft[0].currentSeconds).toBe(8);
     const before = document.dataHash;
@@ -396,7 +405,7 @@ describe('logical cloud backup', () => {
 function sceneFixture(ids: { filmId: string; partId: string }): ResonanceState {
   const video: ResonanceVideo = {
     ...ids, id: `${ids.filmId}:${ids.partId}`, title: 'movie', filename: 'movie.mp4',
-    currentSeconds: 42, durationSeconds: 300, aspectRatio: 16 / 9, isVr: true, vrModeKnown: true,
+    currentSeconds: 42, highlightSeconds: 17.5, durationSeconds: 300, aspectRatio: 16 / 9, isVr: true, vrModeKnown: true,
     vrView: { yawDegrees: 20, pitchDegrees: -5, fovDegrees: 70 }, addedAt: '2026-09-29T00:00:00.000Z',
   };
   return {

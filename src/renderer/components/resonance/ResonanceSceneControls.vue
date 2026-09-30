@@ -77,7 +77,7 @@ async function retrySave(): Promise<void> {
 
   <el-dialog v-model="visible" :title="title" width="560px" :z-index="4000" append-to-body class="resonance-scene-dialog" @keydown.stop>
     <template v-if="mode === 'manage'">
-      <p class="scene-description">每套场景独立保存视频列表、顺序、播放位置和 VR 视角，使用时自动保存。</p>
+      <p class="scene-description">每套场景独立保存视频列表、顺序、播放位置、精彩时刻和 VR 视角，使用时自动保存。</p>
       <div v-if="!resonance.scenes.length" class="scene-empty">还没有保存的场景。可以新建空白场景，或把当前视频“保存为场景”。</div>
       <div v-else class="scene-list">
         <div v-for="scene in resonance.scenes" :key="scene.id" class="scene-row">

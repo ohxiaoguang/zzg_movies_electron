@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPinia, disposePinia, setActivePinia, type Pinia } from 'pinia';
 import { nextTick } from 'vue';
 import { useResonanceStore, type ResonanceVideoInput } from '../src/renderer/stores/resonance';
-import type { ResonanceState } from '../src/shared/resonance';
+import { parseResonanceState, type ResonanceState } from '../src/shared/resonance';
 
 const SCENES_KEY = 'local-film-library:resonance-scenes-v1';
 const LEGACY_KEY = 'local-film-library:resonance-v1';
@@ -47,6 +47,43 @@ async function store() {
 }
 
 describe('resonance scenes', () => {
+  it('records and explicitly updates independent highlight points across scenes and reloads', async () => {
+    const current = await store();
+    current.add(video);
+    current.add({ ...video, partId: 'part-two', currentSeconds: 35.5 });
+    const first = await current.saveSceneAs('精彩一');
+    const second = await current.saveSceneAs('精彩二');
+    current.updateProgress(current.videos[0].id, 80.25);
+    current.updateProgress(current.videos[1].id, 130);
+    expect(current.videos.map((item) => item.highlightSeconds)).toEqual([12, 35.5]);
+    current.updateHighlights();
+    current.updateProgress(current.videos[0].id, 95);
+    await current.flush();
+    const reopened = await store();
+    expect(reopened.videos.map((item) => item.highlightSeconds)).toEqual([80.25, 130]);
+    await reopened.switchScene(first);
+    expect(reopened.videos.map((item) => item.highlightSeconds)).toEqual([12, 35.5]);
+    await reopened.switchScene(second);
+    reopened.add({ ...video, currentSeconds: 44 });
+    expect(reopened.videos[0].highlightSeconds).toBe(44);
+  });
+
+  it('migrates old points and rejects invalid new points at the storage boundary', async () => {
+    storage.set(LEGACY_KEY, JSON.stringify([video]));
+    const current = await store();
+    expect(current.videos[0].highlightSeconds).toBe(12);
+    await current.flush();
+    const old = JSON.parse(JSON.stringify(databaseState));
+    delete old.draft[0].highlightSeconds;
+    expect(parseResonanceState(old).draft[0].highlightSeconds).toBe(12);
+    old.draft[0].highlightSeconds = 0;
+    expect(parseResonanceState(old).draft[0].highlightSeconds).toBe(0);
+    for (const invalid of [-1, Infinity, NaN, '12', null]) {
+      old.draft[0].highlightSeconds = invalid;
+      expect(() => parseResonanceState(old)).toThrow('RESONANCE_STATE_INVALID');
+    }
+  });
+
   it('waits for an in-flight scene switch before flushing for backup or exit', async () => {
     const current = await store();
     current.add(video);

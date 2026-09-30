@@ -17,6 +17,7 @@ export class ResonanceBackupService {
       return {
         filmIndex: indexes.get(item.filmId) ?? null, fileSize: validPart?.file_size ?? null,
         filename: validPart?.filename ?? item.filename, currentSeconds: item.currentSeconds,
+        highlightSeconds: item.highlightSeconds,
         durationSeconds: item.durationSeconds, aspectRatio: item.aspectRatio, isVr: item.isVr,
         vrView: item.vrView, addedAt: item.addedAt,
       };
@@ -49,6 +50,7 @@ export class ResonanceBackupService {
         return [{
           id: `${film.id}:${part.id}`, filmId: film.id, partId: part.id, title: part.title, filename: part.filename,
           currentSeconds: video.currentSeconds, durationSeconds: video.durationSeconds, aspectRatio: video.aspectRatio,
+          highlightSeconds: video.highlightSeconds ?? video.currentSeconds,
           isVr: video.isVr, vrView: video.vrView, vrModeKnown: true, addedAt: video.addedAt,
         }];
       });

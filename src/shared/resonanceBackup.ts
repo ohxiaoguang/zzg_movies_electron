@@ -1,6 +1,7 @@
 import { parseResonanceState, type ResonanceVideo } from './resonance';
 
-export type ResonanceBackupVideo = Omit<ResonanceVideo, 'id' | 'filmId' | 'partId' | 'title' | 'vrModeKnown'> & {
+export type ResonanceBackupVideo = Omit<ResonanceVideo, 'id' | 'filmId' | 'partId' | 'title' | 'vrModeKnown' | 'highlightSeconds'> & {
+  highlightSeconds?: number;
   filmIndex: number | null;
   fileSize: number | null;
 };
@@ -34,6 +35,7 @@ export function parseResonanceBackup(value: unknown, filmCount: number): Resonan
       return {
         filmIndex: original.filmIndex, fileSize: original.fileSize,
         filename: video.filename, currentSeconds: video.currentSeconds, durationSeconds: video.durationSeconds,
+        ...(original.highlightSeconds === undefined ? {} : { highlightSeconds: video.highlightSeconds }),
         aspectRatio: video.aspectRatio, isVr: video.isVr, vrView: video.vrView, addedAt: video.addedAt,
       };
     }

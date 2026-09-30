@@ -60,11 +60,12 @@ export const useResonanceStore = defineStore('resonance', () => {
     const id = identity(input.filmId, input.partId);
     const existing = videos.value.find((item) => item.id === id);
     if (existing) {
-      Object.assign(existing, sanitizeVideo({ ...existing, ...input, id, vrModeKnown: true }));
+      Object.assign(existing, sanitizeVideo({ ...existing, ...input, highlightSeconds: input.currentSeconds, id, vrModeKnown: true }));
       return 'updated';
     }
     videos.value.push(sanitizeVideo({
       ...input,
+      highlightSeconds: input.currentSeconds,
       id,
       vrModeKnown: true,
       addedAt: new Date().toISOString(),
@@ -79,6 +80,11 @@ export const useResonanceStore = defineStore('resonance', () => {
     if (durationSeconds !== undefined && Number.isFinite(durationSeconds) && durationSeconds >= 0) {
       item.durationSeconds = durationSeconds;
     }
+  }
+
+  function updateHighlights(): void {
+    if (!ready.value || restoring.value) return;
+    for (const item of videos.value) item.highlightSeconds = finiteNonNegative(item.currentSeconds);
   }
 
   function updateAspectRatio(id: string, width: number, height: number): void {
@@ -208,7 +214,7 @@ export const useResonanceStore = defineStore('resonance', () => {
 
   return {
     ready, restoring, initialize, reload,
-    videos, expanded, count, add, updateProgress, updateAspectRatio, updateVrMode, updateVrView, remove, clear,
+    videos, expanded, count, add, updateProgress, updateHighlights, updateAspectRatio, updateVrMode, updateVrView, remove, clear,
     scenes, activeSceneId, activeScene, storageError, createScene, saveSceneAs, switchScene, renameScene, duplicateScene, deleteScene, flush,
   };
 });
@@ -269,6 +275,7 @@ function sanitizeVideo(value: ResonanceVideo): ResonanceVideo {
     ...value,
     id: identity(value.filmId, value.partId),
     currentSeconds: finiteNonNegative(value.currentSeconds),
+    highlightSeconds: finiteNonNegative(value.highlightSeconds ?? value.currentSeconds),
     durationSeconds: finiteNonNegative(value.durationSeconds),
     aspectRatio: clampAspectRatio(value.aspectRatio),
     isVr: value.isVr === true,

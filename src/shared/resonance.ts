@@ -7,6 +7,7 @@ export interface ResonanceVideo {
   title: string;
   filename: string;
   currentSeconds: number;
+  highlightSeconds: number;
   durationSeconds: number;
   aspectRatio: number;
   isVr: boolean;
@@ -15,7 +16,7 @@ export interface ResonanceVideo {
   addedAt: string;
 }
 
-export type ResonanceVideoInput = Omit<ResonanceVideo, 'id' | 'addedAt' | 'vrModeKnown'>;
+export type ResonanceVideoInput = Omit<ResonanceVideo, 'id' | 'addedAt' | 'vrModeKnown' | 'highlightSeconds'>;
 export interface ResonanceScene {
   id: string;
   name: string;
@@ -52,6 +53,7 @@ export function parseResonanceState(value: unknown): ResonanceState {
       return {
         id, filmId, partId, title: text(video.title, 2000, true), filename: text(video.filename, 2000),
         currentSeconds: number(video.currentSeconds, 0), durationSeconds: number(video.durationSeconds, 0),
+        highlightSeconds: number(video.highlightSeconds === undefined ? video.currentSeconds : video.highlightSeconds, 0),
         aspectRatio: number(video.aspectRatio, 0.25, 4), isVr: video.isVr, vrModeKnown: video.vrModeKnown,
         vrView: view ? {
           yawDegrees: number(view.yawDegrees, -180, 179.999),

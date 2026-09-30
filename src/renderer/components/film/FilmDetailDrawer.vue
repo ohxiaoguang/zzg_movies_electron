@@ -355,7 +355,7 @@ async function addToResonance(): Promise<void> {
   });
   try { await resonance.flush(); }
   catch { ElMessage.error('影片已加入，但场景保存失败，请在共鸣球中重试'); return; }
-  ElMessage.success(result === 'added' ? '已添加进共鸣球，当前视频已暂停' : '已更新共鸣球中的播放进度，当前视频已暂停');
+  ElMessage.success(result === 'added' ? '已添加进共鸣球并记录精彩时刻，当前视频已暂停' : '已更新共鸣球中的播放进度和精彩时刻，当前视频已暂停');
 }
 function handleKeydown(event: KeyboardEvent): void {
   if (!props.modelValue || event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || (event.target instanceof HTMLElement && event.target.isContentEditable)) return;

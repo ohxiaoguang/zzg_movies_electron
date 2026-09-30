@@ -15,6 +15,7 @@ const playingIds = ref(new Set<string>());
 const clearPending = ref(false);
 const sceneGeneration = ref(0);
 const sceneBusy = ref(false);
+const savingHighlights = ref(false);
 let stopFlush: (() => void) | null = null;
 const videoElements = new Map<string, HTMLVideoElement>();
 const playbackStates = ref(new Map<string, { compatibility: boolean; ready: boolean; wantsPlay: boolean; error: string }>());
@@ -235,6 +236,30 @@ function seekOne(item: ResonanceVideo, event: Event): void {
   resonance.updateProgress(item.id, target, element.duration);
 }
 
+function seekAllHighlights(): void {
+  for (const item of resonance.videos) {
+    const element = videoElements.get(item.id);
+    const duration = element && Number.isFinite(element.duration) ? element.duration : item.durationSeconds;
+    const target = duration > 0 ? Math.min(item.highlightSeconds, Math.max(0, duration - 0.05)) : item.highlightSeconds;
+    // Metadata and compatibility loading restore this target when the player becomes ready.
+    resonance.updateProgress(item.id, target);
+    if (element && element.readyState >= 1) element.currentTime = target;
+  }
+}
+
+async function updateAllHighlights(): Promise<void> {
+  if (savingHighlights.value) return;
+  savingHighlights.value = true;
+  captureSceneState();
+  resonance.updateHighlights();
+  try {
+    await resonance.flush();
+    ElMessage({ type: 'success', message: '已更新当前场景所有视频的精彩时刻', zIndex: 4500 });
+  } catch {
+    ElMessage({ type: 'error', message: '精彩时刻保存失败，请重试保存', zIndex: 4500 });
+  } finally { savingHighlights.value = false; }
+}
+
 function removeVideo(id: string): void {
   videoElements.get(id)?.pause();
   destroySphericalRenderer(id);
@@ -364,6 +389,8 @@ onBeforeUnmount(() => {
         </div>
         <ResonanceSceneControls :busy="sceneBusy" @capture="captureSceneState" @run-action="runSceneAction" @switch-scene="switchScene" />
         <div class="resonance-global-actions">
+          <el-button :disabled="!resonance.count || !resonance.ready" title="将所有视频定位到各自保存的精彩时刻，保持播放或暂停状态" @click="seekAllHighlights">回到精彩时刻</el-button>
+          <el-button :disabled="!resonance.count || !resonance.ready" :loading="savingHighlights" title="用每个视频的当前进度覆盖当前场景的精彩时刻" @click="updateAllHighlights">更新全部精彩时刻</el-button>
           <el-button
             class="global-play-button"
             type="primary"
@@ -416,6 +443,7 @@ onBeforeUnmount(() => {
           <div class="tile-caption">
             <strong>{{ item.title }}</strong>
             <span>{{ item.filename }}</span>
+            <span>精彩时刻 {{ formatTime(item.highlightSeconds) }}</span>
             <span v-if="playbackStates.get(item.id)?.error" role="alert">{{ playbackStates.get(item.id)?.error }}</span>
             <span v-else-if="playbackStates.get(item.id)?.compatibility && !playbackStates.get(item.id)?.ready">正在准备兼容版本…</span>
           </div>
