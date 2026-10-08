@@ -546,6 +546,11 @@ export interface DesktopSubtitleTrackDto {
   supported: boolean;
 }
 
+export interface WebPlaybackMetadataDto {
+  partId: string;
+  durationSeconds: number | null;
+}
+
 export interface WebPlaybackSessionDto {
   id: string;
   mode: WebPlaybackMode;

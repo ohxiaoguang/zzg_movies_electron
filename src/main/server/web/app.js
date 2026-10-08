@@ -44,6 +44,7 @@ class HttpFilmLibraryClient {
   updateMetadata(id, body) { return this.request(`/api/v1/films/${encodeURIComponent(id)}/metadata`, null, { method: 'PATCH', body }); }
   updateTaxonomy(id, body) { return this.request(`/api/v1/films/${encodeURIComponent(id)}/taxonomy`, null, { method: 'PATCH', body }); }
   rescanSource(id) { return this.request(`/api/v1/sources/${encodeURIComponent(id)}/rescan`, null, { method: 'POST' }); }
+  playbackMetadata(partId) { return this.request(`/api/v1/playback/parts/${encodeURIComponent(partId)}/metadata`); }
   playbackCapabilities() { return this.request('/api/v1/playback/capabilities'); }
   createPlaybackSession(body) { return this.request('/api/v1/playback/sessions', null, { method: 'POST', body }); }
   playbackSession(id) { return this.request(`/api/v1/playback/sessions/${encodeURIComponent(id)}`); }
@@ -95,6 +96,7 @@ const state = {
   filmsRequest: 0,
   playbackCapabilities: null,
   playback: null,
+  detailPlayback: null,
 };
 let activeCardPreviewClose = null;
 let activeVrRenderer = null;
@@ -196,6 +198,8 @@ function bindEvents() {
   elements.nextPage.addEventListener('click', () => {
     if (state.page < state.totalPages) { state.page += 1; void loadFilms(); }
   });
+  window.addEventListener('keydown', handleDetailPlaybackKey, true);
+  window.addEventListener('keyup', handleDetailPlaybackKey, true);
   elements.closeDetail.addEventListener('click', closeFilmDetail);
   elements.filmDetail.addEventListener('close', stopDetailPlayback);
   elements.filmDetail.addEventListener('cancel', stopDetailPlayback);
@@ -212,6 +216,15 @@ function bindEvents() {
   elements.createCategory.addEventListener('click', () => void createCategory());
   window.addEventListener('scroll', () => activeCardPreviewClose?.(), true);
   window.addEventListener('resize', () => activeCardPreviewClose?.());
+}
+
+function handleDetailPlaybackKey(event) {
+  if (!elements.filmDetail.open || (event.code !== 'Space' && event.key !== ' ')) return;
+  const target = event.target;
+  if (target?.isContentEditable || target?.matches?.('input, textarea, select')) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  if (event.type === 'keydown' && !event.repeat) state.detailPlayback?.togglePlayback();
 }
 
 function closeFilmDetail() {
@@ -925,9 +938,11 @@ async function showDetail(id) {
 }
 
 function renderDetail(film) {
+  elements.detailContent.dataset.filmId = film.id;
   releaseActivePlayback();
   const mediaNavigation = createDetailMediaNavigation();
   const playback = createUnifiedPlayback(film);
+  state.detailPlayback = playback;
   const layout = createElement('div', 'detail-layout-grid');
   const main = createElement('main', 'detail-main-column');
   main.append(playback.section, createMediaSection(film, playback, mediaNavigation));
@@ -1026,7 +1041,7 @@ function createCategoryEditor(film) {
     if (state.auth?.canManage) {
       const remove = actionButton('×', () => {
         const ids = film.customCategories.filter((item) => item.id !== category.id).map((item) => item.id);
-        void updateDetail(film.id, () => client.updateTaxonomy(film.id, { categoryIds: ids }), '分类已更新');
+        void updateDetail(film.id, () => client.updateTaxonomy(film.id, { categoryIds: ids }), '分类已更新', { categoriesOnly: true });
       }, 'category-remove');
       remove.title = `移除 ${category.name}`;
       chip.append(remove);
@@ -1062,6 +1077,7 @@ function createCategoryEditor(film) {
           ...(existing ? {} : { newCategoryNames: [name] }),
         }),
         existing ? '分类已添加' : '新分类已创建并添加',
+        { categoriesOnly: true },
       );
       if (input.isConnected) {
         submitting = false;
@@ -1394,11 +1410,9 @@ function createUnifiedPlayback(film) {
   subtitleSelect.addEventListener('change', () => selectSubtitleTrack(video, subtitleSelect.value));
   const parts = film.parts.filter((part) => !part.missing);
   const allSegments = film.segments || [];
-  const previewSegments = allSegments.filter((segment) => segment.includeInPreview);
   const segmentsPanel = createElement('div', 'web-segments-panel');
-  let activeSegmentIndex = -1;
   let activeSegment = null;
-  let activeSegmentSession = null;
+  let playbackGeneration = 0;
 
   const applyVrMode = (part, view = null) => {
     activeVrRenderer?.dispose();
@@ -1443,107 +1457,86 @@ function createUnifiedPlayback(film) {
   }
 
   const clearSegmentMode = () => {
-    activeSegmentIndex = -1;
     activeSegment = null;
-    activeSegmentSession = null;
     segmentLabel.replaceChildren();
   };
-  const playOriginal = async (partId = null) => {
+  const playOriginal = async (partId = null, startSeconds = undefined) => {
+    const generation = ++playbackGeneration;
     clearSegmentMode();
     const session = await startAdaptivePlayback(
       video,
       status,
-      partId ? { partId } : { filmId: film.id },
+      { ...(partId ? { partId } : { filmId: film.id }), ...(startSeconds === undefined ? {} : { startSeconds }) },
       subtitleSelect,
     );
-    if (session) applyVrMode(parts.find((part) => part.id === partId) ?? parts[0], null);
+    if (generation !== playbackGeneration || !session) return null;
+    if (session) {
+      const part = parts.find((part) => part.id === partId) ?? parts[0];
+      state.playback.partId = part?.id || null;
+      video.dispatchEvent(new Event('playback:session'));
+      applyVrMode(part, null);
+    }
+    return session;
   };
-  const playSegment = async (segment, sequencePosition = -1) => {
-    activeSegmentIndex = sequencePosition;
+  const playSegment = async (segment) => {
+    const session = await playOriginal(segment.filmFileId, segment.startSeconds);
+    if (!session || state.playback?.sessionId !== session.id) return;
     activeSegment = segment;
     segmentLabel.replaceChildren(
       createElement('strong', '', segment.title || '未命名片段'),
       createElement('span', '', `${formatPlaybackTime(segment.startSeconds)} → ${formatPlaybackTime(segment.endSeconds)}`),
     );
-    status.textContent = `正在准备 ${segment.title || '未命名片段'}…`;
-    activeSegmentSession = await startAdaptivePlayback(video, status, {
-      partId: segment.filmFileId,
-      purpose: 'segment-preview',
-      startSeconds: segment.startSeconds,
-      endSeconds: segment.endSeconds,
-    });
-    if (activeSegmentSession) {
-      applyVrMode(parts.find((part) => part.id === segment.filmFileId), segment.vrView);
-      status.textContent = `${segment.title || '未命名片段'} · ${formatPlaybackTime(segment.startSeconds)}–${formatPlaybackTime(segment.endSeconds)}`;
+    if (state.playback?.video === video) applyVrMode(parts.find((part) => part.id === segment.filmFileId), segment.vrView);
+  };
+  const seekTo = async (partId, seconds) => {
+    clearSegmentMode();
+    const active = state.playback;
+    if (active?.video === video && active.partId === partId && playbackDuration(video)) {
+      seconds = Math.min(Math.max(0, playbackDuration(video) - .25), seconds);
+    }
+    if (active?.video === video && active.partId === partId && canSeekPlaybackTo(active, seconds)) {
+      video.currentTime = seconds - active.sourceOffsetSeconds;
+      await video.play().catch(() => undefined);
+    } else {
+      await playOriginal(partId, seconds);
     }
   };
-  const playSegmentAt = async (index) => {
-    if (index >= previewSegments.length) {
-      clearSegmentMode();
-      video.pause();
-      status.textContent = '精彩片段播放完毕';
-      return;
-    }
-    await playSegment(previewSegments[index], index);
-  };
-  const advanceSegment = () => {
-    if (activeSegmentIndex >= 0) void playSegmentAt(activeSegmentIndex + 1);
+  video.seekToSeconds = (seconds) => {
+    const partId = state.playback?.video === video ? state.playback.partId : parts[0]?.id;
+    if (partId) void seekTo(partId, seconds);
   };
 
   video.addEventListener('timeupdate', () => {
-    if (activeSegment && activeSegmentSession) {
-      const segment = activeSegment;
-      const finished = activeSegmentSession.transport === 'direct'
-        ? video.currentTime + 0.05 >= segment.endSeconds
-        : video.currentTime + 0.05 >= segment.endSeconds - segment.startSeconds;
-      if (finished) {
-        if (activeSegmentIndex >= 0) advanceSegment();
-        else {
-          video.pause();
-          clearSegmentMode();
-        }
-      }
-      return;
-    }
+    if (activeSegment && playbackPosition(video) >= activeSegment.endSeconds) clearSegmentMode();
     const active = state.playback;
     if (!active?.sessionId || active.video !== video || Date.now() - active.lastProgressAt < 10_000) return;
     active.lastProgressAt = Date.now();
     void client.updatePlaybackProgress(active.sessionId, {
-      positionSeconds: video.currentTime,
-      ...(Number.isFinite(video.duration) ? { durationSeconds: video.duration } : {}),
+      positionSeconds: playbackPosition(video),
+      ...(playbackDuration(video) ? { durationSeconds: playbackDuration(video) } : {}),
     }).catch(() => undefined);
   });
   video.addEventListener('ended', () => {
-    if (activeSegment) {
-      if (activeSegmentIndex >= 0) advanceSegment();
-      else {
-        clearSegmentMode();
-        status.textContent = '片段播放完毕';
-      }
-      return;
-    }
+    clearSegmentMode();
     const active = state.playback;
     if (!active?.sessionId || active.video !== video) return;
     void client.updatePlaybackProgress(active.sessionId, {
-      positionSeconds: video.duration || video.currentTime,
-      ...(Number.isFinite(video.duration) ? { durationSeconds: video.duration } : {}),
+      positionSeconds: playbackPosition(video),
+      ...(playbackDuration(video) ? { durationSeconds: playbackDuration(video) } : {}),
     }).catch(() => undefined);
   });
   video.addEventListener('pause', () => {
-    if (activeSegment) return;
     const active = state.playback;
     if (!active?.sessionId || active.video !== video || !(video.currentTime > 0)) return;
     void client.updatePlaybackProgress(active.sessionId, {
-      positionSeconds: video.currentTime,
-      ...(Number.isFinite(video.duration) ? { durationSeconds: video.duration } : {}),
+      positionSeconds: playbackPosition(video),
+      ...(playbackDuration(video) ? { durationSeconds: playbackDuration(video) } : {}),
     }).catch(() => undefined);
   });
   const playerActions = createElement('div', 'unified-player-actions');
   const playOriginalButton = actionButton('播放 / 继续原片', () => void playOriginal(), 'primary-button');
   playOriginalButton.disabled = !parts.length;
-  const playHighlightsButton = actionButton('连续播放精彩片段', () => void playSegmentAt(0));
-  playHighlightsButton.disabled = !previewSegments.length;
-  playerActions.append(playOriginalButton, playHighlightsButton);
+  playerActions.append(playOriginalButton);
   const playerControls = createElement('div', 'player-control-row');
   playerControls.append(subtitlePicker, playerActions);
   section.append(status, videoFrame, playerControls);
@@ -1558,16 +1551,13 @@ function createUnifiedPlayback(film) {
     }
     section.append(choices);
   }
-  if (allSegments.length) {
+  {
     const timelines = createElement('div', 'web-segment-timelines');
-    for (const part of film.parts) {
+    for (const part of parts) {
       const partSegments = allSegments.filter((segment) => segment.filmFileId === part.id);
-      if (!partSegments.length) continue;
-      const duration = Math.max(
-        Number(film.runtimeSeconds) || 0,
-        ...partSegments.map((segment) => segment.endSeconds),
-        1,
-      );
+      const metadataDuration = parts.length === 1 ? Number(film.runtimeSeconds) : 0;
+      const duration = Number.isFinite(metadataDuration) && metadataDuration > 0 ? metadataDuration : 0;
+      let metadataPending = true;
       const timelineRow = createElement('div', 'web-segment-timeline-row');
       timelineRow.append(createElement(
         'span',
@@ -1575,17 +1565,103 @@ function createUnifiedPlayback(film) {
         part.partType === 'single' ? part.filename : `${part.partType.toUpperCase()} ${part.partNumber}`,
       ));
       const track = createElement('div', 'web-segment-timeline');
+      track.setAttribute('aria-description', '点击时间轴跳转');
+      track.tabIndex = 0;
+      track.setAttribute('role', 'slider');
+      track.setAttribute('aria-label', `${part.filename} 播放进度`);
+      const playhead = createElement('i', 'web-playback-head');
+      const timeLabel = createElement('small', 'web-playback-time');
+      // Keep the full-file scale while an HLS playlist or replacement source is loading.
+      // The duration of a growing HLS playlist only describes generated media.
+      let knownDuration = duration;
+      const getDuration = () => {
+        if (state.playback?.video === video && state.playback.partId === part.id) {
+          const fullDuration = playbackDuration(video);
+          if (Number.isFinite(fullDuration) && fullDuration > 0) knownDuration = fullDuration;
+        }
+        return knownDuration;
+      };
+      const tooltip = createElement('div', 'web-timeline-tooltip');
+      tooltip.hidden = true;
+      tooltip.setAttribute('role', 'tooltip');
+      const hideTooltip = () => { tooltip.hidden = true; };
+      track.addEventListener('pointermove', (event) => {
+        const rect = track.getBoundingClientRect();
+        if (!rect.width || !getDuration()) return;
+        const seconds = Math.max(0, Math.min(getDuration(), (event.clientX - rect.left) / rect.width * getDuration()));
+        const hoveredId = event.target?.dataset?.segmentId;
+        const hovered = partSegments.filter((segment) => segment.id === hoveredId
+          || (seconds >= segment.startSeconds && seconds <= segment.endSeconds));
+        tooltip.textContent = [
+          formatPlaybackTime(seconds),
+          ...hovered.map((segment) => `${segment.title || '未命名片段'} · ${formatPlaybackTime(segment.startSeconds)} → ${formatPlaybackTime(segment.endSeconds)}`),
+        ].join('\n');
+        tooltip.hidden = false;
+        const rowRect = timelineRow.getBoundingClientRect();
+        const tooltipWidth = tooltip.offsetWidth;
+        const centeredLeft = event.clientX - rowRect.left - tooltipWidth / 2;
+        tooltip.style.left = `${Math.max(0, Math.min(Math.max(0, rowRect.width - tooltipWidth), centeredLeft))}px`;
+      });
+      track.addEventListener('pointerleave', hideTooltip);
+      track.addEventListener('click', hideTooltip);
+
+      const syncTimeline = () => {
+        const total = getDuration();
+        const position = state.playback?.video === video && state.playback.partId === part.id ? playbackPosition(video) : 0;
+        playhead.style.left = `${Math.min(100, (total ? position / total * 100 : 0))}%`;
+        timeLabel.textContent = total
+          ? `${formatPlaybackTime(position)} / ${formatPlaybackTime(total)}`
+          : metadataPending ? '正在读取视频时长…' : '时长暂不可用，播放后显示';
+        track.setAttribute('aria-disabled', String(!total));
+        track.setAttribute('aria-valuemin', '0');
+        track.setAttribute('aria-valuemax', String(total));
+        track.setAttribute('aria-valuenow', String(position));
+        for (const node of track.querySelectorAll('.web-segment-node')) {
+          node.hidden = !total;
+          node.style.left = `${total ? Math.min(100, Number(node.dataset.start) / total * 100) : 0}%`;
+          node.style.width = `${total ? Math.max(.5, Math.min(100, Number(node.dataset.length) / total * 100)) : 0}%`;
+        }
+      };
+      track.addEventListener('click', (event) => {
+        const rect = track.getBoundingClientRect();
+        if (!rect.width) return;
+        const total = getDuration();
+        if (!total) return;
+        void seekTo(part.id, Math.max(0, Math.min(total - .25, (event.clientX - rect.left) / rect.width * total)));
+      });
+      track.addEventListener('keydown', (event) => {
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (!getDuration()) return;
+        const position = state.playback?.partId === part.id ? playbackPosition(video) : 0;
+        const delta = event.shiftKey ? configuredFineSeekStepSeconds() : configuredSeekStepSeconds();
+        void seekTo(part.id, Math.max(0, Math.min(getDuration() - .25, position + (event.key === 'ArrowLeft' ? -delta : delta))));
+      });
+      for (const name of ['timeupdate', 'loadedmetadata', 'durationchange', 'play', 'playback:session']) video.addEventListener(name, syncTimeline);
+
       for (const segment of partSegments) {
-        const node = actionButton('', () => void playSegment(segment), 'web-segment-node');
-        node.title = `${segment.title || '未命名片段'} · ${formatPlaybackTime(segment.startSeconds)} → ${formatPlaybackTime(segment.endSeconds)}`;
-        node.setAttribute('aria-label', node.title);
+        const node = createElement('span', 'web-segment-node');
+        node.dataset.segmentId = segment.id;
+        node.dataset.start = String(segment.startSeconds);
+        node.dataset.length = String(segment.endSeconds - segment.startSeconds);
+        node.setAttribute('aria-label', `${segment.title || '未命名片段'} · ${formatPlaybackTime(segment.startSeconds)} → ${formatPlaybackTime(segment.endSeconds)}`);
         node.classList.toggle('disabled', !segment.includeInPreview);
-        node.style.left = `${Math.min(100, (segment.startSeconds / duration) * 100)}%`;
-        node.style.width = `${Math.max(.5, Math.min(100, ((segment.endSeconds - segment.startSeconds) / duration) * 100))}%`;
         track.append(node);
       }
-      timelineRow.append(track);
+      track.append(playhead);
+      syncTimeline();
+      timelineRow.append(track, timeLabel, tooltip);
       timelines.append(timelineRow);
+      // Read cached probe metadata without starting playback, remuxing, or marking the film played.
+      void client.playbackMetadata(part.id).then((metadata) => {
+        if (Number.isFinite(metadata.durationSeconds) && metadata.durationSeconds > 0) {
+          knownDuration = metadata.durationSeconds;
+        }
+      }).catch(() => undefined).finally(() => {
+        metadataPending = false;
+        syncTimeline();
+      });
     }
     const list = createElement('div', 'web-segment-list');
     allSegments.forEach((segment, index) => {
@@ -1598,8 +1674,10 @@ function createUnifiedPlayback(film) {
       if (segment.sourceChanged) row.append(createElement('em', '', '源文件已变化'));
       list.append(row);
     });
-    segmentsPanel.append(timelines, list);
-  } else {
+    section.append(timelines);
+    segmentsPanel.append(list);
+  }
+  if (!allSegments.length) {
     segmentsPanel.append(createElement('p', 'segment-empty-hint', '暂无精彩片段；没有片段时，影片卡片将使用图片轮播预览'));
   }
 
@@ -1622,6 +1700,15 @@ function createUnifiedPlayback(film) {
     seek(deltaSeconds) {
       seekVideoBy(video, deltaSeconds);
     },
+    togglePlayback() {
+      if (!parts.length) return;
+      if (state.playback?.video !== video) {
+        void playOriginal();
+      } else if (state.playback.sessionId) {
+        if (video.paused) void video.play().catch(() => undefined);
+        else video.pause();
+      }
+    },
   };
 }
 
@@ -1641,19 +1728,27 @@ async function startAdaptivePlayback(video, status, input, subtitleSelect = null
     completionReloadAttempts: 0,
     completionReloadInProgress: false,
   };
+  const active = state.playback;
+  active.partId = input.partId || null;
+  active.sourceOffsetSeconds = 0;
+  active.durationSeconds = null;
   video.muted = options.muted === true;
   status.textContent = '正在检测视频并准备播放…';
   try {
     const session = await client.createPlaybackSession(input);
-    if (state.playback?.video !== video) {
+    if (state.playback !== active) {
       void client.cancelPlaybackSession(session.id).catch(() => undefined);
       return null;
     }
-    state.playback.sessionId = session.id;
-    state.playback.resumePositionSeconds = session.playbackPositionSeconds;
+    active.sessionId = session.id;
+    active.sourceOffsetSeconds = session.transport === 'hls' ? session.sourceStartSeconds : 0;
+    active.durationSeconds = session.durationSeconds;
+    active.transport = session.transport;
+    video.dispatchEvent(new Event('playback:session'));
+    state.playback.resumePositionSeconds = Math.max(0, session.playbackPositionSeconds - active.sourceOffsetSeconds);
     status.textContent = playbackDescription(session);
     if (input.purpose !== 'segment-preview') {
-      attachSubtitleTracks(video, session.subtitleTracks);
+      attachSubtitleTracks(video, session.subtitleTracks, active.sourceOffsetSeconds);
       if (subtitleSelect) {
         configureSubtitlePicker(subtitleSelect, session.subtitleTracks);
         selectSubtitleTrack(video, subtitleSelect.value);
@@ -1675,14 +1770,14 @@ async function startAdaptivePlayback(video, status, input, subtitleSelect = null
     }
     const initialPosition = input.purpose === 'segment-preview' && session.transport === 'direct'
       ? session.sourceStartSeconds
-      : session.playbackPositionSeconds;
+      : Math.max(0, session.playbackPositionSeconds - active.sourceOffsetSeconds);
     const resumed = await applyPlaybackPosition(video, initialPosition);
     if (resumed && input.purpose !== 'segment-preview') status.textContent = `${playbackDescription(session)} · 从 ${formatPlaybackTime(session.playbackPositionSeconds)} 继续`;
-    if (state.playback?.video !== video) return null;
+    if (state.playback !== active) return null;
     await video.play().catch(() => undefined);
     return session;
   } catch (error) {
-    status.textContent = errorMessage(error);
+    if (state.playback === active) status.textContent = errorMessage(error);
     return null;
   }
 }
@@ -1696,12 +1791,13 @@ function attachHls(video, url, status) {
   const HlsConstructor = window.Hls;
   if (!HlsConstructor?.isSupported()) throw new Error('当前浏览器不支持 HLS/MSE 播放');
   return new Promise((resolve, reject) => {
-    const hls = new HlsConstructor({ enableWorker: true, lowLatencyMode: false });
+    const hls = new HlsConstructor({ enableWorker: true, lowLatencyMode: false, startPosition: 0, autoStartLoad: false });
     let recoveryAttempts = 0;
     let settled = false;
     state.playback.hls = hls;
     hls.on(HlsConstructor.Events.MEDIA_ATTACHED, () => hls.loadSource(url));
     hls.on(HlsConstructor.Events.MANIFEST_PARSED, () => {
+      hls.startLoad(0);
       settled = true;
       resolve();
     });
@@ -1742,7 +1838,7 @@ function playbackDescription(session) {
   return `${mode}${codecs ? ` · ${codecs}` : ''}${subtitles ? ` · ${subtitles} 条字幕` : ''}${processing}`;
 }
 
-function attachSubtitleTracks(video, tracks = []) {
+function attachSubtitleTracks(video, tracks = [], offsetSeconds = 0) {
   for (const existing of video.querySelectorAll('track')) existing.remove();
   for (const [index, item] of tracks.filter((track) => track.supported).entries()) {
     const track = document.createElement('track');
@@ -1752,6 +1848,15 @@ function attachSubtitleTracks(video, tracks = []) {
     track.label = item.title || [item.language, item.codec].filter(Boolean).join(' · ') || `字幕 ${item.index}`;
     track.dataset.streamIndex = String(item.index);
     track.default = index === 0;
+    if (offsetSeconds > 0) track.addEventListener('load', () => {
+      for (const cue of Array.from(track.track.cues || [])) {
+        if (cue.endTime <= offsetSeconds) track.track.removeCue(cue);
+        else {
+          cue.startTime = Math.max(0, cue.startTime - offsetSeconds);
+          cue.endTime -= offsetSeconds;
+        }
+      }
+    }, { once: true });
     video.append(track);
   }
 }
@@ -1779,7 +1884,37 @@ function selectSubtitleTrack(video, streamIndex) {
   }
 }
 
+function playbackPosition(video) {
+  const active = state.playback;
+  return (Number.isFinite(video.currentTime) ? video.currentTime : 0)
+    + (active?.video === video ? active.sourceOffsetSeconds || 0 : 0);
+}
+
+function playbackDuration(video) {
+  const active = state.playback;
+  if (active?.video === video) {
+    if (Number.isFinite(active.durationSeconds) && active.durationSeconds > 0) return active.durationSeconds;
+    if (active.transport === 'hls' || !active.mediaReady) return 0;
+  }
+  return Number.isFinite(video.duration) ? video.duration : 0;
+}
+
+function canSeekPlaybackTo(active, seconds) {
+  const localSeconds = seconds - active.sourceOffsetSeconds;
+  if (localSeconds < 0) return false;
+  if (active.transport === 'direct') return true;
+  const ranges = active.video.seekable;
+  for (let index = 0; index < ranges.length; index += 1) {
+    if (localSeconds >= ranges.start(index) && localSeconds <= ranges.end(index)) return true;
+  }
+  return false;
+}
+
 function seekVideoBy(video, deltaSeconds) {
+  if (video.seekToSeconds) {
+    video.seekToSeconds(Math.max(0, playbackPosition(video) + deltaSeconds));
+    return;
+  }
   if (!Number.isFinite(video.currentTime)) return;
   let target = Math.max(0, video.currentTime + deltaSeconds);
   if (Number.isFinite(video.duration)) {
@@ -1917,8 +2052,8 @@ function releaseActivePlayback() {
   activeVrRenderer = null;
   const active = state.playback;
   if (!active) return;
-  const positionSeconds = active.video.currentTime;
-  const durationSeconds = active.video.duration;
+  const positionSeconds = playbackPosition(active.video);
+  const durationSeconds = playbackDuration(active.video);
   state.playback = null;
   if (active.statusTimer) window.clearTimeout(active.statusTimer);
   active.hls?.destroy();
@@ -1937,12 +2072,18 @@ function releaseActivePlayback() {
   }
 }
 
-async function updateDetail(id, operation, message) {
+async function updateDetail(id, operation, message, options = {}) {
   try {
     await operation();
     toast(message);
-    renderDetail(await client.film(id));
+    const film = await client.film(id);
     await reloadLibrary();
+    if (!elements.filmDetail.open || elements.detailContent.dataset.filmId !== id) return;
+    if (options.categoriesOnly) {
+      elements.detailContent.querySelector('.detail-categories')?.replaceWith(createCategoryEditor(film));
+    } else {
+      renderDetail(film);
+    }
   } catch (error) {
     showError(error);
   }

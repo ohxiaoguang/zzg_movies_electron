@@ -237,7 +237,7 @@ describe('renderer regressions', () => {
     expect(drawer).toContain('grid-template-rows: minmax(0, 1fr) 128px');
     expect(drawer).toContain('.el-drawer__header) { height: 34px');
     expect(drawer).not.toContain('label="预览视频"');
-    expect(detailPlayer).toContain(':title="`${segment.title');
+    expect(detailPlayer).toContain(':content="`${segment.title');
     expect(detailPlayer).toContain('aspect-ratio: 16 / 9');
     expect(detailPlayer).toContain('element?.videoWidth');
     expect(detailPlayer).toContain('element?.videoHeight');
@@ -264,7 +264,7 @@ describe('renderer regressions', () => {
     expect(drawer).not.toContain('<el-tab-pane label="详细信息"');
     expect(segmentEditor).toContain('defineExpose({ markStart, markEnd })');
     expect(detailPlayer).toContain('playbackGeneration += 1');
-    expect(detailPlayer).toContain('defineExpose({ playSegment, playPreview, playOriginal, selectPart, seekRelative, togglePlayback, stopPlayback, releasePlayback, getPlaybackSnapshot, getCurrentVrView })');
+    expect(detailPlayer).toContain('defineExpose({ playSegment, playOriginal, selectPart, seekRelative, togglePlayback, stopPlayback, releasePlayback, getPlaybackSnapshot, getCurrentVrView })');
     expect(segmentEditor).toContain('draft.vrView = props.captureVrView?.() ?? null');
     expect(segmentEditor).toContain('copyVrView(draft.vrView ?? props.captureVrView?.() ?? null)');
     expect(segmentEditor).toContain('yawDegrees: Number(view.yawDegrees)');

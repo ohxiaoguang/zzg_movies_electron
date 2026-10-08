@@ -6,6 +6,7 @@ import type {
   DesktopSubtitleTrackDto,
   PlaybackCacheInfoDto,
   WebPlaybackCapabilityDto,
+  WebPlaybackMetadataDto,
   WebPlaybackProgressInput,
   WebPlaybackSessionCreateInput,
   WebPlaybackSessionDto,
@@ -159,6 +160,15 @@ export class PlaybackSessionService {
     return this.cacheInfo();
   }
 
+  public async partMetadata(partId: string): Promise<WebPlaybackMetadataDto> {
+    const asset = await this.media.resolve('part', partId);
+    const filmId = this.films.filmIdForPart(partId);
+    if (!filmId) throw new Error('FILM_NOT_FOUND');
+    const probe = await this.capabilities.inspect(asset.filePath);
+    const duration = probe?.durationSeconds ?? this.films.playbackState(filmId, partId)?.durationSeconds ?? null;
+    return { partId, durationSeconds: duration !== null && Number.isFinite(duration) && duration > 0 ? duration : null };
+  }
+
   public async create(input: WebPlaybackSessionCreateInput, ownerDeviceId: string | null): Promise<WebPlaybackSessionDto> {
     const sourceKind = input.filmId ? 'original' : 'part';
     const sourceId = input.filmId ?? input.partId!;
@@ -167,10 +177,15 @@ export class PlaybackSessionService {
     if (!filmId) throw new Error('FILM_NOT_FOUND');
     const partId = input.partId ?? null;
     const purpose = input.purpose ?? 'full';
-    const sourceStartSeconds = purpose === 'segment-preview' ? input.startSeconds! : 0;
+    let sourceStartSeconds = input.startSeconds ?? 0;
     const sourceEndSeconds = purpose === 'segment-preview' ? input.endSeconds! : null;
     const savedPlayback = purpose === 'full' ? this.films.playbackState(filmId, partId) : null;
     const { probe, plan } = await this.capabilities.playbackPlan(asset.filePath);
+    if (purpose === 'full' && probe?.durationSeconds && sourceStartSeconds >= probe.durationSeconds) throw new Error('INVALID_PLAYBACK_REQUEST');
+    if (purpose === 'full' && plan.mode !== 'direct' && input.startSeconds === undefined) {
+      sourceStartSeconds = savedPlayback?.positionSeconds ?? 0;
+      if (probe?.durationSeconds && sourceStartSeconds >= probe.durationSeconds) sourceStartSeconds = 0;
+    }
     const subtitleTracks = await resolvePlaybackSubtitleTracks(
       asset.filePath,
       probe?.subtitles ?? [],
@@ -191,10 +206,12 @@ export class PlaybackSessionService {
       probe,
       subtitleTracks,
       jobKey: null,
-      playbackPositionSeconds: savedPlayback?.positionSeconds ?? 0,
+      playbackPositionSeconds: purpose === 'full'
+        ? plan.mode === 'direct' ? input.startSeconds ?? savedPlayback?.positionSeconds ?? 0 : sourceStartSeconds
+        : 0,
       playbackDurationSeconds: purpose === 'segment-preview'
         ? input.endSeconds! - input.startSeconds!
-        : savedPlayback?.durationSeconds ?? probe?.durationSeconds ?? null,
+        : probe?.durationSeconds ?? savedPlayback?.durationSeconds ?? null,
       purpose,
       sourceStartSeconds,
       sourceEndSeconds,
@@ -376,7 +393,7 @@ export class PlaybackSessionService {
       state: 'preparing',
       progressSeconds: 0,
       durationSeconds: session.sourceEndSeconds === null
-        ? session.probe?.durationSeconds ?? null
+        ? (session.probe?.durationSeconds ? session.probe.durationSeconds - session.sourceStartSeconds : null)
         : session.sourceEndSeconds - session.sourceStartSeconds,
       errorCode: null,
       stderr: '',

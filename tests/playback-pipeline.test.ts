@@ -264,6 +264,13 @@ describe('web playback pipeline', () => {
     const films = createPlaybackRepository();
     const service = new PlaybackSessionService(media, films, capabilities, new AppLogger(path.join(root, 'logs')), path.join(root, 'cache'));
     const filmId = '11111111-1111-4111-8111-111111111111';
+    vi.spyOn(capabilities, 'inspect').mockResolvedValue(directProbe);
+    const metadataPartId = '22222222-2222-4222-8222-222222222222';
+    expect(await service.partMetadata(metadataPartId)).toEqual({ partId: metadataPartId, durationSeconds: 90 });
+    expect(films.markPlayed).not.toHaveBeenCalled();
+    expect(films.updatePlaybackProgress).not.toHaveBeenCalled();
+    expect(capabilities.playbackPlan).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(root, 'cache'))).toBe(false);
     const created = await service.create({ filmId }, 'device-a');
     expect(created).toMatchObject({
       mode: 'direct',
@@ -311,6 +318,12 @@ describe('web playback pipeline', () => {
     service.updateProgress(segment.id, 'device-a', { positionSeconds: 5, durationSeconds: 10 });
     expect(films.updatePlaybackProgress).toHaveBeenCalledTimes(1);
     service.cancel(segment.id, 'device-a');
+    const seek = await service.create({ partId: '22222222-2222-4222-8222-222222222222', startSeconds: 40 }, 'device-a');
+    expect(seek).toMatchObject({ playbackPositionSeconds: 40, sourceStartSeconds: 40, sourceEndSeconds: null, durationSeconds: 90 });
+    service.updateProgress(seek.id, 'device-a', { positionSeconds: 47, durationSeconds: 90 });
+    expect(films.updatePlaybackProgress).toHaveBeenLastCalledWith(filmId, '22222222-2222-4222-8222-222222222222', 47, 90);
+    service.cancel(seek.id, 'device-a');
+    await expect(service.create({ filmId, startSeconds: 90 }, 'device-a')).rejects.toThrow('INVALID_PLAYBACK_REQUEST');
     await service.stop();
   });
 
@@ -319,6 +332,10 @@ describe('web playback pipeline', () => {
     const partId = '22222222-2222-4222-8222-222222222222';
     expect(validatePlaybackSessionCreate({ filmId })).toEqual({ filmId });
     expect(validatePlaybackSessionCreate({ partId })).toEqual({ partId });
+    expect(validatePlaybackSessionCreate({ partId, startSeconds: 42.125 })).toEqual({ partId, startSeconds: 42.125 });
+    expect(() => validatePlaybackSessionCreate({ partId, startSeconds: -1 })).toThrow();
+    expect(() => validatePlaybackSessionCreate({ partId, startSeconds: Infinity })).toThrow();
+    expect(() => validatePlaybackSessionCreate({ partId, endSeconds: 60 })).toThrow('INVALID_PLAYBACK_REQUEST');
     expect(validatePlaybackSessionCreate({
       partId,
       purpose: 'segment-preview',

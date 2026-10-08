@@ -35,7 +35,6 @@ const stageSlot = ref<HTMLElement | null>(null);
 const selectedPartId = ref('');
 const currentSeconds = ref(0);
 const durationSeconds = ref(0);
-const sequenceIndex = ref(-1);
 const activeSegment = ref<FilmSegmentDto | null>(null);
 const mediaActive = ref(true);
 const playbackSourceMode = ref<PlaybackSourceMode>('direct');
@@ -74,7 +73,6 @@ const playbackModeLabel = computed(() => {
   return compatibilityReady.value ? '兼容版本' : '正在准备兼容版本…';
 });
 const selectedPartSegments = computed(() => props.segments.filter((segment) => segment.filmFileId === selectedPartId.value));
-const previewSegments = computed(() => props.segments.filter((segment) => segment.includeInPreview));
 const supportedSubtitleTracks = computed(() => subtitleTracks.value.filter((track) => track.supported));
 
 watch(() => props.film.id, () => {
@@ -86,7 +84,6 @@ watch(() => props.film.id, () => {
   selectedPartId.value = availableParts.value[0]?.id ?? '';
   currentSeconds.value = 0;
   durationSeconds.value = 0;
-  sequenceIndex.value = -1;
   activeSegment.value = null;
   intrinsicSize.value = { width: 0, height: 0 };
   stageSize.value = { width: '100%', height: '100%' };
@@ -202,14 +199,7 @@ function onTimeUpdate(): void {
   if (!element) return;
   currentSeconds.value = element.currentTime;
   emitPosition();
-  const segment = activeSegment.value;
-  if (!segment || element.currentTime + 0.05 < segment.endSeconds) return;
-  if (sequenceIndex.value >= 0) {
-    void playSequenceItem(sequenceIndex.value + 1);
-  } else {
-    element.pause();
-    activeSegment.value = null;
-  }
+  if (activeSegment.value && element.currentTime >= activeSegment.value.endSeconds) activeSegment.value = null;
 }
 
 function emitPosition(): void {
@@ -229,15 +219,18 @@ function seekTimeline(event: MouseEvent): void {
   const target = event.currentTarget as HTMLElement;
   if (!element || !durationSeconds.value) return;
   const rect = target.getBoundingClientRect();
-  sequenceIndex.value = -1;
+  if (!rect.width) return;
+  playbackGeneration += 1;
   activeSegment.value = null;
-  element.currentTime = Math.max(0, Math.min(durationSeconds.value, ((event.clientX - rect.left) / rect.width) * durationSeconds.value));
+  element.currentTime = Math.max(0, Math.min(Math.max(0, durationSeconds.value - .25), ((event.clientX - rect.left) / rect.width) * durationSeconds.value));
+  currentSeconds.value = element.currentTime;
+  emitPosition();
+  void element.play().catch(() => undefined);
 }
 
 async function playOriginal(): Promise<void> {
   mediaActive.value = true;
   const generation = ++playbackGeneration;
-  sequenceIndex.value = -1;
   activeSegment.value = null;
   await nextTick();
   if (generation !== playbackGeneration) return;
@@ -246,24 +239,7 @@ async function playOriginal(): Promise<void> {
 
 async function playSegment(segment: FilmSegmentDto): Promise<void> {
   mediaActive.value = true;
-  sequenceIndex.value = -1;
   await seekAndPlay(segment);
-}
-
-async function playPreview(): Promise<void> {
-  if (!previewSegments.value.length) return;
-  await playSequenceItem(0);
-}
-
-async function playSequenceItem(index: number): Promise<void> {
-  if (index >= previewSegments.value.length) {
-    sequenceIndex.value = -1;
-    activeSegment.value = null;
-    video.value?.pause();
-    return;
-  }
-  sequenceIndex.value = index;
-  await seekAndPlay(previewSegments.value[index]!);
 }
 
 async function seekAndPlay(segment: FilmSegmentDto): Promise<void> {
@@ -286,7 +262,6 @@ async function seekAndPlay(segment: FilmSegmentDto): Promise<void> {
 
 function selectPart(partId: string): void {
   if (!availableParts.value.some((part) => part.id === partId)) return;
-  sequenceIndex.value = -1;
   activeSegment.value = null;
   mediaActive.value = true;
   selectedPartId.value = partId;
@@ -295,7 +270,6 @@ function selectPart(partId: string): void {
 function seekRelative(deltaSeconds: number): void {
   const element = video.value;
   if (!element) return;
-  sequenceIndex.value = -1;
   activeSegment.value = null;
   element.currentTime = Math.max(0, Math.min(durationSeconds.value || Number.POSITIVE_INFINITY, element.currentTime + deltaSeconds));
 }
@@ -361,7 +335,6 @@ async function saveVrMode(value: boolean): Promise<void> {
 
 function stopPlayback(): void {
   playbackGeneration += 1;
-  sequenceIndex.value = -1;
   activeSegment.value = null;
   video.value?.pause();
   syncPlaybackState();
@@ -518,7 +491,7 @@ function destroySphericalRenderer(): void {
   sphericalRenderer = null;
 }
 
-defineExpose({ playSegment, playPreview, playOriginal, selectPart, seekRelative, togglePlayback, stopPlayback, releasePlayback, getPlaybackSnapshot, getCurrentVrView });
+defineExpose({ playSegment, playOriginal, selectPart, seekRelative, togglePlayback, stopPlayback, releasePlayback, getPlaybackSnapshot, getCurrentVrView });
 onBeforeUnmount(() => {
   stageObserver?.disconnect();
   destroySphericalRenderer();
@@ -567,7 +540,6 @@ onBeforeUnmount(() => {
         </el-select>
         <el-button class="resonance-add-button" size="small" :disabled="!source" @click="emit('addToResonance')">添加进共鸣球</el-button>
         <el-button size="small" @click="playOriginal">继续播放原片</el-button>
-        <el-button type="primary" size="small" :disabled="!previewSegments.length" @click="playPreview">连续播放精彩片段</el-button>
       </div>
     </div>
 
@@ -623,18 +595,21 @@ onBeforeUnmount(() => {
 
     <div v-if="source" class="player-timeline-row">
       <span class="timeline-time">{{ formatTime(currentSeconds) }}</span>
-      <div class="segment-timeline" title="点击时间轴跳转" @click="seekTimeline">
-        <button
+      <div class="segment-timeline" aria-label="播放进度，点击时间轴跳转" @click="seekTimeline">
+        <el-tooltip
           v-for="segment in selectedPartSegments"
           :key="segment.id"
-          type="button"
-          class="timeline-segment"
-          :class="{ disabled: !segment.includeInPreview, active: activeSegment?.id === segment.id }"
-          :style="timelineStyle(segment)"
-          :title="`${segment.title || '未命名片段'} · ${formatTime(segment.startSeconds)} → ${formatTime(segment.endSeconds)}`"
-          :aria-label="segment.title || '未命名片段'"
-          @click.stop="playSegment(segment)"
-        />
+          :content="`${segment.title || '未命名片段'} · ${formatTime(segment.startSeconds)} → ${formatTime(segment.endSeconds)}`"
+          placement="top"
+          :show-after="100"
+        >
+          <span
+            class="timeline-segment"
+            :class="{ disabled: !segment.includeInPreview, active: activeSegment?.id === segment.id }"
+            :style="timelineStyle(segment)"
+            :aria-label="segment.title || '未命名片段'"
+          />
+        </el-tooltip>
         <i :style="{ left: `${durationSeconds ? (currentSeconds / durationSeconds) * 100 : 0}%` }" />
       </div>
       <span class="timeline-time">{{ formatTime(durationSeconds) }}</span>

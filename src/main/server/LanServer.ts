@@ -13,7 +13,7 @@ import type {
   SettingsDto,
   WebHealthDto,
 } from '../../shared/contracts';
-import { isRecord } from '../../shared/validation';
+import { isRecord, isUuid } from '../../shared/validation';
 import {
   validateCategoryCreate,
   validateCategoryRemove,
@@ -347,6 +347,7 @@ export class LanServer {
     }
     if (url.pathname === '/api/v1/playback/capabilities'
       || url.pathname === '/api/v1/playback/sessions'
+      || /^\/api\/v1\/playback\/parts\/[^/]+\/metadata$/.test(url.pathname)
       || /^\/api\/v1\/playback\/sessions\/[^/]+(?:\/progress)?$/.test(url.pathname)
       || /^\/media\/v1\/playback\/[^/]+\/[^/]+$/.test(url.pathname)) {
       await this.handlePlayback(request, response, url, authenticatedDevice);
@@ -541,6 +542,15 @@ export class LanServer {
         this.assertMutationRequest(request);
         const session = await playback.create(validatePlaybackSessionCreate(await readJsonObject(request)), ownerDeviceId);
         this.sendJson(response, 201, success(session));
+        return;
+      }
+
+      const metadataMatch = url.pathname.match(/^\/api\/v1\/playback\/parts\/([^/]+)\/metadata$/);
+      if (metadataMatch) {
+        if (method !== 'GET') return this.methodNotAllowed(response, 'GET');
+        const partId = decodeURIComponent(metadataMatch[1]);
+        if (!isUuid(partId)) throw new Error('INVALID_PLAYBACK_REQUEST');
+        this.sendJson(response, 200, success(await playback.partMetadata(partId)));
         return;
       }
 

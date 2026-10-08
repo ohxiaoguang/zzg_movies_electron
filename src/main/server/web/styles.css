@@ -361,3 +361,12 @@ dialog::backdrop { background: rgba(4,6,10,.78); backdrop-filter: blur(7px); }
   .segment-video-frame { aspect-ratio: 16 / 9; }
   .web-segment-list { grid-template-columns: 1fr; max-height: 260px; }
 }
+
+.web-segment-timeline { cursor: pointer; overflow: hidden; }
+.web-playback-head { position: absolute; z-index: 3; top: 0; bottom: 0; width: 2px; background: #fff; box-shadow: 0 0 5px #000; pointer-events: none; }
+.web-playback-time { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 10px; white-space: nowrap; }
+.web-segment-timeline-row { grid-template-columns: minmax(72px, auto) minmax(0, 1fr) auto; }
+@media (max-width: 640px) { .web-segment-timeline-row { grid-template-columns: 1fr; } }
+
+.web-segment-timeline-row { position: relative; }
+.web-timeline-tooltip { position: absolute; z-index: 10; bottom: calc(100% + 7px); left: 0; width: max-content; max-width: min(100%, 480px); padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; background: #11151d; color: var(--ink); box-shadow: 0 4px 16px rgba(0,0,0,.4); font-size: 11px; line-height: 1.5; white-space: pre-line; overflow-wrap: anywhere; pointer-events: none; }

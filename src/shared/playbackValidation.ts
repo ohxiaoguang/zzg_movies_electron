@@ -18,10 +18,10 @@ export function validatePlaybackSessionCreate(payload: unknown): WebPlaybackSess
   if (purpose === 'segment-preview' && (startSeconds === undefined || endSeconds === undefined || endSeconds <= startSeconds)) {
     throw new Error('INVALID_PLAYBACK_REQUEST');
   }
-  if (purpose === 'full' && (startSeconds !== undefined || endSeconds !== undefined)) throw new Error('INVALID_PLAYBACK_REQUEST');
+  if (purpose === 'full' && endSeconds !== undefined) throw new Error('INVALID_PLAYBACK_REQUEST');
   return {
     ...(hasFilm ? { filmId: filmId as string } : { partId: partId as string }),
-    ...(purpose === 'full' ? {} : { purpose, startSeconds, endSeconds }),
+    ...(purpose === 'full' ? (startSeconds === undefined ? {} : { startSeconds }) : { purpose, startSeconds, endSeconds }),
   };
 }
 

@@ -467,6 +467,15 @@ describe('localhost read-only web server', () => {
     const viewerA = pairDevice(context.auth, 'viewer', 'Playback viewer A');
     const viewerB = pairDevice(context.auth, 'viewer', 'Playback viewer B');
 
+    const metadataPartId = context.films.parts(context.filmId)[0]!.id;
+    const metadataUrl = `${baseUrl}/api/v1/playback/parts/${metadataPartId}/metadata`;
+    const beforeMetadata = context.films.playbackState(context.filmId, metadataPartId);
+    expect((await fetch(metadataUrl)).status).toBe(401);
+    expect(await api(metadataUrl, { headers: authHeaders(viewerA.token) })).toMatchObject({ ok: true, data: { partId: metadataPartId } });
+    expect(context.films.playbackState(context.filmId, metadataPartId)).toEqual(beforeMetadata);
+    expect((await fetch(`${baseUrl}/api/v1/playback/parts/bad/metadata`, { headers: authHeaders(viewerA.token) })).status).toBe(400);
+    expect((await fetch(metadataUrl, { method: 'POST', headers: authHeaders(viewerA.token) })).status).toBe(405);
+
     const csrfRejected = await fetch(`${baseUrl}/api/v1/playback/sessions`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${viewerA.token}`, 'Content-Type': 'application/json' },
