@@ -598,6 +598,9 @@ export interface PlaybackCacheInfoDto {
 }
 
 export interface SettingsDto {
+  slackingMode: boolean;
+  slackingScalePercent: number;
+  subtitleFontSizePx: number;
   cardSize: number;
   hoverDelayMs: number;
   hoverCloseDelayMs: number;

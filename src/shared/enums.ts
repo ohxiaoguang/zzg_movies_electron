@@ -14,6 +14,9 @@ export const DEFAULT_IGNORED_DIRECTORIES = [
 ];
 
 export const DEFAULT_SETTINGS = {
+  slackingMode: false,
+  slackingScalePercent: 40,
+  subtitleFontSizePx: 24,
   cardSize: 200,
   hoverDelayMs: 450,
   hoverCloseDelayMs: 180,

@@ -59,6 +59,44 @@ function createContext(root: string) {
 }
 
 describe('SQLite migrations and scanning', () => {
+  it('persists media scale and subtitle size, rejects invalid updates, and recovers corrupted settings', () => {
+    const context = createContext(fixtureRoot());
+    expect(context.settings.get()).toMatchObject({ slackingScalePercent: 40, subtitleFontSizePx: 24 });
+    for (const percent of [60, 40, 35, 30, 25, 20]) {
+      context.settings.update({ slackingScalePercent: percent, subtitleFontSizePx: 32 });
+      expect(new SettingsRepository(context.database.db).get())
+        .toMatchObject({ slackingScalePercent: percent, subtitleFontSizePx: 32 });
+    }
+    for (const percent of [0, 22, 45, 100, NaN]) {
+      expect(() => context.settings.update({ slackingScalePercent: percent })).toThrow('INVALID_SLACKING_SCALE');
+    }
+    for (const fontSize of [11, 49, 20.5, NaN]) {
+      expect(() => context.settings.update({ subtitleFontSizePx: fontSize })).toThrow('INVALID_SUBTITLE_FONT_SIZE');
+    }
+    expect(context.settings.get()).toMatchObject({ slackingScalePercent: 20, subtitleFontSizePx: 32 });
+    const update = context.database.db.prepare('UPDATE app_setting SET value_json = ? WHERE key = ?');
+    update.run('22', 'slackingScalePercent');
+    update.run('"32"', 'subtitleFontSizePx');
+    expect(context.settings.get()).toMatchObject({ slackingScalePercent: 40, subtitleFontSizePx: 24 });
+  });
+
+  it('persists slacking mode across repository reloads and rejects invalid values', () => {
+    const context = createContext(fixtureRoot());
+    expect(context.settings.get().slackingMode).toBe(false);
+    expect(context.settings.update({ slackingMode: true }).slackingMode).toBe(true);
+    const reloaded = new SettingsRepository(context.database.db);
+    expect(reloaded.get().slackingMode).toBe(true);
+    expect(reloaded.update({ cardSize: 210 }).slackingMode).toBe(true);
+    expect(() => reloaded.update({ slackingMode: 'true' } as unknown as Parameters<SettingsRepository['update']>[0]))
+      .toThrow('INVALID_SLACKING_MODE');
+    expect(reloaded.get().slackingMode).toBe(true);
+    context.database.db.prepare("UPDATE app_setting SET value_json = ? WHERE key = 'slackingMode'").run('"true"');
+    expect(reloaded.get().slackingMode).toBe(false);
+    reloaded.update({ slackingMode: true });
+    expect(reloaded.update({ slackingMode: false }).slackingMode).toBe(false);
+    expect(new SettingsRepository(context.database.db).get().slackingMode).toBe(false);
+  });
+
   it('creates migrated tables, scans NFO/assets, and supports paging', async () => {
     const root = fixtureRoot();
     const context = createContext(root);

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import type { DesktopSubtitleTrackDto, FilmDetailDto, FilmSegmentDto, VrViewDto } from '../../../shared/contracts';
 import { mediaUrl } from '../../api';
@@ -46,6 +46,14 @@ const vrRenderError = ref('');
 const isPlaying = ref(false);
 const isMuted = ref(false);
 const activeSubtitleText = ref('');
+const nativeVideoFullscreen = ref(false);
+
+function onFullscreenChange(): void {
+  nativeVideoFullscreen.value = document.fullscreenElement === video.value && video.value !== null;
+}
+
+// A native video fullscreen excludes sibling overlays; use native cues there only.
+watch(nativeVideoFullscreen, showSelectedTextTrack, { flush: 'post' });
 const partVrModes = ref(new Map<string, boolean>());
 const intrinsicSize = ref({ width: 0, height: 0 });
 const stageSize = ref<{ width: string; height: string }>({ width: '100%', height: '100%' });
@@ -432,7 +440,9 @@ function showSelectedTextTrack(): void {
   const tracks = video.value?.textTracks;
   if (!tracks) return;
   for (let index = 0; index < tracks.length; index += 1) {
-    tracks[index]!.mode = index === tracks.length - 1 ? 'showing' : 'disabled';
+    tracks[index]!.mode = index === tracks.length - 1
+      ? (nativeVideoFullscreen.value ? 'showing' : 'hidden')
+      : 'disabled';
     tracks[index]!.oncuechange = index === tracks.length - 1
       ? () => updateActiveSubtitleText(tracks[index]!)
       : null;
@@ -453,7 +463,7 @@ function disableTextTracks(): void {
 
 function updateActiveSubtitleText(track: TextTrack): void {
   activeSubtitleText.value = Array.from(track.activeCues ?? [])
-    .map((cue) => (cue as VTTCue).text || '')
+    .map((cue) => (cue as VTTCue).getCueAsHTML().textContent || '')
     .filter(Boolean)
     .join('\n');
 }
@@ -492,7 +502,9 @@ function destroySphericalRenderer(): void {
 }
 
 defineExpose({ playSegment, playOriginal, selectPart, seekRelative, togglePlayback, stopPlayback, releasePlayback, getPlaybackSnapshot, getCurrentVrView });
+onMounted(() => document.addEventListener('fullscreenchange', onFullscreenChange));
 onBeforeUnmount(() => {
+  document.removeEventListener('fullscreenchange', onFullscreenChange);
   stageObserver?.disconnect();
   destroySphericalRenderer();
   releasePlayback();
@@ -582,7 +594,7 @@ onBeforeUnmount(() => {
           <button type="button" @click="resetVrView">视角复位</button>
           <button type="button" @click="toggleFullscreen">全屏</button>
         </div>
-        <p v-if="vrEnabled && activeSubtitleText" class="vr-subtitle-overlay">{{ activeSubtitleText }}</p>
+        <p v-if="activeSubtitleText && !nativeVideoFullscreen" class="player-subtitle-overlay"><span>{{ activeSubtitleText }}</span></p>
         <div v-if="vrEnabled && vrRenderError" class="vr-render-error">{{ vrRenderError }}</div>
         <div v-if="playbackError" class="playback-error">{{ playbackError }}</div>
         <div v-if="activeSegment" class="active-segment-label">
@@ -635,14 +647,15 @@ onBeforeUnmount(() => {
 .player-stage { position: relative; display: grid; max-width: 100%; max-height: 100%; aspect-ratio: 16 / 9; place-items: center; overflow: hidden; border-radius: 9px; background: #050609; box-shadow: 0 16px 42px rgba(0, 0, 0, .28); }
 .detail-player-video { display: block; min-width: 0; min-height: 0; max-width: 100%; max-height: 100%; flex: 0 0 auto; object-fit: contain !important; object-position: 50% 50%; background: #050609; }
 .detail-player-video.vr-video-source { opacity: 0; pointer-events: none; }
-.detail-player-video::cue { color: #fff; background: rgba(0, 0, 0, .72); font-size: 55%; line-height: 1.25; }
+.detail-player-video::cue { color: #fff; background: rgba(0, 0, 0, .72); font-size: var(--subtitle-font-size, 24px); line-height: 1.25; }
 .vr-video-canvas { position: absolute; z-index: 1; inset: 0; display: block; width: 100%; height: 100%; cursor: grab; background: #000; }
 .vr-video-canvas.dragging { cursor: grabbing; }
 .vr-player-hint { position: absolute; z-index: 4; top: 10px; right: 10px; padding: 5px 8px; border-radius: 6px; color: rgba(255,255,255,.72); background: rgba(0,0,0,.48); font-size: 10px; pointer-events: none; }
 .vr-player-controls { position: absolute; z-index: 4; right: 10px; bottom: 10px; left: 10px; display: flex; justify-content: center; gap: 6px; pointer-events: none; }
 .vr-player-controls button { padding: 5px 9px; border: 1px solid rgba(255,255,255,.28); border-radius: 6px; color: #fff; background: rgba(0,0,0,.62); font: inherit; font-size: 10px; cursor: pointer; pointer-events: auto; }
 .vr-player-controls button:hover, .vr-player-controls button:focus-visible { border-color: var(--accent); color: var(--accent); outline: none; }
-.vr-subtitle-overlay { position: absolute; z-index: 3; right: 12%; bottom: 48px; left: 12%; margin: 0; color: #fff; font-size: 15px; line-height: 1.35; text-align: center; text-shadow: 0 1px 3px #000, 0 1px 8px #000; white-space: pre-line; pointer-events: none; }
+.player-subtitle-overlay { position: absolute; z-index: 3; right: 5%; bottom: 48px; left: 5%; margin: 0; color: #fff; font-size: var(--subtitle-font-size, 24px); line-height: 1.35; text-align: center; text-shadow: 0 1px 3px #000, 0 1px 8px #000; white-space: pre-line; overflow-wrap: anywhere; pointer-events: none; }
+.player-subtitle-overlay span { padding: 2px 6px; border-radius: 4px; background: rgba(0,0,0,.72); box-decoration-break: clone; }
 .vr-render-error { position: absolute; z-index: 5; inset: 0; display: grid; padding: 20px; place-items: center; color: #ffb4b4; background: rgba(0,0,0,.82); font-size: 12px; text-align: center; }
 .playback-error { position: absolute; z-index: 6; inset: 0; display: grid; padding: 20px; place-items: center; color: #ffb4b4; background: rgba(0,0,0,.86); font-size: 12px; text-align: center; }
 .active-segment-label { position: absolute; z-index: 2; top: 12px; left: 50%; display: flex; max-width: calc(100% - 32px); padding: 6px 11px; border-radius: 7px; color: rgba(255,255,255,.94); background: rgba(0,0,0,.48); font-size: 11px; transform: translateX(-50%); backdrop-filter: blur(4px); gap: 9px; pointer-events: none; }

@@ -19,6 +19,9 @@ const library = useLibraryStore();
 const resonance = useResonanceStore();
 const info = ref<AppInfoDto | null>(null);
 const form = reactive<SettingsDto>({
+  slackingMode: false,
+  slackingScalePercent: 40,
+  subtitleFontSizePx: 24,
   cardSize: 220,
   hoverDelayMs: 450,
   hoverCloseDelayMs: 180,
@@ -90,6 +93,9 @@ async function save(): Promise<void> {
   saving.value = true;
   try {
     const input = {
+      slackingMode: form.slackingMode,
+      slackingScalePercent: Number(form.slackingScalePercent),
+      subtitleFontSizePx: Number(form.subtitleFontSizePx),
       cardSize: Number(form.cardSize),
       hoverDelayMs: Number(form.hoverDelayMs),
       hoverCloseDelayMs: Number(form.hoverCloseDelayMs),
@@ -400,7 +406,7 @@ function formatDate(value: string | null | undefined): string {
 <template>
   <div class="page-wrap settings-page"><div class="page-heading"><div><div class="eyebrow">LOCAL CONFIGURATION</div><h1 class="page-title">设置</h1><p class="page-caption">调整启动、托盘、网页服务和本地预览行为。</p></div><el-button type="primary" :loading="saving" @click="save">保存设置</el-button></div>
     <div class="settings-grid"><section class="settings-card"><div class="settings-title"><Setting /><span>应用数据</span></div><div class="data-row"><span>数据库位置</span><code>{{ info?.databasePath || '读取中…' }}</code></div><div class="data-row"><span>日志目录</span><code>{{ info?.logsDirectory || '读取中…' }}</code></div><div class="settings-actions\"><el-button size="small" @click="openFolder('data')"><FolderOpened />打开数据目录</el-button><el-button size="small" @click="openFolder('logs')">打开日志目录</el-button></div></section>
-      <section class="settings-card"><div class="settings-title"><VideoCamera /><span>卡片与播放</span></div><div class="setting-row"><label>悬浮延迟</label><el-input-number v-model="form.hoverDelayMs" :min="100" :max="3000" :step="50" /><span>ms</span></div><div class="setting-row"><label>预览弹窗消失延迟</label><el-input-number v-model="form.hoverCloseDelayMs" :min="0" :max="5000" :step="50" /><span>ms</span><span class="muted">桌面与网页</span></div><div class="setting-row"><label>默认卡片宽度</label><el-input-number v-model="form.cardSize" :min="140" :max="320" :step="10" /><span>px</span></div><div class="setting-row"><label>图片轮播间隔</label><el-input-number v-model="form.slideshowIntervalMs" :min="500" :max="10000" :step="100" /><span>ms</span></div><div class="setting-row"><label>快进/快退步进</label><el-input-number v-model="form.detailPlayerSeekStepSeconds" :min="1" :max="60" :step="1" /><span>秒</span><span class="muted">桌面与网页播放器</span></div><div class="setting-row"><label>Shift 微调步进</label><el-input-number v-model="form.detailPlayerFineSeekStepSeconds" :min="0.01" :max="5" :step="0.05" :precision="2" /><span>秒</span><span class="muted">桌面与网页播放器</span></div><div class="setting-row"><label>每页数量</label><el-input-number v-model="form.pageSize" :min="12" :max="200" :step="12" /></div></section>
+      <section class="settings-card"><div class="settings-title"><VideoCamera /><span>卡片与播放</span></div><div class="setting-row"><label>摸鱼模式</label><el-switch v-model="form.slackingMode" aria-label="摸鱼模式" /><span class="muted">视频靠右下，图片居中，外框保持不变；保存后生效</span></div><div class="setting-row"><label>摸鱼画面比例</label><el-select v-model="form.slackingScalePercent" aria-label="摸鱼画面比例" style="width: 130px"><el-option v-for="percent in [60, 40, 35, 30, 25, 20]" :key="percent" :label="`${percent}%`" :value="percent" /></el-select><span class="muted">视频和封面的宽高比例</span></div><div class="setting-row"><label>字幕字号</label><el-input-number v-model="form.subtitleFontSizePx" aria-label="字幕字号" :min="12" :max="48" :step="2" /><span>px</span></div><p class="muted subtitle-settings-note">字幕保留在播放器大框底部，不随摸鱼画面缩小。</p><div class="setting-row"><label>悬浮延迟</label><el-input-number v-model="form.hoverDelayMs" :min="100" :max="3000" :step="50" /><span>ms</span></div><div class="setting-row"><label>预览弹窗消失延迟</label><el-input-number v-model="form.hoverCloseDelayMs" :min="0" :max="5000" :step="50" /><span>ms</span><span class="muted">桌面与网页</span></div><div class="setting-row"><label>默认卡片宽度</label><el-input-number v-model="form.cardSize" :min="140" :max="320" :step="10" /><span>px</span></div><div class="setting-row"><label>图片轮播间隔</label><el-input-number v-model="form.slideshowIntervalMs" :min="500" :max="10000" :step="100" /><span>ms</span></div><div class="setting-row"><label>快进/快退步进</label><el-input-number v-model="form.detailPlayerSeekStepSeconds" :min="1" :max="60" :step="1" /><span>秒</span><span class="muted">桌面与网页播放器</span></div><div class="setting-row"><label>Shift 微调步进</label><el-input-number v-model="form.detailPlayerFineSeekStepSeconds" :min="0.01" :max="5" :step="0.05" :precision="2" /><span>秒</span><span class="muted">桌面与网页播放器</span></div><div class="setting-row"><label>每页数量</label><el-input-number v-model="form.pageSize" :min="12" :max="200" :step="12" /></div></section>
       <section class="settings-card wide startup-settings-card">
         <div class="settings-title"><span>启动与系统托盘</span><span class="muted">Windows 正式安装版</span></div>
         <div class="startup-options">

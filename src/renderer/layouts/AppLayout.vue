@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { Film, FolderOpened, CollectionTag, Setting, VideoCamera, Star, Clock, CircleCheck, Files, User } from '@element-plus/icons-vue';
 import { useScanStore } from '../stores/scan';
+import { useLibraryStore } from '../stores/library';
 import ScanProgressDialog from '../components/scan/ScanProgressDialog.vue';
 import ResonanceBall from '../components/resonance/ResonanceBall.vue';
 import { closeAllHoverPopups } from '../composables/hoverPopupManager';
@@ -11,6 +12,14 @@ import type { CloudBackupActivityDto } from '../../shared/contracts';
 const router = useRouter();
 const route = useRoute();
 const scan = useScanStore();
+const library = useLibraryStore();
+// The document class also covers teleported drawers and previews.
+watch(() => [library.settings.slackingMode, library.settings.slackingScalePercent, library.settings.subtitleFontSizePx] as const, ([enabled, scale, fontSize]) => {
+  document.documentElement.classList.toggle('slacking-mode', enabled);
+  document.documentElement.style.setProperty('--slacking-scale', String(scale / 100));
+  document.documentElement.style.setProperty('--subtitle-font-size', `${fontSize}px`);
+}, { immediate: true, flush: 'sync' });
+
 const counts = ref({ all: 0, unorganized: 0, organized: 0, favorite: 0, allData: 0 });
 const appVersion = ref('');
 const startupBackupActivity = ref<CloudBackupActivityDto | null>(null);
@@ -36,6 +45,7 @@ async function loadAppVersion(): Promise<void> {
 }
 function handleLibraryChanged(): void { void loadCounts(); }
 onMounted(() => {
+  void library.loadSettings();
   scan.listen();
   window.addEventListener('film-library:changed', handleLibraryChanged);
   void loadCounts();

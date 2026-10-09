@@ -14,6 +14,9 @@ export class SettingsRepository {
 
   public get(): SettingsDto {
     const settings = { ...DEFAULT_SETTINGS } as {
+      slackingMode: boolean;
+      slackingScalePercent: number;
+      subtitleFontSizePx: number;
       cardSize: number;
       hoverDelayMs: number;
       hoverCloseDelayMs: number;
@@ -47,6 +50,9 @@ export class SettingsRepository {
       }
     }
     return {
+      slackingMode: settings.slackingMode === true,
+      slackingScalePercent: [20, 25, 30, 35, 40, 60].includes(settings.slackingScalePercent) ? settings.slackingScalePercent : DEFAULT_SETTINGS.slackingScalePercent,
+      subtitleFontSizePx: clampInteger(settings.subtitleFontSizePx, 12, 48, DEFAULT_SETTINGS.subtitleFontSizePx),
       cardSize: clamp(settings.cardSize, 140, 320, DEFAULT_SETTINGS.cardSize),
       hoverDelayMs: clamp(settings.hoverDelayMs, 100, 3000, DEFAULT_SETTINGS.hoverDelayMs),
       hoverCloseDelayMs: clampInteger(settings.hoverCloseDelayMs, 0, 5000, DEFAULT_SETTINGS.hoverCloseDelayMs),
@@ -91,6 +97,9 @@ export class SettingsRepository {
 
   public update(input: SettingsUpdateInput): SettingsDto {
     const current = this.get();
+    if (input.slackingScalePercent !== undefined && ![20, 25, 30, 35, 40, 60].includes(input.slackingScalePercent)) throw new Error('INVALID_SLACKING_SCALE');
+    if (input.subtitleFontSizePx !== undefined && (!Number.isInteger(input.subtitleFontSizePx) || input.subtitleFontSizePx < 12 || input.subtitleFontSizePx > 48)) throw new Error('INVALID_SUBTITLE_FONT_SIZE');
+    if (input.slackingMode !== undefined && typeof input.slackingMode !== 'boolean') throw new Error('INVALID_SLACKING_MODE');
     if (input.cardSize !== undefined && (!Number.isFinite(input.cardSize) || input.cardSize < 140 || input.cardSize > 320)) throw new Error('INVALID_CARD_SIZE');
     if (
       input.hoverCloseDelayMs !== undefined
@@ -134,6 +143,9 @@ export class SettingsRepository {
     const bindMode = input.lanServerBindMode ?? current.lanServerBindMode;
     const requireAuthentication = bindMode === 'lan' ? true : (input.lanRequireAuthentication ?? current.lanRequireAuthentication);
     const next: SettingsDto = {
+      slackingMode: input.slackingMode ?? current.slackingMode,
+      slackingScalePercent: input.slackingScalePercent ?? current.slackingScalePercent,
+      subtitleFontSizePx: input.subtitleFontSizePx ?? current.subtitleFontSizePx,
       cardSize: input.cardSize ?? current.cardSize,
       hoverDelayMs: input.hoverDelayMs ?? current.hoverDelayMs,
       hoverCloseDelayMs: input.hoverCloseDelayMs ?? current.hoverCloseDelayMs,

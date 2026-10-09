@@ -294,7 +294,7 @@ describe('renderer regressions', () => {
     expect(detailPlayer).toContain("'无可用字幕'");
     expect(detailPlayer).toContain('<track');
     expect(detailPlayer).toContain('.detail-player-video::cue');
-    expect(detailPlayer).toContain('font-size: 55%');
+    expect(detailPlayer).toContain('font-size: var(--subtitle-font-size, 24px)');
     expect(preload).toContain('IPC_CHANNELS.playbackSubtitleTracks');
     expect(preload).toContain('IPC_CHANNELS.playbackSubtitleContent');
     expect(preload).toContain('IPC_CHANNELS.filmsPartsUpdateVr');

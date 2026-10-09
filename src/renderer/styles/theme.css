@@ -71,3 +71,22 @@ button, input, textarea { font: inherit; }
   .library-toolbar .el-input { width: min(100%, 260px); }
   .film-grid { grid-template-columns: repeat(auto-fill, minmax(min(var(--film-card-width), 100%), var(--film-card-width))); }
 }
+
+/* Keep media layout boxes intact; only their rendered content becomes smaller. */
+.slacking-mode .player-stage { place-items: end !important; }
+.slacking-mode .film-poster > .poster-image,
+.slacking-mode .header-poster > img,
+.slacking-mode .table-thumb > img,
+.slacking-mode .popup-media > img {
+  transform: scale(var(--slacking-scale, .4));
+  transform-origin: center;
+}
+.slacking-mode .player-stage > .detail-player-video,
+.slacking-mode .player-stage > .vr-video-canvas,
+.slacking-mode .popup-media > video,
+.slacking-mode .popup-media > .vr-video-canvas,
+.slacking-mode .resonance-tile > video,
+.slacking-mode .resonance-tile > .resonance-vr-canvas {
+  transform: scale(var(--slacking-scale, .4));
+  transform-origin: bottom right;
+}

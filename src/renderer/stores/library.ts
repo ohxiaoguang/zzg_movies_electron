@@ -10,6 +10,9 @@ export const useLibraryStore = defineStore('library', () => {
   const loading = ref(false);
   const error = ref<string | null>(null);
   const settings = ref<SettingsDto>({
+    slackingMode: DEFAULT_SETTINGS.slackingMode,
+    slackingScalePercent: DEFAULT_SETTINGS.slackingScalePercent,
+    subtitleFontSizePx: DEFAULT_SETTINGS.subtitleFontSizePx,
     cardSize: DEFAULT_SETTINGS.cardSize,
     hoverDelayMs: DEFAULT_SETTINGS.hoverDelayMs,
     hoverCloseDelayMs: DEFAULT_SETTINGS.hoverCloseDelayMs,
