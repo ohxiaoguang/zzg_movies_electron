@@ -53,6 +53,7 @@ export const useResonanceStore = defineStore('resonance', () => {
     },
   });
   const expanded = ref(false);
+  const playerFullscreen = ref(false);
   const count = computed(() => videos.value.length);
 
   function add(input: ResonanceVideoInput): 'added' | 'updated' {
@@ -214,7 +215,7 @@ export const useResonanceStore = defineStore('resonance', () => {
 
   return {
     ready, restoring, initialize, reload,
-    videos, expanded, count, add, updateProgress, updateHighlights, updateAspectRatio, updateVrMode, updateVrView, remove, clear,
+    videos, expanded, playerFullscreen, count, add, updateProgress, updateHighlights, updateAspectRatio, updateVrMode, updateVrView, remove, clear,
     scenes, activeSceneId, activeScene, storageError, createScene, saveSceneAs, switchScene, renameScene, duplicateScene, deleteScene, flush,
   };
 });

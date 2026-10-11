@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus';
 import type { DesktopSubtitleTrackDto, FilmDetailDto, FilmSegmentDto, VrViewDto } from '../../../shared/contracts';
 import { mediaUrl } from '../../api';
+import { useResonanceStore } from '../../stores/resonance';
 import { SphericalVideoRenderer } from '../../media/SphericalVideoRenderer';
 
 const props = defineProps<{
@@ -13,6 +14,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   positionChange: [currentSeconds: number, durationSeconds: number, partId: string];
   addToResonance: [];
+  fullscreenChange: [value: boolean];
 }>();
 
 interface FilmPlaybackSnapshot {
@@ -47,6 +49,26 @@ const isPlaying = ref(false);
 const isMuted = ref(false);
 const activeSubtitleText = ref('');
 const nativeVideoFullscreen = ref(false);
+const appFullscreen = ref(false);
+const resonance = useResonanceStore();
+const fullscreenButton = ref<HTMLButtonElement | null>(null);
+
+function setAppFullscreen(value: boolean): void {
+  appFullscreen.value = value;
+  resonance.playerFullscreen = value;
+  if (value) resonance.expanded = false;
+  emit('fullscreenChange', value);
+  void nextTick(() => {
+    fitPlayerToSlot();
+    fullscreenButton.value?.focus({ preventScroll: true });
+  });
+}
+
+function exitAppFullscreen(): boolean {
+  if (!appFullscreen.value) return false;
+  setAppFullscreen(false);
+  return true;
+}
 
 function onFullscreenChange(): void {
   nativeVideoFullscreen.value = document.fullscreenElement === video.value && video.value !== null;
@@ -187,8 +209,12 @@ function fitPlayerToSlot(): void {
   const availableWidth = container.clientWidth;
   const availableHeight = container.clientHeight;
   if (!availableWidth || !availableHeight) return;
-  const stageWidth = Math.max(1, Math.floor(Math.min(availableWidth, availableHeight * (16 / 9))));
-  const stageHeight = Math.max(1, Math.floor(stageWidth * (9 / 16)));
+  const { width: intrinsicWidth, height: intrinsicHeight } = intrinsicSize.value;
+  const aspectRatio = appFullscreen.value && !vrEnabled.value && intrinsicWidth && intrinsicHeight
+    ? intrinsicWidth / intrinsicHeight
+    : 16 / 9;
+  const stageWidth = Math.max(1, Math.floor(Math.min(availableWidth, availableHeight * aspectRatio)));
+  const stageHeight = Math.max(1, Math.floor(stageWidth / aspectRatio));
   stageSize.value = { width: `${stageWidth}px`, height: `${stageHeight}px` };
   const { width: videoWidth, height: videoHeight } = intrinsicSize.value;
   if (!videoWidth || !videoHeight) {
@@ -315,9 +341,8 @@ function getCurrentVrView(): VrViewDto | null {
   return vrEnabled.value ? sphericalRenderer?.getView() ?? null : null;
 }
 
-async function toggleFullscreen(): Promise<void> {
-  if (document.fullscreenElement) await document.exitFullscreen();
-  else await stage.value?.requestFullscreen();
+function toggleFullscreen(): void {
+  setAppFullscreen(!appFullscreen.value);
 }
 
 async function saveVrMode(value: boolean): Promise<void> {
@@ -349,6 +374,7 @@ function stopPlayback(): void {
 }
 
 function releasePlayback(): void {
+  exitAppFullscreen();
   stopPlayback();
   if (!mediaActive.value) return;
   const partId = selectedPartId.value;
@@ -501,7 +527,7 @@ function destroySphericalRenderer(): void {
   sphericalRenderer = null;
 }
 
-defineExpose({ playSegment, playOriginal, selectPart, seekRelative, togglePlayback, stopPlayback, releasePlayback, getPlaybackSnapshot, getCurrentVrView });
+defineExpose({ playSegment, playOriginal, selectPart, seekRelative, togglePlayback, stopPlayback, releasePlayback, getPlaybackSnapshot, getCurrentVrView, exitAppFullscreen });
 onMounted(() => document.addEventListener('fullscreenchange', onFullscreenChange));
 onBeforeUnmount(() => {
   document.removeEventListener('fullscreenchange', onFullscreenChange);
@@ -512,7 +538,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="detail-player">
+  <section class="detail-player" :class="{ 'is-app-fullscreen': appFullscreen }">
     <div class="player-toolbar">
       <div class="player-context">
         <strong>原片播放器</strong>
@@ -520,6 +546,12 @@ onBeforeUnmount(() => {
         <small v-if="source" class="playback-mode-badge" :class="{ fallback: playbackSourceMode === 'compatibility' }">{{ playbackModeLabel }}</small>
       </div>
       <div class="player-actions">
+        <button v-if="appFullscreen" type="button" class="app-playback-button" @click="togglePlayback">{{ isPlaying ? '暂停' : '播放' }}</button>
+        <button ref="fullscreenButton" type="button" class="app-fullscreen-button" :aria-pressed="appFullscreen" :disabled="!source" @click="toggleFullscreen">{{ appFullscreen ? '退出全屏' : '应用内全屏' }}</button>
+        <el-dropdown v-if="appFullscreen && vrEnabled" class="fullscreen-vr-menu" trigger="click" @command="($event: string) => $event === 'mute' ? toggleMute() : resetVrView()">
+          <button type="button" class="app-playback-button" aria-label="VR 播放选项">⋯</button>
+          <template #dropdown><el-dropdown-menu><el-dropdown-item command="mute">{{ isMuted ? '取消静音' : '静音' }}</el-dropdown-item><el-dropdown-item command="reset">视角复位</el-dropdown-item></el-dropdown-menu></template>
+        </el-dropdown>
         <span class="vr-mode-label">是否 VR</span>
         <el-select v-model="vrEnabled" class="vr-mode-select" aria-label="是否 VR 视频" :loading="vrSaving" :disabled="vrSaving || !selectedPart" @change="saveVrMode">
           <el-option label="否" :value="false" />
@@ -567,6 +599,7 @@ onBeforeUnmount(() => {
           :data-video-width="intrinsicSize.width"
           :data-video-height="intrinsicSize.height"
           :controls="!vrEnabled"
+          controlslist="nofullscreen"
           playsinline
           preload="metadata"
           @loadedmetadata="onLoadedMetadata"
@@ -592,7 +625,7 @@ onBeforeUnmount(() => {
           <button type="button" @click="togglePlayback">{{ isPlaying ? '暂停' : '播放' }}</button>
           <button type="button" @click="toggleMute">{{ isMuted ? '取消静音' : '静音' }}</button>
           <button type="button" @click="resetVrView">视角复位</button>
-          <button type="button" @click="toggleFullscreen">全屏</button>
+          <button type="button" @click="toggleFullscreen">{{ appFullscreen ? '退出全屏' : '应用内全屏' }}</button>
         </div>
         <p v-if="activeSubtitleText && !nativeVideoFullscreen" class="player-subtitle-overlay"><span>{{ activeSubtitleText }}</span></p>
         <div v-if="vrEnabled && vrRenderError" class="vr-render-error">{{ vrRenderError }}</div>
@@ -679,5 +712,33 @@ onBeforeUnmount(() => {
   .player-stage { height: auto; aspect-ratio: 16 / 9; }
   .player-timeline-row { grid-template-columns: minmax(0, 1fr); gap: 5px; }
   .timeline-time { display: none; }
+}
+.app-fullscreen-button, .app-playback-button { min-height: 32px; padding: 5px 12px; border: 1px solid var(--accent); border-radius: 6px; background: rgba(152,227,194,.1); color: var(--accent); font: inherit; font-size: 12px; cursor: pointer; touch-action: manipulation; }
+.app-fullscreen-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.detail-player.is-app-fullscreen { position: fixed; z-index: 20; inset: 0; box-sizing: border-box; width: 100%; height: 100vh; height: 100dvh; padding: env(safe-area-inset-top) max(6px, env(safe-area-inset-right)) max(4px, env(safe-area-inset-bottom)) max(6px, env(safe-area-inset-left)); grid-template-rows: minmax(0, 1fr) 32px; grid-template-columns: auto minmax(48px, 1fr) auto minmax(70px, 130px) auto auto auto auto; align-items: center; gap: 4px 6px; overflow: hidden; background: #050609; }
+.is-app-fullscreen .player-stage-slot { grid-column: 1 / -1; grid-row: 1; }
+.is-app-fullscreen .player-toolbar, .is-app-fullscreen .player-actions, .is-app-fullscreen .player-timeline-row { display: contents; }
+.is-app-fullscreen .player-context, .is-app-fullscreen .player-actions > :not(.app-fullscreen-button):not(.app-playback-button):not(.subtitle-select):not(.part-select):not(.fullscreen-vr-menu) { display: none; }
+.is-app-fullscreen .player-stage { border-radius: 0; }
+.is-app-fullscreen .timeline-time { display: inline; grid-row: 2; grid-column: 1; min-width: 0; font-size: 10px; }
+.is-app-fullscreen .timeline-time:last-child { grid-column: 3; }
+.is-app-fullscreen .segment-timeline { grid-row: 2; grid-column: 2; height: 20px; }
+.is-app-fullscreen .timeline-segment { top: 4px; }
+.is-app-fullscreen .subtitle-select { grid-row: 2; grid-column: 4; width: 100%; }
+.is-app-fullscreen .app-playback-button { grid-row: 2; grid-column: 5; }
+.is-app-fullscreen .part-select { grid-row: 2; grid-column: 6; width: 100px; }
+.is-app-fullscreen .fullscreen-vr-menu { grid-row: 2; grid-column: 7; }
+.is-app-fullscreen .app-fullscreen-button { grid-row: 2; grid-column: 8; }
+.is-app-fullscreen .app-fullscreen-button, .is-app-fullscreen .app-playback-button { min-height: 28px; height: 28px; padding: 3px 8px; font-size: 11px; white-space: nowrap; }
+.is-app-fullscreen .subtitle-select :deep(.el-select__wrapper), .is-app-fullscreen .part-select :deep(.el-select__wrapper) { min-height: 28px; padding-block: 0; }
+.is-app-fullscreen .vr-player-controls { display: none; }
+@media (max-width: 600px) {
+  .detail-player.is-app-fullscreen { grid-template-columns: 0 minmax(48px, 1fr) 0 74px auto auto auto auto; column-gap: 3px; }
+  .is-app-fullscreen .timeline-time { visibility: hidden; overflow: hidden; }
+  .is-app-fullscreen .part-select { width: 64px; }
+}
+@media (pointer: coarse) {
+  .detail-player.is-app-fullscreen { grid-template-rows: minmax(0, 1fr) 36px; }
+  .is-app-fullscreen .app-fullscreen-button, .is-app-fullscreen .app-playback-button { min-height: 36px; height: 36px; }
 }
 </style>

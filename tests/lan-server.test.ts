@@ -274,7 +274,8 @@ describe('localhost read-only web server', () => {
     expect(script).toContain('createDetailMediaNavigation');
     expect(script).toContain("elements.closeDetail.addEventListener('click', closeFilmDetail)");
     expect(script).toContain("elements.filmDetail.addEventListener('close', stopDetailPlayback)");
-    expect(script).toContain("elements.filmDetail.addEventListener('cancel', stopDetailPlayback)");
+    expect(script).toContain("elements.filmDetail.addEventListener('cancel', (event) =>");
+    expect(script).toContain("if (state.detailPlayback?.exitAppFullscreen()) event.preventDefault()");
     expect(script).toContain('function closeFilmDetail()');
     expect(script).toContain('function stopDetailPlayback()');
     expect(script).toContain("elements.detailContent.querySelectorAll('video')");

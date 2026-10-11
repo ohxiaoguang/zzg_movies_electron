@@ -28,6 +28,23 @@ const resonancePath = path.resolve(process.cwd(), 'src/renderer/components/reson
 const appPath = path.resolve(process.cwd(), 'src/renderer/App.vue');
 
 describe('renderer regressions', () => {
+  it.each([[false, false, true], [true, false, false], [false, true, false]])('shows the docked launcher only outside fullscreen and the resonance overlay', async (playerFullscreen, expanded, visible) => {
+    const ball = fs.readFileSync(resonancePath, 'utf8');
+    const template = ball.slice(ball.indexOf('<template>'));
+    const launcher = template.slice(template.indexOf('<button'), template.indexOf('<Teleport'));
+    const { code } = compile(launcher, { mode: 'function' });
+    const render = new Function('Vue', code)(Vue);
+    const noop = () => {};
+    const context = {
+      openDock: noop,
+      resonance: { playerFullscreen, expanded, restoring: false, count: 2 },
+      dock: { side: Vue.ref('left'), dragging: Vue.ref(false), dockStyle: Vue.ref({ left: '0' }),
+        pointerDown: noop, pointerMove: noop, pointerUp: noop, pointerCancel: noop, keydown: noop, shouldOpen: () => true },
+    };
+    const html = await renderToString(Vue.createSSRApp({ render: () => render(context, []) }));
+    expect(html.includes('resonance-docked')).toBe(visible);
+  });
+
   it.each([
     ['video', false, true, false, false, false],
     ['video', true, true, true, false, false],
@@ -241,7 +258,7 @@ describe('renderer regressions', () => {
     expect(detailPlayer).toContain('aspect-ratio: 16 / 9');
     expect(detailPlayer).toContain('element?.videoWidth');
     expect(detailPlayer).toContain('element?.videoHeight');
-    expect(detailPlayer).toContain('Math.min(availableWidth, availableHeight * (16 / 9))');
+    expect(detailPlayer).toContain('Math.min(availableWidth, availableHeight * aspectRatio)');
     expect(detailPlayer).toContain('Math.min(stageWidth / videoWidth, stageHeight / videoHeight)');
     expect(detailPlayer).toContain('ref="stageSlot" class="player-stage-slot"');
     expect(detailPlayer).toContain(':style="stageSize"');
@@ -264,7 +281,7 @@ describe('renderer regressions', () => {
     expect(drawer).not.toContain('<el-tab-pane label="详细信息"');
     expect(segmentEditor).toContain('defineExpose({ markStart, markEnd })');
     expect(detailPlayer).toContain('playbackGeneration += 1');
-    expect(detailPlayer).toContain('defineExpose({ playSegment, playOriginal, selectPart, seekRelative, togglePlayback, stopPlayback, releasePlayback, getPlaybackSnapshot, getCurrentVrView })');
+    expect(detailPlayer).toContain('defineExpose({ playSegment, playOriginal, selectPart, seekRelative, togglePlayback, stopPlayback, releasePlayback, getPlaybackSnapshot, getCurrentVrView, exitAppFullscreen })');
     expect(segmentEditor).toContain('draft.vrView = props.captureVrView?.() ?? null');
     expect(segmentEditor).toContain('copyVrView(draft.vrView ?? props.captureVrView?.() ?? null)');
     expect(segmentEditor).toContain('yawDegrees: Number(view.yawDegrees)');

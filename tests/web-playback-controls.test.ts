@@ -19,6 +19,8 @@ class Node {
   attributes: Record<string, string> = {};
   classList = { toggle: vi.fn(), remove: vi.fn() };
   hidden = false;
+  isConnected = true;
+  focus = vi.fn();
   offsetWidth = 30;
   currentTime = 0;
   duration = Infinity;
@@ -40,13 +42,13 @@ class Node {
   }
 }
 
-function setup(options: { runtimeSeconds?: number | null; metadata?: () => Promise<{ durationSeconds: number | null }> } = {}) {
+function setup(options: { runtimeSeconds?: number | null; multipart?: boolean; metadata?: () => Promise<{ durationSeconds: number | null }> } = {}) {
   const state: any = { playback: null };
   const inputs: any[] = [];
   const video = new Node('video');
   const context: any = {
     state, Date, Number, Math, Event,
-    elements: { filmDetail: { open: true } },
+    elements: { filmDetail: Object.assign(new Node('dialog'), { open: true }) },
     document: { createElement: (tag: string) => tag === 'video' ? video : new Node(tag) },
     createElement: (tag: string, cls = '', text = '') => new Node(tag, cls, text),
     actionButton: (text: string, fn: () => any, cls = '') => {
@@ -67,11 +69,152 @@ function setup(options: { runtimeSeconds?: number | null; metadata?: () => Promi
   vm.runInContext(['handleDetailPlaybackKey', 'createUnifiedPlayback', 'playbackPosition', 'playbackDuration', 'canSeekPlaybackTo', 'seekVideoBy', 'formatPlaybackTime'].map(code).join('\n'), context);
   const film = { id: 'film', runtimeSeconds: options.runtimeSeconds === undefined ? 100 : options.runtimeSeconds, parts: [{ id: 'part', filename: 'film.mkv', partType: 'single' }],
     segments: [{ id: 'segment', filmFileId: 'part', title: '片段', startSeconds: 20, endSeconds: 40, includeInPreview: true }] };
+  if (options.multipart) film.parts.push({ id: 'part-two', filename: 'two.mkv', partType: 'cd' });
   const player = context.createUnifiedPlayback(film);
   return { context, state, inputs, video, player };
 }
 
 describe('web detail playback interactions', () => {
+  it('provides both seek directions in each upper corner only in app fullscreen', async () => {
+    const { player, video, inputs } = setup();
+    const frame = player.section.querySelectorAll('.segment-video-frame')[0];
+    const groups = ['left', 'right'].map(side => frame.querySelectorAll(`.fullscreen-seek-group-${side}`)[0]);
+    const backs = frame.querySelectorAll('.fullscreen-seek-backward');
+    const forwards = frame.querySelectorAll('.fullscreen-seek-forward');
+    expect(backs).toHaveLength(2);
+    expect(forwards).toHaveLength(2);
+    for (const group of groups) {
+      expect(frame.children).toContain(group);
+      expect(group.hidden).toBe(true);
+      expect(group.children.map((button: Node) => button.textContent)).toEqual(['<', '>', '< 微调', '微调 >']);
+    }
+    await player.section.querySelectorAll('.app-fullscreen-button')[0].fire('click');
+    await player.section.querySelectorAll('.web-segment-timeline')[0].fire('click', { clientX: 30 });
+    for (let index = 0; index < 2; index += 1) {
+      expect(groups[index].hidden).toBe(false);
+      expect(backs[index].attributes['aria-label']).toBe('后退 5 秒');
+      expect(forwards[index].attributes['aria-label']).toBe('前进 5 秒');
+      video.currentTime = 10;
+      await backs[index].fire('click');
+      expect(video.currentTime).toBe(5);
+      await forwards[index].fire('click');
+      expect(video.currentTime).toBe(10);
+    }
+    video.currentTime = 19;
+    await forwards[1].fire('click');
+    expect(inputs[1].startSeconds).toBe(54);
+    player.exitAppFullscreen();
+    for (const node of [...groups, ...backs, ...forwards]) expect(node.hidden).toBe(true);
+  });
+
+  it('provides fine seek buttons below both pairs using the configured Shift step', async () => {
+    const { context, player, video, inputs, state } = setup();
+    context.configuredFineSeekStepSeconds = () => .25;
+    const frame = player.section.querySelectorAll('.segment-video-frame')[0];
+    const backs = frame.querySelectorAll('.fullscreen-seek-fine-backward');
+    const forwards = frame.querySelectorAll('.fullscreen-seek-fine-forward');
+    expect(backs).toHaveLength(2);
+    expect(forwards).toHaveLength(2);
+    for (const button of [...backs, ...forwards]) expect(button.hidden).toBe(true);
+    await player.section.querySelectorAll('.app-fullscreen-button')[0].fire('click');
+    await player.section.querySelectorAll('.web-segment-timeline')[0].fire('click', { clientX: 30 });
+    for (let index = 0; index < 2; index += 1) {
+      expect(backs[index].hidden).toBe(false);
+      expect(forwards[index].hidden).toBe(false);
+      expect(backs[index].attributes['aria-label']).toBe('微调后退 0.25 秒');
+      expect(forwards[index].attributes['aria-label']).toBe('微调前进 0.25 秒');
+      video.currentTime = 10;
+      await backs[index].fire('click');
+      expect(video.currentTime).toBeCloseTo(9.75);
+      await forwards[index].fire('click');
+      expect(video.currentTime).toBeCloseTo(10);
+    }
+    video.currentTime = 0;
+    await backs[1].fire('click');
+    expect(inputs[1].startSeconds).toBeCloseTo(29.75);
+    state.playback.sourceOffsetSeconds = 0;
+    video.currentTime = .1;
+    await backs[0].fire('click');
+    expect(video.currentTime).toBe(0);
+    player.exitAppFullscreen();
+    for (const button of [...backs, ...forwards]) expect(button.hidden).toBe(true);
+  });
+
+  it('keeps the video, timeline and playback session alive when entering and exiting app fullscreen', async () => {
+    const { context, player, state, video, inputs } = setup();
+    const previousFocus = new Node('button');
+    context.document.activeElement = previousFocus;
+    context.elements.filmDetail.style.overflow = 'auto';
+    const button = player.section.querySelectorAll('.app-fullscreen-button')[0];
+    const track = player.section.querySelectorAll('.web-segment-timeline')[0];
+    await track.fire('click', { clientX: 30 });
+    const active = state.playback;
+    video.currentTime = 7;
+    await button.fire('click');
+    expect(button.textContent).toBe('退出全屏');
+    expect(button.attributes['aria-pressed']).toBe('true');
+    expect(button.focus).toHaveBeenCalledWith({ preventScroll: true });
+    expect(player.section.classList.toggle).toHaveBeenLastCalledWith('is-app-fullscreen', true);
+    expect(context.elements.filmDetail.style.overflow).toBe('hidden');
+    expect(player.exitAppFullscreen()).toBe(true);
+    expect(player.exitAppFullscreen()).toBe(false);
+    expect(button.textContent).toBe('应用内全屏');
+    expect(context.elements.filmDetail.style.overflow).toBe('auto');
+    expect(previousFocus.focus).toHaveBeenCalledWith({ preventScroll: true });
+    expect(state.playback).toBe(active);
+    expect(video.currentTime).toBe(7);
+    expect(video.pause).not.toHaveBeenCalled();
+    expect(inputs).toHaveLength(1);
+    expect(player.section.querySelectorAll('.web-segment-timeline')[0]).toBe(track);
+  });
+
+  it('starts playback from fullscreen and pauses without creating another session', async () => {
+    const { player, inputs, video } = setup();
+    await player.section.querySelectorAll('.app-fullscreen-button')[0].fire('click');
+    const play = player.section.querySelectorAll('.app-playback-button')[0];
+    await play.fire('click');
+    expect(inputs).toHaveLength(1);
+    await video.fire('play');
+    expect(play.textContent).toBe('暂停');
+    await play.fire('click');
+    await video.fire('pause');
+    expect(play.textContent).toBe('播放');
+    expect(video.pause).toHaveBeenCalledOnce();
+    expect(inputs).toHaveLength(1);
+  });
+
+  it('shows only the active file timeline in fullscreen and restores all timelines on exit', async () => {
+    const { player, inputs } = setup({ multipart: true });
+    const rows = player.section.querySelectorAll('.web-segment-timeline-row');
+    await player.section.querySelectorAll('.app-fullscreen-button')[0].fire('click');
+    expect(rows[0].classList.toggle).toHaveBeenLastCalledWith('fullscreen-inactive', false);
+    expect(rows[1].classList.toggle).toHaveBeenLastCalledWith('fullscreen-inactive', true);
+    const select = player.section.querySelectorAll('.fullscreen-part-select')[0];
+    Object.assign(select, { value: 'part-two' });
+    await select.fire('change');
+    expect(inputs[0].partId).toBe('part-two');
+    expect(rows[0].classList.toggle).toHaveBeenLastCalledWith('fullscreen-inactive', true);
+    expect(rows[1].classList.toggle).toHaveBeenLastCalledWith('fullscreen-inactive', false);
+    player.exitAppFullscreen();
+    for (const row of rows) expect(row.classList.toggle).toHaveBeenLastCalledWith('fullscreen-inactive', false);
+  });
+
+  it('consumes Escape only while app fullscreen is active, including when a select has focus', async () => {
+    const { context, state, player, video } = setup();
+    state.detailPlayback = player;
+    const button = player.section.querySelectorAll('.app-fullscreen-button')[0];
+    await button.fire('click');
+    const event = { type: 'keydown', key: 'Escape', target: { matches: () => true },
+      preventDefault: vi.fn(), stopImmediatePropagation: vi.fn() };
+    context.handleDetailPlaybackKey(event);
+    expect(button.textContent).toBe('应用内全屏');
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(event.stopImmediatePropagation).toHaveBeenCalledOnce();
+    context.handleDetailPlaybackKey(event);
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(video.pause).not.toHaveBeenCalled();
+  });
+
   it('captures Space on focused detail buttons and toggles playback once per press', async () => {
     const { context, state, player, inputs, video } = setup();
     state.detailPlayback = player;

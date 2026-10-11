@@ -202,7 +202,10 @@ function bindEvents() {
   window.addEventListener('keyup', handleDetailPlaybackKey, true);
   elements.closeDetail.addEventListener('click', closeFilmDetail);
   elements.filmDetail.addEventListener('close', stopDetailPlayback);
-  elements.filmDetail.addEventListener('cancel', stopDetailPlayback);
+  elements.filmDetail.addEventListener('cancel', (event) => {
+    if (state.detailPlayback?.exitAppFullscreen()) event.preventDefault();
+    else stopDetailPlayback();
+  });
   elements.filmDetail.addEventListener('click', (event) => {
     if (event.target === elements.filmDetail) closeFilmDetail();
   });
@@ -219,6 +222,11 @@ function bindEvents() {
 }
 
 function handleDetailPlaybackKey(event) {
+  if (elements.filmDetail.open && event.type === 'keydown' && event.key === 'Escape' && state.detailPlayback?.exitAppFullscreen()) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    return;
+  }
   if (!elements.filmDetail.open || (event.code !== 'Space' && event.key !== ' ')) return;
   const target = event.target;
   if (target?.isContentEditable || target?.matches?.('input, textarea, select')) return;
@@ -233,6 +241,7 @@ function closeFilmDetail() {
 }
 
 function stopDetailPlayback() {
+  state.detailPlayback?.exitAppFullscreen();
   releaseActivePlayback();
   for (const video of elements.detailContent.querySelectorAll('video')) {
     video.pause();
@@ -938,6 +947,7 @@ async function showDetail(id) {
 }
 
 function renderDetail(film) {
+  state.detailPlayback?.exitAppFullscreen();
   elements.detailContent.dataset.filmId = film.id;
   releaseActivePlayback();
   const mediaNavigation = createDetailMediaNavigation();
@@ -1365,6 +1375,7 @@ function createUnifiedPlayback(film) {
   const video = document.createElement('video');
   video.crossOrigin = 'anonymous';
   video.controls = true;
+  video.setAttribute('controlslist', 'nofullscreen');
   video.playsInline = true;
   video.preload = 'metadata';
   video.addEventListener('keydown', (event) => {
@@ -1375,6 +1386,41 @@ function createUnifiedPlayback(film) {
     seekVideoBy(video, event.key === 'ArrowLeft' ? -delta : delta);
   }, true);
   const videoFrame = createElement('div', 'segment-video-frame');
+  const seekOverlays = [];
+  const seekOverlayGroups = ['left', 'right'].map((side) => {
+    const group = createElement('div', `fullscreen-seek-group-${side}`);
+    group.hidden = true;
+    group.setAttribute('role', 'group');
+    group.setAttribute('aria-label', `${side === 'left' ? '左' : '右'}侧播放跳转`);
+    for (const fine of [false, true]) {
+      const getStep = () => fine ? configuredFineSeekStepSeconds() : configuredSeekStepSeconds();
+      for (const [direction, symbol, label, sign] of [['backward', '<', '后退', -1], ['forward', '>', '前进', 1]]) {
+        const text = fine ? (direction === 'backward' ? '< 微调' : '微调 >') : symbol;
+        const button = actionButton(text, () => seekVideoBy(video, sign * getStep()), `fullscreen-seek-${fine ? 'fine-' : ''}${direction}`);
+        button.hidden = true;
+        button.disabled = !film.parts.some((part) => !part.missing);
+        button.setAttribute('data-fullscreen-seek', fine ? `fine-${direction}` : direction);
+        seekOverlays.push([button, `${fine ? '微调' : ''}${label}`, getStep]);
+        group.append(button);
+      }
+    }
+    return group;
+  });
+
+  const vrActionSelect = document.createElement('select');
+  vrActionSelect.className = 'fullscreen-vr-select';
+  vrActionSelect.hidden = true;
+  vrActionSelect.setAttribute('aria-label', 'VR 播放选项');
+  for (const [value, label] of [['', 'VR'], ['mute', '静音 / 取消静音'], ['reset', '视角复位']]) {
+    const option = createElement('option', '', label);
+    option.value = value;
+    vrActionSelect.append(option);
+  }
+  vrActionSelect.addEventListener('change', () => {
+    if (vrActionSelect.value === 'mute') video.muted = !video.muted;
+    else if (vrActionSelect.value === 'reset') activeVrRenderer?.resetView();
+    vrActionSelect.value = '';
+  });
   const vrCanvas = createElement('canvas', 'web-vr-canvas');
   vrCanvas.hidden = true;
   const vrControls = createElement('div', 'web-vr-controls');
@@ -1385,13 +1431,58 @@ function createUnifiedPlayback(film) {
   });
   const vrMuteButton = actionButton('静音', () => { video.muted = !video.muted; });
   const vrResetButton = actionButton('视角复位', () => activeVrRenderer?.resetView());
-  const vrFullscreenButton = actionButton('全屏', () => {
-    if (document.fullscreenElement) void document.exitFullscreen();
-    else void videoFrame.requestFullscreen();
+  let appFullscreen = false;
+  let previousFocus = null;
+  let previousOverflow = '';
+  const setAppFullscreen = (value) => {
+    if (appFullscreen === value) return;
+    appFullscreen = value;
+    section.classList.toggle('is-app-fullscreen', value);
+    elements.filmDetail.classList.toggle('app-fullscreen-open', value);
+    fullscreenButton.textContent = value ? '退出全屏' : '应用内全屏';
+    vrFullscreenButton.textContent = fullscreenButton.textContent;
+    fullscreenButton.setAttribute('aria-pressed', String(value));
+    for (const group of seekOverlayGroups) group.hidden = !value;
+    for (const [button, label, getStep] of seekOverlays) {
+      button.hidden = !value;
+      const description = `${label} ${getStep()} 秒`;
+      button.setAttribute('aria-label', description);
+      button.title = description;
+    }
+    video.dispatchEvent(new Event('playback:layout'));
+    if (value) {
+      previousFocus = document.activeElement;
+      previousOverflow = elements.filmDetail.style.overflow;
+      elements.filmDetail.style.overflow = 'hidden';
+      fullscreenButton.focus({ preventScroll: true });
+    } else {
+      elements.filmDetail.style.overflow = previousOverflow;
+      if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
+    }
+  };
+  const exitAppFullscreen = () => {
+    if (!appFullscreen) return false;
+    setAppFullscreen(false);
+    return true;
+  };
+  const fullscreenButton = actionButton('应用内全屏', () => setAppFullscreen(!appFullscreen), 'app-fullscreen-button');
+  fullscreenButton.disabled = !film.parts.some((part) => !part.missing);
+  fullscreenButton.setAttribute('aria-pressed', 'false');
+  section.addEventListener('keydown', (event) => {
+    if (!appFullscreen || event.key !== 'Tab') return;
+    const controls = [...section.querySelectorAll('button, select, [tabindex="0"]')]
+      .filter((node) => !node.disabled && node.getClientRects().length);
+    if (!controls.length) return;
+    const index = controls.indexOf(document.activeElement);
+    if ((event.shiftKey && index <= 0) || (!event.shiftKey && index === controls.length - 1)) {
+      event.preventDefault();
+      controls[event.shiftKey ? controls.length - 1 : 0].focus();
+    }
   });
+  const vrFullscreenButton = actionButton('应用内全屏', () => setAppFullscreen(!appFullscreen));
   vrControls.append(vrPlayButton, vrMuteButton, vrResetButton, vrFullscreenButton);
   const segmentLabel = createElement('div', 'segment-current-label');
-  videoFrame.append(video, vrCanvas, segmentLabel, vrControls);
+  videoFrame.append(video, vrCanvas, segmentLabel, vrControls, ...seekOverlayGroups);
   const syncVrControls = () => {
     vrPlayButton.textContent = video.paused ? '播放' : '暂停';
     vrMuteButton.textContent = video.muted ? '取消静音' : '静音';
@@ -1409,6 +1500,15 @@ function createUnifiedPlayback(film) {
   resetSubtitlePicker(subtitleSelect);
   subtitleSelect.addEventListener('change', () => selectSubtitleTrack(video, subtitleSelect.value));
   const parts = film.parts.filter((part) => !part.missing);
+  const partSelect = document.createElement('select');
+  partSelect.className = 'fullscreen-part-select';
+  partSelect.setAttribute('aria-label', '选择影片文件');
+  for (const part of parts) {
+    const option = createElement('option', '', part.partType === 'single' ? part.filename : `${part.partType.toUpperCase()} ${part.partNumber}`);
+    option.value = part.id;
+    partSelect.append(option);
+  }
+  partSelect.value = parts[0]?.id || '';
   const allSegments = film.segments || [];
   const segmentsPanel = createElement('div', 'web-segments-panel');
   let activeSegment = null;
@@ -1422,6 +1522,7 @@ function createUnifiedPlayback(film) {
     video.controls = !isVr;
     vrCanvas.hidden = !isVr;
     vrControls.hidden = !isVr;
+    vrActionSelect.hidden = !isVr;
     if (!isVr) return;
     try {
       const renderer = new window.FilmVrRenderer(video, vrCanvas, (message) => {
@@ -1434,6 +1535,7 @@ function createUnifiedPlayback(film) {
           video.controls = true;
           vrCanvas.hidden = true;
           vrControls.hidden = true;
+          vrActionSelect.hidden = true;
         }, 0);
       });
       activeVrRenderer = renderer;
@@ -1444,6 +1546,7 @@ function createUnifiedPlayback(film) {
       video.controls = true;
       vrCanvas.hidden = true;
       vrControls.hidden = true;
+      vrActionSelect.hidden = true;
       status.textContent = `VR 播放器初始化失败：${errorMessage(error)}`;
     }
   };
@@ -1473,6 +1576,7 @@ function createUnifiedPlayback(film) {
     if (session) {
       const part = parts.find((part) => part.id === partId) ?? parts[0];
       state.playback.partId = part?.id || null;
+      partSelect.value = part?.id || '';
       video.dispatchEvent(new Event('playback:session'));
       applyVrMode(part, null);
     }
@@ -1533,12 +1637,31 @@ function createUnifiedPlayback(film) {
       ...(playbackDuration(video) ? { durationSeconds: playbackDuration(video) } : {}),
     }).catch(() => undefined);
   });
+  const togglePlayback = () => {
+    if (!parts.length) return;
+    if (state.playback?.video !== video) {
+      void playOriginal();
+    } else if (state.playback.sessionId) {
+      if (video.paused) void video.play().catch(() => undefined);
+      else video.pause();
+    }
+  };
+  const appPlaybackButton = actionButton('播放', togglePlayback, 'app-playback-button');
+  appPlaybackButton.disabled = !parts.length;
+  const syncAppPlaybackButton = () => { appPlaybackButton.textContent = video.paused ? '播放' : '暂停'; };
+  video.addEventListener('play', syncAppPlaybackButton);
+  video.addEventListener('pause', syncAppPlaybackButton);
   const playerActions = createElement('div', 'unified-player-actions');
   const playOriginalButton = actionButton('播放 / 继续原片', () => void playOriginal(), 'primary-button');
   playOriginalButton.disabled = !parts.length;
-  playerActions.append(playOriginalButton);
+  playerActions.append(playOriginalButton, appPlaybackButton, fullscreenButton);
   const playerControls = createElement('div', 'player-control-row');
   playerControls.append(subtitlePicker, playerActions);
+  const extraControls = createElement('div', 'fullscreen-extra-controls');
+  if (parts.length > 1) extraControls.append(partSelect);
+  extraControls.append(vrActionSelect);
+  playerControls.append(extraControls);
+  partSelect.addEventListener('change', () => void playOriginal(partSelect.value));
   section.append(status, videoFrame, playerControls);
 
   if (parts.length > 1) {
@@ -1606,6 +1729,8 @@ function createUnifiedPlayback(film) {
       track.addEventListener('click', hideTooltip);
 
       const syncTimeline = () => {
+        const activePartId = state.playback?.video === video ? state.playback.partId : parts[0]?.id;
+        timelineRow.classList.toggle('fullscreen-inactive', appFullscreen && activePartId !== part.id);
         const total = getDuration();
         const position = state.playback?.video === video && state.playback.partId === part.id ? playbackPosition(video) : 0;
         playhead.style.left = `${Math.min(100, (total ? position / total * 100 : 0))}%`;
@@ -1638,7 +1763,7 @@ function createUnifiedPlayback(film) {
         const delta = event.shiftKey ? configuredFineSeekStepSeconds() : configuredSeekStepSeconds();
         void seekTo(part.id, Math.max(0, Math.min(getDuration() - .25, position + (event.key === 'ArrowLeft' ? -delta : delta))));
       });
-      for (const name of ['timeupdate', 'loadedmetadata', 'durationchange', 'play', 'playback:session']) video.addEventListener(name, syncTimeline);
+      for (const name of ['timeupdate', 'loadedmetadata', 'durationchange', 'play', 'playback:session', 'playback:layout']) video.addEventListener(name, syncTimeline);
 
       for (const segment of partSegments) {
         const node = createElement('span', 'web-segment-node');
@@ -1689,6 +1814,7 @@ function createUnifiedPlayback(film) {
     section,
     segmentsPanel,
     canSeek: parts.length > 0,
+    exitAppFullscreen,
     activate() {
       if (!parts.length || state.playback?.video === video) return;
       resetSubtitlePicker(subtitleSelect);
@@ -1700,15 +1826,7 @@ function createUnifiedPlayback(film) {
     seek(deltaSeconds) {
       seekVideoBy(video, deltaSeconds);
     },
-    togglePlayback() {
-      if (!parts.length) return;
-      if (state.playback?.video !== video) {
-        void playOriginal();
-      } else if (state.playback.sessionId) {
-        if (video.paused) void video.play().catch(() => undefined);
-        else video.pause();
-      }
-    },
+    togglePlayback,
   };
 }
 

@@ -29,6 +29,7 @@ const loading = ref(false);
 const activeDetailTab = ref<'segments' | 'images'>('segments');
 const activeSidebarSections = ref<string[]>([]);
 const detailPlayer = ref<InstanceType<typeof FilmDetailPlayer> | null>(null);
+const playerFullscreen = ref(false);
 const segmentEditor = ref<InstanceType<typeof FilmSegmentEditor> | null>(null);
 const playbackPosition = reactive({ currentSeconds: 0, durationSeconds: 0, partId: '' });
 const imageIndex = ref(0);
@@ -358,6 +359,11 @@ async function addToResonance(): Promise<void> {
   ElMessage.success(result === 'added' ? '已添加进共鸣球并记录精彩时刻，当前视频已暂停' : '已更新共鸣球中的播放进度和精彩时刻，当前视频已暂停');
 }
 function handleKeydown(event: KeyboardEvent): void {
+  if (props.modelValue && event.key === 'Escape' && detailPlayer.value?.exitAppFullscreen()) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    return;
+  }
   if (!props.modelValue || event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || (event.target instanceof HTMLElement && event.target.isContentEditable)) return;
   if (imageViewerVisible.value) {
     if (event.key === 'ArrowLeft') { event.preventDefault(); previousImage(); }
@@ -403,7 +409,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', handleKeydown, tru
 </script>
 
 <template>
-  <el-drawer :model-value="modelValue" class="film-detail-drawer" size="100vw" title="影片详情" @close="close">
+  <el-drawer :model-value="modelValue" :close-on-press-escape="!playerFullscreen" :class="{ 'player-fullscreen-open': playerFullscreen }" class="film-detail-drawer" size="100vw" title="影片详情" @close="close">
     <div v-if="loading" class="detail-loading"><el-skeleton :rows="10" animated /></div>
     <template v-else-if="detail">
       <div class="detail-workbench">
@@ -432,6 +438,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', handleKeydown, tru
             :segments="detail.segments"
             @position-change="updatePlaybackPosition"
             @add-to-resonance="addToResonance"
+            @fullscreen-change="playerFullscreen = $event"
           />
 
           <el-tabs v-model="activeDetailTab" class="detail-content-tabs" tab-position="right">
@@ -558,4 +565,5 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', handleKeydown, tru
   .detail-form :deep(.el-form-item:last-child) { grid-column: auto; }
   .part-row { align-items: stretch; flex-direction: column; }
 }
+:global(.player-fullscreen-open .el-drawer__header), .player-fullscreen-open .detail-sidebar, .player-fullscreen-open .detail-content-tabs { visibility: hidden; }
 </style>

@@ -4,11 +4,17 @@ import { Close, Delete, VideoPause, VideoPlay } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import ResonanceSceneControls from './ResonanceSceneControls.vue';
 import { mediaUrl } from '../../api';
+import { useResonanceDock } from '../../composables/useResonanceDock';
 import { computeResonanceLayout } from '../../composables/resonanceLayout';
 import { SphericalVideoRenderer } from '../../media/SphericalVideoRenderer';
 import { useResonanceStore, type ResonanceVideo } from '../../stores/resonance';
 
 const resonance = useResonanceStore();
+const dock = useResonanceDock();
+function openDock(event: MouseEvent): void {
+  if (dock.shouldOpen(event)) resonance.expanded = true;
+}
+watch(() => resonance.playerFullscreen || resonance.expanded, (hidden) => { if (hidden) dock.pointerCancel(); });
 const stage = ref<HTMLElement | null>(null);
 const stageSize = ref({ width: 0, height: 0 });
 const playingIds = ref(new Set<string>());
@@ -368,12 +374,20 @@ onBeforeUnmount(() => {
 
 <template>
   <button
-    v-if="!resonance.expanded"
+    v-if="!resonance.expanded && !resonance.playerFullscreen"
     type="button"
-    class="resonance-ball"
+    class="resonance-ball resonance-docked"
+    :class="{ 'dock-right': dock.side.value === 'right', 'dock-dragging': dock.dragging.value }"
+    :style="dock.dockStyle.value"
+    title="点击打开共鸣球；拖动可调整位置并贴边停靠，方向键也可调整"
     :disabled="resonance.restoring"
     :aria-label="`打开共鸣球，当前有 ${resonance.count} 个视频`"
-    @click="resonance.expanded = true"
+    @pointerdown="dock.pointerDown"
+    @pointermove="dock.pointerMove"
+    @pointerup="dock.pointerUp"
+    @pointercancel="dock.pointerCancel"
+    @keydown="dock.keydown"
+    @click="openDock"
   >
     <span class="resonance-orbit" />
     <strong>共鸣球</strong>
@@ -503,4 +517,13 @@ onBeforeUnmount(() => {
 .tile-controls input { width: 100%; min-width: 0; accent-color: #98e3c2; cursor: pointer; }
 .resonance-empty { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; color: #dce9e4; text-align: center; }.resonance-empty strong { margin-top: 20px; font-size: 18px; }.resonance-empty p { margin: 8px 0 0; color: #78857f; font-size: 12px; }.empty-orb { width: 86px; height: 86px; border: 1px solid rgba(152,227,194,.3); border-radius: 50%; background: radial-gradient(circle at 35% 28%, rgba(196,255,234,.65), rgba(57,130,110,.32) 35%, rgba(10,20,24,.4) 72%); box-shadow: 0 0 52px rgba(87,216,170,.12); }
 @media (max-width: 760px) { .resonance-ball { bottom: 16px; left: 16px; width: 66px; height: 66px; }.resonance-orbit { width: 75px; }.resonance-overlay { grid-template-rows: auto minmax(0, 1fr); }.resonance-toolbar { align-items: flex-start; padding: 9px 10px; }.resonance-heading small { display: none; }.resonance-global-actions { flex-wrap: wrap; justify-content: flex-end; }.resonance-global-actions :deep(.el-button) { padding-inline: 10px; }.tile-caption { top: 7px; left: 8px; }.tile-controls { right: 6px; bottom: 6px; left: 6px; gap: 4px; padding: 5px; }.tile-controls span { display: none; }.tile-controls { grid-template-columns: 28px minmax(30px, 1fr); } }
+.resonance-ball.resonance-docked { top: clamp(44px, calc(var(--dock-top) - 34px), calc(100% - 92px)); bottom: auto; width: 26px; height: 68px; border-radius: 0 14px 14px 0; grid-template-rows: 1fr auto; opacity: .7; box-shadow: 0 3px 12px rgba(0,0,0,.3); transform: none; touch-action: none; user-select: none; transition: width .18s ease, opacity .18s ease, box-shadow .18s ease; }
+.resonance-docked .resonance-orbit { display: none; }
+.resonance-docked strong { font-size: 10px; writing-mode: vertical-rl; letter-spacing: 1px; }
+.resonance-docked .resonance-count { position: static; min-width: 18px; height: 18px; padding: 0 3px; margin-bottom: 3px; border-width: 1px; font-size: 9px; }
+.resonance-ball.resonance-docked:hover, .resonance-ball.resonance-docked:focus-visible { width: 72px; opacity: 1; transform: none; }
+.resonance-docked:hover strong, .resonance-docked:focus-visible strong { writing-mode: horizontal-tb; font-size: 12px; }
+.resonance-ball.resonance-docked.dock-right { border-radius: 14px 0 0 14px; }
+.resonance-ball.dock-dragging { cursor: grabbing; transition: none; }
+@media (prefers-reduced-motion: reduce) { .resonance-ball.resonance-docked { transition: none; } }
 </style>

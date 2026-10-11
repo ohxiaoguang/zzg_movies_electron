@@ -2,7 +2,7 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="color-scheme" content="dark" />
     <title>Local Film Library · 局域网影片库</title>
     <link rel="stylesheet" href="/styles.css" />
@@ -11,6 +11,7 @@
     <script src="/app.js" defer></script>
   </head>
   <body>
+    <div class="standalone-status-tint" aria-hidden="true"></div>
     <div class="mobile-topbar">
       <button id="menu-toggle" class="icon-button" type="button" aria-label="打开菜单" aria-expanded="false">☰</button>
       <div class="mobile-brand"><span class="brand-mark">▶</span><strong>LOCAL FILM</strong></div>
@@ -162,11 +163,13 @@
     </div>
 
     <dialog id="film-detail">
+      <div class="standalone-status-tint" aria-hidden="true"></div>
       <button id="close-detail" class="dialog-close" type="button" aria-label="关闭">×</button>
       <div id="detail-content"></div>
     </dialog>
 
     <dialog id="login-dialog" class="login-dialog">
+      <div class="standalone-status-tint" aria-hidden="true"></div>
       <div class="login-panel">
         <p class="eyebrow">TRUSTED LAN SIGN IN</p>
         <h2>登录影片库</h2>
