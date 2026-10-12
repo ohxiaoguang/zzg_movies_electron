@@ -81,11 +81,14 @@ describe('GIF capture and custom covers', () => {
     expect(context.films.preferredAssetLocation(context.input.filmId, ['poster', 'thumb'])?.relativePath).toBe(path.join('films', result.filename));
     expect(resolveMimeType(output)).toBe('image/gif');
     expect(progress.at(-1)).toBe(100);
+    expect(result.detail.segments).toHaveLength(1);
+    expect(result.detail.segments[0]).toMatchObject({ filmFileId: context.input.partId, startSeconds: 1, endSeconds: 2, title: 'gif片段', includeInPreview: true });
     context.scan.start({ sourceIds: [context.source.id] });
     await waitForScan(context.scan);
     expect(context.films.detail(context.input.filmId)!.posterAssetId).toBe(result.assetId);
     const second = await context.service.createGif({ ...context.input, requestId: randomUUID(), setAsCover: false }, () => {});
     expect(second.filename).not.toBe(result.filename);
+    expect(second.detail.segments).toHaveLength(2);
     expect(second.detail.posterAssetId).toBe(result.assetId);
     expect(second.detail.images.some((image) => image.id === second.assetId)).toBe(true);
     context.database.close();
@@ -93,6 +96,7 @@ describe('GIF capture and custom covers', () => {
     databases.push(reopened);
     const films = new FilmRepository(reopened.db);
     expect(films.detail(context.input.filmId)!.posterAssetId).toBe(result.assetId);
+    expect(films.detail(context.input.filmId)!.segments).toHaveLength(2);
     expect(films.setCustomCover(context.input.filmId, null).posterAssetId).toBe(originalPoster);
     expect(fs.existsSync(output)).toBe(true);
   });
@@ -175,6 +179,7 @@ describe('GIF capture and custom covers', () => {
     await expect(job).rejects.toThrow('GIF_CANCELLED');
     expect(fs.readdirSync(path.join(context.sourceRoot, 'films')).filter((name) => name.includes('-gif-'))).toEqual([]);
     expect(context.films.detail(context.input.filmId)!.images).toHaveLength(1);
+    expect(context.films.detail(context.input.filmId)!.segments).toHaveLength(0);
     context.scan.start({ sourceIds: [context.source.id] });
     await waitForScan(context.scan);
   });
@@ -184,6 +189,19 @@ describe('GIF capture and custom covers', () => {
     const poster = context.films.detail(context.input.filmId)!.posterAssetId;
     await expect(context.service.createGif(context.input, () => {})).rejects.toThrow('GIF_GENERATION_FAILED');
     expect(context.films.detail(context.input.filmId)!.posterAssetId).toBe(poster);
+    expect(context.films.detail(context.input.filmId)!.segments).toHaveLength(0);
+    expect(fs.readdirSync(path.join(context.sourceRoot, 'films')).filter((name) => name.includes('-gif-'))).toEqual([]);
+  });
+
+  it('rolls back the GIF asset and removes its file when adding the highlight segment fails', async () => {
+    const context = await fixture();
+    const before = context.films.detail(context.input.filmId)!;
+    context.database.db.exec("CREATE TRIGGER reject_gif_segment BEFORE INSERT ON film_segment BEGIN SELECT RAISE(ABORT, 'segment save failed'); END");
+    await expect(context.service.createGif(context.input, () => {})).rejects.toThrow('segment save failed');
+    const after = context.films.detail(context.input.filmId)!;
+    expect(after.posterAssetId).toBe(before.posterAssetId);
+    expect(after.images).toHaveLength(before.images.length);
+    expect(after.segments).toHaveLength(0);
     expect(fs.readdirSync(path.join(context.sourceRoot, 'films')).filter((name) => name.includes('-gif-'))).toEqual([]);
   });
 

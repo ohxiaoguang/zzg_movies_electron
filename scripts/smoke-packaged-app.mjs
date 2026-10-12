@@ -277,6 +277,8 @@ try {
     if (ffmpegAvailable && (!result.gifProbe?.generated?.ok || result.gifProbe.status !== 200
       || result.gifProbe.contentType !== 'image/gif' || !result.gifProbe.header.startsWith('GIF')
       || result.gifProbe.generated.data.detail.posterAssetId !== result.gifProbe.generated.data.assetId
+      || !result.gifProbe.generated.data.detail.segments.some((segment) => segment.title === 'gif片段'
+        && segment.filmFileId === result.detail.data.parts[0].id && segment.startSeconds === 0 && segment.endSeconds === 0.5)
       || !result.gifProbe.progress.includes(100) || !result.gifProbe.restoredCover?.ok
       || result.gifProbe.restoredCover.data.posterAssetId !== result.detail.data.posterAssetId)) {
       throw new Error(`GIF/cover IPC verification failed: ${JSON.stringify(result.gifProbe)}`);

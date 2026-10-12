@@ -89,7 +89,7 @@ async function generate(): Promise<void> {
     }
     result.value = response.data;
     emit('change', response.data.detail);
-    ElMessage.success(form.setAsCover ? 'GIF 已保存并设为影片封面' : 'GIF 已保存到影片同级目录');
+    ElMessage.success(form.setAsCover ? 'GIF 已保存并设为影片封面，已添加精彩片段“gif片段”' : 'GIF 已保存，已添加精彩片段“gif片段”');
   } catch { error.value = '截取请求失败，请重试'; }
   finally { busy.value = false; cancelling.value = false; requestId.value = ''; }
 }
@@ -120,6 +120,7 @@ function close(done: () => void): void { if (!busy.value) done(); }
         <label>帧率<el-select v-model="form.fps" :disabled="busy"><el-option v-for="fps in [8, 10, 12, 15, 20, 24]" :key="fps" :label="`${fps} 帧/秒`" :value="fps" /></el-select></label>
         <el-checkbox v-model="form.setAsCover" :disabled="busy">生成后设为影片封面</el-checkbox>
       </div>
+      <p class="gif-help">生成成功后，会将这段起止时间自动加入精彩片段，命名为“gif片段”。</p>
       <p v-if="!valid" class="gif-error">请选择有效的起点和终点，片段最长 30 秒。</p>
       <p v-else class="gif-help">截取 {{ (form.endSeconds - form.startSeconds).toFixed(2) }} 秒 · 保持原片比例，高度最大 720 像素 · 尺寸和帧率越大，生成越慢、文件越大。</p>
       <el-progress v-if="busy" :percentage="percent" :indeterminate="percent === 0" />

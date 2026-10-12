@@ -111,6 +111,13 @@ export class FilmMediaService {
       controller.signal.throwIfAborted();
       const result = this.database.transaction(() => {
         const assetId = this.films.registerManualImage(input.filmId, relativePath, stat);
+        this.films.createSegment({
+          filmId: input.filmId,
+          filmFileId: input.partId,
+          startSeconds: input.startSeconds,
+          endSeconds: input.endSeconds,
+          title: 'gif片段',
+        });
         const detail = input.setAsCover ? this.films.setCustomCover(input.filmId, assetId) : this.films.detail(input.filmId)!;
         return { detail, assetId, filename };
       });
