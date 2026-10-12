@@ -24,6 +24,11 @@ export class FilmLibraryReadService {
     private readonly settings: SettingsRepository,
   ) {}
 
+  public displaySettings(): { cardSize: number; pageSize: number } {
+    const { cardSize, pageSize } = this.settings.get();
+    return { cardSize, pageSize };
+  }
+
   public page(payload: unknown, strict = false): FilmPageDto {
     return this.films.page(this.pageQuery(payload, strict));
   }

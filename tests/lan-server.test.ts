@@ -36,6 +36,22 @@ afterEach(async () => {
 });
 
 describe('localhost read-only web server', () => {
+  it('shares current desktop card size and pagination defaults with the web client', async () => {
+    const context = await createContext();
+    const settings = new SettingsRepository(context.database.db);
+    const baseUrl = (await context.server.start()).baseUrl!;
+    settings.update({ cardSize: 280, pageSize: 48 });
+    const info = await api<{ cardSize: number; pageSize: number }>(`${baseUrl}/api/v1/server-info`);
+    expect(info.ok && info.data).toMatchObject({ cardSize: 280, pageSize: 48 });
+    const page = await api<{ pageSize: number }>(`${baseUrl}/api/v1/films?page=1`);
+    expect(page.ok && page.data.pageSize).toBe(48);
+    settings.update({ cardSize: 240, pageSize: 96 });
+    const updated = await api<{ cardSize: number; pageSize: number }>(`${baseUrl}/api/v1/server-info`);
+    expect(updated.ok && updated.data).toMatchObject({ cardSize: 240, pageSize: 96 });
+    const next = await api<{ pageSize: number }>(`${baseUrl}/api/v1/films?page=1`);
+    expect(next.ok && next.data.pageSize).toBe(96);
+  });
+
   it('starts, stops, restarts and only advertises the IPv4 loopback address', async () => {
     const context = await createContext();
     const first = await context.server.start();
@@ -112,21 +128,21 @@ describe('localhost read-only web server', () => {
     const image = await fetch(assetUrl);
     expect(image.status).toBe(200);
     expect(image.headers.get('content-type')).toBe('image/jpeg');
-    expect(await image.text()).toBe('poster-image');
+    expect(await image.text()).toBe('fanart-image');
 
     const head = await fetch(assetUrl, { method: 'HEAD' });
     expect(head.status).toBe(200);
-    expect(head.headers.get('content-length')).toBe(String('poster-image'.length));
+    expect(head.headers.get('content-length')).toBe(String('fanart-image'.length));
     expect(await head.text()).toBe('');
 
     const range = await fetch(assetUrl, { headers: { Range: 'bytes=0-5' } });
     expect(range.status).toBe(206);
-    expect(range.headers.get('content-range')).toBe(`bytes 0-5/${'poster-image'.length}`);
-    expect(await range.text()).toBe('poster');
+    expect(range.headers.get('content-range')).toBe(`bytes 0-5/${'fanart-image'.length}`);
+    expect(await range.text()).toBe('fanart');
 
     const poster = await fetch(`${baseUrl}/media/v1/posters/${film.id}`);
     expect(poster.status).toBe(200);
-    expect(await poster.text()).toBe('poster-image');
+    expect(await poster.text()).toBe('fanart-image');
     const preview = await fetch(`${baseUrl}/media/v1/previews/${film.id}`, {
       headers: { Range: 'bytes=0-6' },
     });

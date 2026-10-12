@@ -13,6 +13,8 @@ import type {
   FilmRecordDeleteBatchInput,
   FilmRecordDeleteInput,
   FilmPageQuery,
+  FilmGifInput,
+  FilmGifProgressDto,
   FilmUpdateInput,
   FilmUpdatePatch,
   FilmNfoImportMode,
@@ -66,6 +68,15 @@ export const filmLibraryApi: FilmLibraryApi = {
     findDeleted: (input: FindDeletedSourceInput) => invoke(IPC_CHANNELS.sourcesFindDeleted, input),
   },
   films: {
+    setCover: (filmId: string, assetId: string | null) => invoke(IPC_CHANNELS.filmsSetCover, { filmId, assetId }),
+    importCover: (filmId: string) => invoke(IPC_CHANNELS.filmsImportCover, filmId),
+    createGif: (input: FilmGifInput) => invoke(IPC_CHANNELS.filmsCreateGif, input),
+    cancelGif: (requestId: string) => invoke(IPC_CHANNELS.filmsCancelGif, requestId),
+    onGifProgress: (listener) => {
+      const wrapped = (_event: IpcRendererEvent, progress: FilmGifProgressDto) => listener(progress);
+      ipcRenderer.on(IPC_CHANNELS.filmsGifProgress, wrapped);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.filmsGifProgress, wrapped);
+    },
     page: (query: FilmPageQuery) => invoke(IPC_CHANNELS.filmsPage, query),
     navigationCounts: () => invoke(IPC_CHANNELS.filmsNavigationCounts),
     exportCsv: (query: FilmPageQuery) => invoke(IPC_CHANNELS.filmsExportCsv, query),

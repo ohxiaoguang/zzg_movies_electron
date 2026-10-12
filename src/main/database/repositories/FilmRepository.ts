@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import type {
@@ -19,7 +20,7 @@ import type {
   TagDto,
 } from '../../../shared/contracts';
 import type { FilmCsvHighlight, FilmCsvRow } from '../../export/FilmCsvExporter';
-import type { AssetType } from '../../../shared/enums';
+import { DEFAULT_COVER_ASSET_TYPES, type AssetType } from '../../../shared/enums';
 import type { FilmCandidate, FilmFileCandidate } from '../../scanner/ScanCandidate';
 import { normalizeRelativePath, physicalFileKey } from '../../scanner/PartNaming';
 import { planBrowserPlaybackFromMetadata } from '../../media/MediaCapabilityService';
@@ -103,6 +104,8 @@ interface FilmFileRow {
 }
 
 interface AssetRow {
+  user_managed: number;
+  custom_cover: number;
   id: string;
   film_id: string;
   asset_type: AssetType;
@@ -695,6 +698,31 @@ export class FilmRepository {
     return this.toPart(row);
   }
 
+  public registerManualImage(filmId: string, relativePath: string, stat: { size: number; mtime: Date }): string {
+    if (!this.detail(filmId)) throw new Error('FILM_NOT_FOUND');
+    const previous = this.db.prepare('SELECT id FROM film_asset WHERE film_id = ? AND relative_path = ? COLLATE NOCASE').get(filmId, relativePath) as { id: string } | undefined;
+    const id = previous?.id ?? randomUUID();
+    if (previous) {
+      this.db.prepare('UPDATE film_asset SET user_managed = 1, missing = 0, file_size = ?, file_modified_at = ? WHERE id = ?').run(stat.size, stat.mtime.toISOString(), id);
+    } else {
+      this.db.prepare(`INSERT INTO film_asset (id, film_id, asset_type, relative_path, file_size, file_modified_at, user_managed)
+        VALUES (?, ?, 'extra_fanart', ?, ?, ?, 1)`).run(id, filmId, relativePath, stat.size, stat.mtime.toISOString());
+    }
+    return id;
+  }
+
+  public setCustomCover(filmId: string, assetId: string | null): FilmDetailDto {
+    const detail = this.detail(filmId);
+    if (!detail) throw new Error('FILM_NOT_FOUND');
+    if (assetId && !detail.images.some((image) => image.id === assetId)) throw new Error('COVER_NOT_FOUND');
+    this.db.transaction(() => {
+      this.db.prepare('UPDATE film_asset SET custom_cover = 0 WHERE film_id = ?').run(filmId);
+      if (assetId) this.db.prepare('UPDATE film_asset SET custom_cover = 1, user_managed = 1 WHERE film_id = ? AND id = ?').run(filmId, assetId);
+      this.db.prepare('UPDATE film SET updated_at = ? WHERE id = ?').run(new Date().toISOString(), filmId);
+    })();
+    return this.detail(filmId)!;
+  }
+
   public assetLocation(assetId: string): MediaLocation | null {
     const row = this.db
       .prepare(
@@ -707,6 +735,10 @@ export class FilmRepository {
   }
 
   public preferredAssetLocation(filmId: string, assetTypes: AssetType[]): MediaLocation | null {
+    if (assetTypes.includes('poster')) {
+      const cover = this.db.prepare('SELECT id FROM film_asset WHERE film_id = ? AND custom_cover = 1 AND missing = 0').get(filmId) as { id: string } | undefined;
+      if (cover) return this.assetLocation(cover.id);
+    }
     const placeholders = assetTypes.map(() => '?').join(',');
     const row = this.db
       .prepare(
@@ -1322,7 +1354,14 @@ export class FilmRepository {
         insert.run(randomUUID(), filmId, asset.assetType, asset.entry.relativePath, asset.sortOrder, asset.fileSize, asset.fileModifiedAt, asset.missing ? 1 : 0);
       }
     }
-    for (const asset of existing) if (!touched.has(asset.id) && !seen.has(`${asset.asset_type}:${asset.relative_path.toLowerCase()}`)) this.db.prepare('UPDATE film_asset SET missing = 1 WHERE id = ?').run(asset.id);
+    for (const asset of existing) {
+      if (touched.has(asset.id) || seen.has(`${asset.asset_type}:${asset.relative_path.toLowerCase()}`)) continue;
+      // Manual images need not follow scanner naming rules.
+      const missing = asset.user_managed || asset.custom_cover
+        ? !fs.existsSync(path.join(candidate.sourceRootPath, asset.relative_path))
+        : true;
+      this.db.prepare('UPDATE film_asset SET missing = ? WHERE id = ?').run(missing ? 1 : 0, asset.id);
+    }
   }
 
   private replaceTags(filmId: string, names: string[]): void {
@@ -1417,7 +1456,8 @@ export class FilmRepository {
 
   private toSummary(row: FilmSummaryRow, assets: FilmAssetDto[], customCategories: CustomCategoryDto[]): FilmSummaryDto {
     const available = assets.filter((asset) => !asset.missing);
-    const poster = available.find((asset) => asset.assetType === 'poster');
+    const poster = available.find((asset) => asset.customCover)
+      ?? DEFAULT_COVER_ASSET_TYPES.map((type) => available.find((asset) => asset.assetType === type)).find(Boolean);
     const preview = available.find((asset) => asset.assetType === 'preview')
       ?? available.find((asset) => asset.assetType === 'trailer')
       ?? available.find((asset) => asset.assetType === 'sample');
@@ -1477,6 +1517,7 @@ export class FilmRepository {
 
   private toAsset(row: AssetRow): FilmAssetDto {
     return {
+      customCover: Boolean(row.custom_cover),
       id: row.id,
       assetType: row.asset_type,
       relativePath: row.relative_path,

@@ -72,7 +72,6 @@ class HttpFilmLibraryClient {
 }
 
 const GLOBAL_FILTERS_KEY = 'local-film-library:global-filters-v1';
-const CARD_SIZE_KEY = 'film-library-web-card-size';
 function readGlobalFilters() {
   try {
     const saved = JSON.parse(localStorage.getItem(GLOBAL_FILTERS_KEY) || 'null');
@@ -86,7 +85,6 @@ const state = {
   view: 'library',
   libraryMode: 'all',
   page: 1,
-  pageSize: 24,
   totalPages: 1,
   searchTimer: null,
   server: null,
@@ -111,7 +109,7 @@ const elements = Object.fromEntries([
   'category', 'tag', 'genre', 'actor', 'comment-images', 'sort', 'refresh', 'previous-page', 'next-page',
   'page-summary', 'film-detail', 'detail-content', 'close-detail', 'login-dialog',
   'login-form', 'login-error', 'account-username', 'account-password', 'device-revoke',
-  'create-category', 'category-summary', 'category-options', 'card-size', 'card-size-value', 'card-size-error',
+  'create-category', 'category-summary', 'category-options', 'card-size-value', 'page-size-value',
 ].map((id) => [camel(id), document.querySelector(`#${id}`)]));
 
 void bootstrap();
@@ -179,12 +177,6 @@ function bindEvents() {
     state.globalFilters = { sourceIds: [], categoryIds: [] };
     globalFiltersChanged();
   });
-  initializeCardSize();
-  elements.cardSize.addEventListener('input', () => {
-    applyCardSize(Number(elements.cardSize.value));
-    try { localStorage.setItem(CARD_SIZE_KEY, elements.cardSize.value); elements.cardSizeError.hidden = true; }
-    catch { elements.cardSizeError.textContent = '卡片大小保存失败，刷新后可能无法保留'; elements.cardSizeError.hidden = false; }
-  });
   for (const select of [elements.tag, elements.genre, elements.actor, elements.commentImages, elements.sort]) {
     select.addEventListener('change', () => { state.page = 1; void loadFilms(); });
   }
@@ -197,6 +189,10 @@ function bindEvents() {
   });
   elements.nextPage.addEventListener('click', () => {
     if (state.page < state.totalPages) { state.page += 1; void loadFilms(); }
+  });
+  window.addEventListener('focus', () => { if (state.auth) void syncDisplaySettings(); });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && state.auth) void syncDisplaySettings();
   });
   window.addEventListener('keydown', handleDetailPlaybackKey, true);
   window.addEventListener('keyup', handleDetailPlaybackKey, true);
@@ -316,15 +312,23 @@ function renderGlobalFilters() {
   if (focusedSource !== undefined) [...elements.sourceButtons.children].find((button) => button.dataset.sourceId === focusedSource)?.focus();
   if (focusedCategory !== undefined) [...elements.categoryOptions.querySelectorAll('input')].find((input) => input.dataset.categoryId === focusedCategory)?.focus();
 }
-function initializeCardSize() {
-  let size = 160;
-  try { const stored = Number(localStorage.getItem(CARD_SIZE_KEY)); if (Number.isFinite(stored) && stored >= 140 && stored <= 320) size = stored; } catch { /* Use the default for unavailable storage. */ }
-  applyCardSize(size);
+async function syncDisplaySettings() {
+  try {
+    const server = await client.serverInfo();
+    const pageSizeChanged = state.server?.pageSize !== server.pageSize;
+    state.server = server;
+    applyDisplaySettings(server);
+    if (pageSizeChanged && state.view === 'library') { state.page = 1; await loadFilms(); }
+  } catch (error) {
+    if (isAuthenticationError(error)) showLogin();
+    else showError(error);
+  }
 }
-function applyCardSize(value) {
-  const size = Math.min(320, Math.max(140, Number.isFinite(value) ? value : 160));
-  elements.cardSize.value = String(size);
+
+function applyDisplaySettings(server) {
+  const size = Math.min(320, Math.max(140, Number.isFinite(server.cardSize) ? server.cardSize : 200));
   elements.cardSizeValue.textContent = size + ' px';
+  elements.pageSizeValue.textContent = String(server.pageSize);
   document.documentElement.style.setProperty('--card-width', size + 'px');
 }
 function currentQuery() {
@@ -333,7 +337,6 @@ function currentQuery() {
     : 'all';
   return {
     page: state.page,
-    pageSize: state.pageSize,
     search: elements.search.value.trim(),
     sourceIds: [...state.globalFilters.sourceIds],
     categoryIds: [...state.globalFilters.categoryIds],
@@ -367,10 +370,16 @@ async function loadFilms() {
   setBusy(true);
   hideError();
   try {
+    const server = await client.serverInfo();
+    if (request !== state.filmsRequest) return;
+    state.server = server;
+    applyDisplaySettings(server);
+    // Omit pageSize: the server applies the latest desktop setting.
     const page = await client.films(currentQuery());
     if (request !== state.filmsRequest) return;
     state.page = page.page;
     state.totalPages = page.totalPages;
+    elements.pageSizeValue.textContent = String(page.pageSize);
     elements.resultSummary.textContent = `${page.total} 部影片`;
     elements.libraryCaption.textContent = `${page.total} 条记录 · 所有资料只保存在服务端电脑`;
     elements.pageSummary.textContent = `第 ${page.page} / ${page.totalPages} 页`;
@@ -416,6 +425,7 @@ function showView(view = 'library', libraryMode = 'all', options = {}) {
   }
   closeSidebar();
   if (state.view === 'library' && options.load !== false) void loadFilms();
+  else if (state.view === 'settings') void syncDisplaySettings();
 }
 
 function updateLibraryHeading() {

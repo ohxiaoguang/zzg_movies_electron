@@ -11,6 +11,8 @@ import { useResonanceStore } from '../../stores/resonance';
 import FilmDetailHeader, { type SelectedCategoryItem } from './FilmDetailHeader.vue';
 import FilmDetailPlayer from './FilmDetailPlayer.vue';
 import FilmSegmentEditor from './FilmSegmentEditor.vue';
+import FilmGifCapture from './FilmGifCapture.vue';
+import FilmCoverPicker from './FilmCoverPicker.vue';
 
 const props = defineProps<{ modelValue: boolean; filmId: string | null }>();
 const emit = defineEmits<{ 'update:modelValue': [value: boolean]; updated: [] }>();
@@ -30,6 +32,9 @@ const activeDetailTab = ref<'segments' | 'images'>('segments');
 const activeSidebarSections = ref<string[]>([]);
 const detailPlayer = ref<InstanceType<typeof FilmDetailPlayer> | null>(null);
 const playerFullscreen = ref(false);
+const gifVisible = ref(false);
+const coverVisible = ref(false);
+const gifSnapshot = ref<{ partId: string; filename: string; currentSeconds: number; durationSeconds: number } | null>(null);
 const segmentEditor = ref<InstanceType<typeof FilmSegmentEditor> | null>(null);
 const playbackPosition = reactive({ currentSeconds: 0, durationSeconds: 0, partId: '' });
 const imageIndex = ref(0);
@@ -49,7 +54,7 @@ let pendingSave: PendingSave = {};
 let lastSavedPatch: FilmUpdatePatch = {};
 let rescanJobId: string | null = null;
 
-const poster = computed(() => assetOf('poster') ?? assetOf('thumb') ?? (detail.value ? mediaUrl('poster', detail.value.id) : null));
+const poster = computed(() => (detail.value?.posterAssetId ? mediaUrl('asset', detail.value.posterAssetId) : null) ?? assetOf('fanart') ?? assetOf('thumb') ?? assetOf('poster') ?? (detail.value ? mediaUrl('poster', detail.value.id) : null));
 const commentImages = computed(() => (detail.value?.images ?? []).filter((image) => image.assetType === 'comment' && !image.missing && !brokenImageIds.value.has(image.id)));
 const stillImages = computed(() => (detail.value?.images ?? []).filter((image) => image.assetType !== 'comment' && !image.missing && !brokenImageIds.value.has(image.id)));
 const images = computed(() => [...commentImages.value, ...stillImages.value]);
@@ -67,6 +72,18 @@ const selectedCategories = computed<SelectedCategoryItem[]>(() => {
 const saveStateLabel = computed(() => saveState.value === 'saving' ? '正在保存…' : saveState.value === 'dirty' ? '待保存' : saveState.value === 'saved' ? '已保存' : saveState.value === 'error' ? `保存失败：${saveError.value}` : '');
 const rescanBusy = computed(() => rescanStarting.value || Boolean(rescanJobId && scan.progress?.jobId === rescanJobId && scan.progress.status === 'running'));
 
+function captureGif(): void {
+  const snapshot = detailPlayer.value?.getPlaybackSnapshot();
+  if (!snapshot || !snapshot.durationSeconds) { ElMessage.info('请先加载影片'); return; }
+  gifSnapshot.value = snapshot;
+  detailPlayer.value?.stopPlayback();
+  gifVisible.value = true;
+}
+function updateMedia(value: FilmDetailDto): void {
+  if (detail.value?.id === value.id) detail.value = applyCurrentForm(value);
+  emit('updated');
+}
+
 function captureVrView() {
   return detailPlayer.value?.getCurrentVrView() ?? null;
 }
@@ -74,6 +91,8 @@ function captureVrView() {
 watch(() => [props.modelValue, props.filmId], () => {
   if (props.modelValue) void load();
   else {
+    gifVisible.value = false;
+    coverVisible.value = false;
     detailPlayer.value?.releasePlayback();
     cleanupGallery();
   }
@@ -97,6 +116,8 @@ async function load(): Promise<void> {
   const filmId = props.filmId;
   if (!filmId) return;
   activeFilmId = filmId;
+  gifVisible.value = false;
+  coverVisible.value = false;
   hydrated.value = false;
   actorCounts.value = {};
   Object.assign(playbackPosition, { currentSeconds: 0, durationSeconds: 0, partId: '' });
@@ -415,6 +436,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', handleKeydown, tru
       <div class="detail-workbench">
         <aside class="detail-sidebar">
           <FilmDetailHeader :detail="detail" :poster="poster" :favorite="form.favorite" :categories="selectedCategories" :category-options="categoryOptions" :save-state="saveState" :save-state-label="saveStateLabel" :rescan-busy="rescanBusy" @favorite-change="queueFavorite" @category-add="addCategory" @category-remove="removeCategory" @retry="retrySave" @play="detailPlayer?.playOriginal()" @local-player="playWithLocalPlayer" @show-folder="showPrimaryFolder" @rescan="rescanDirectory" />
+          <el-button class="custom-cover-button" size="small" @click="coverVisible = true">设置封面 / GIF</el-button>
 
           <el-collapse v-model="activeSidebarSections" class="sidebar-info-collapse">
             <el-collapse-item title="基本信息" name="basic">
@@ -438,6 +460,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', handleKeydown, tru
             :segments="detail.segments"
             @position-change="updatePlaybackPosition"
             @add-to-resonance="addToResonance"
+            @capture-gif="captureGif"
             @fullscreen-change="playerFullscreen = $event"
           />
 
@@ -466,6 +489,8 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', handleKeydown, tru
         </main>
       </div>
     </template>
+    <FilmGifCapture v-if="detail && modelValue" v-model="gifVisible" :film="detail" :snapshot="gifSnapshot" @change="updateMedia" />
+    <FilmCoverPicker v-if="detail && modelValue" v-model="coverVisible" :film="detail" @change="updateMedia" />
     <el-dialog v-model="imageViewerVisible" append-to-body class="image-viewer-dialog" width="96vw" top="2vh" :show-close="true">
       <div class="image-viewer-stage">
         <img v-if="currentImageUrl" :src="currentImageUrl" :alt="detail?.title || '影片图片'" @error="markImageMissing" />
@@ -478,6 +503,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', handleKeydown, tru
 </template>
 
 <style scoped>
+.custom-cover-button { width: 100%; margin: 5px 0 10px; }
 :global(.film-detail-drawer .el-drawer__body) { min-height: 0; padding: 0 18px 18px; overflow: hidden; }
 :global(.film-detail-drawer .el-drawer__header) { height: 34px; min-height: 34px; margin-bottom: 0; padding: 4px 14px; }
 :global(.film-detail-drawer .el-drawer__title) { font-size: 13px; line-height: 1; }

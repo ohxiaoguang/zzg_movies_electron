@@ -1,11 +1,13 @@
 export const ASSET_TYPES = ['poster', 'fanart', 'thumb', 'extra_fanart', 'comment', 'preview', 'trailer', 'sample'] as const;
 export type AssetType = (typeof ASSET_TYPES)[number];
 
+export const DEFAULT_COVER_ASSET_TYPES: AssetType[] = ['fanart', 'thumb', 'poster'];
+
 export const SCAN_STATUSES = ['running', 'completed', 'failed', 'database_failed', 'cancelled'] as const;
 export type ScanStatus = (typeof SCAN_STATUSES)[number];
 
 export const DEFAULT_VIDEO_EXTENSIONS = ['mp4', 'mkv', 'mov', 'avi', 'webm', 'm4v', 'mpg', 'mpeg', 'ts', 'flv', 'wmv'];
-export const DEFAULT_IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp'];
+export const DEFAULT_IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
 export const DEFAULT_IGNORED_DIRECTORIES = [
   '.git',
   'node_modules',

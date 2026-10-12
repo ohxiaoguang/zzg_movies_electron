@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { DEFAULT_COVER_ASSET_TYPES } from '../../shared/enums';
 import type { FilmRepository, MediaLocation } from '../database/repositories/FilmRepository';
 import { resolveExistingSafeMediaPath } from '../media/MediaPathResolver';
 import { resolveMimeType } from '../media/MimeTypeResolver';
@@ -25,7 +26,7 @@ export class MediaAssetService {
   public async resolve(kind: MediaAssetKind, id: unknown, signal?: AbortSignal): Promise<ResolvedMediaAsset> {
     if (!isUuid(id)) throw new Error('INVALID_MEDIA_ID');
     const preferredPoster = kind === 'poster'
-      ? this.films.preferredAssetLocation(id, ['poster', 'thumb'])
+      ? this.films.preferredAssetLocation(id, DEFAULT_COVER_ASSET_TYPES)
       : null;
     const generatedPoster = kind === 'poster' && !preferredPoster;
     const location = preferredPoster ?? this.location(kind, id);

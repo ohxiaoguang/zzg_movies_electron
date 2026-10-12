@@ -18,6 +18,8 @@ import type {
   TransferSourceInput,
   UpdateSourceInput,
 } from '../../shared/contracts';
+import type { FilmMediaService } from '../services/FilmMediaService';
+import { validateFilmGif, validateFilmCover } from '../../shared/filmMediaValidation';
 import { isRecord, isUuid } from '../../shared/validation';
 import {
   validateFilmSegmentCreate,
@@ -60,6 +62,7 @@ import { resolveExistingSafeMediaPath } from '../media/MediaPathResolver';
 import { lanServerConfigurationFromSettings, type LanServer } from '../server/LanServer';
 
 interface IpcContext {
+  filmMedia: FilmMediaService;
   window: BrowserWindow;
   database: DatabaseManager;
   sources: SourceRepository;
@@ -81,6 +84,7 @@ interface IpcContext {
 
 export function registerIpcHandlers(context: IpcContext): () => void {
   const registered: string[] = [];
+  context.window.once('closed', () => context.filmMedia.cancelAll());
   const handle = <T>(channel: string, callback: (event: IpcMainInvokeEvent, payload: unknown) => Promise<T> | T): void => {
     ipcMain.handle(channel, async (event, payload) => {
       if (event.sender !== context.window.webContents
@@ -95,7 +99,7 @@ export function registerIpcHandlers(context: IpcContext): () => void {
         }
         return success(await callback(event, payload));
       } catch (error) {
-        const code = error instanceof Error ? error.message : 'IPC_FAILED';
+        const code = error instanceof Error ? (filesystemErrorCode(error) ?? error.message) : 'IPC_FAILED';
         context.logger.error('IPC handler failed', { channel, error: code });
         return failure(code, publicMessage(code));
       }
@@ -149,6 +153,29 @@ export function registerIpcHandlers(context: IpcContext): () => void {
   });
   handle(IPC_CHANNELS.sourcesRestore, (_event, payload) => context.sources.restore(validateRestoreSource(payload).id));
   handle(IPC_CHANNELS.sourcesFindDeleted, (_event, payload) => context.sources.findDeletedByRootPath(validateFindDeletedSource(payload).rootPath));
+
+  handle(IPC_CHANNELS.filmsSetCover, (_event, payload) => {
+    const input = validateFilmCover(payload);
+    return context.filmMedia.setCover(input.filmId, input.assetId);
+  });
+  handle(IPC_CHANNELS.filmsImportCover, async (_event, payload) => {
+    if (!isUuid(payload)) throw new Error('INVALID_COVER_INPUT');
+    if (!context.films.detail(payload)) throw new Error('FILM_NOT_FOUND');
+    const result = await dialog.showOpenDialog(context.window, {
+      title: '选择影片封面', properties: ['openFile'],
+      filters: [{ name: '图片或 GIF', extensions: ['jpg', 'jpeg', 'png', 'webp', 'gif'] }],
+    });
+    if (result.canceled || !result.filePaths[0]) return null;
+    return context.filmMedia.importCover(payload, result.filePaths[0]);
+  });
+  handle(IPC_CHANNELS.filmsCreateGif, (event, payload) => context.filmMedia.createGif(validateFilmGif(payload), (progress) => {
+    if (!event.sender.isDestroyed()) event.sender.send(IPC_CHANNELS.filmsGifProgress, progress);
+  }));
+  handle(IPC_CHANNELS.filmsCancelGif, (_event, payload) => {
+    if (!isUuid(payload)) throw new Error('INVALID_GIF_INPUT');
+    context.filmMedia.cancel(payload);
+    return null;
+  });
 
   handle(IPC_CHANNELS.filmsPage, (_event, payload) => context.libraryRead.page(payload));
   handle(IPC_CHANNELS.filmsNavigationCounts, () => context.libraryRead.navigationCounts());
@@ -437,8 +464,26 @@ function failure(code: string, message: string): ApiResult<never> {
   return { ok: false, error: { code, message } };
 }
 
+function filesystemErrorCode(error: Error): string | null {
+  const code = (error as Error & { code?: string }).code;
+  return code && ['EACCES', 'EPERM', 'ENOSPC', 'ENOENT'].includes(code) ? code : null;
+}
+
 function publicMessage(code: string): string {
   const messages: Record<string, string> = {
+    INVALID_GIF_INPUT: '截取参数无效：请选择影片范围内最长 30 秒的片段',
+    INVALID_COVER_INPUT: '请选择有效的图片或 GIF 文件（最大 50 MB）',
+    COVER_NOT_FOUND: '封面图片不存在或已丢失',
+    GIF_TOOLS_UNAVAILABLE: '未找到 FFmpeg，请检查设置中的 ffprobe 路径，确保同目录有 ffmpeg.exe，或将 FFmpeg 加入 PATH',
+    GIF_GENERATION_FAILED: 'GIF 生成失败，请检查影片能否正常解码',
+    GIF_TIMEOUT: 'GIF 生成超时，请缩短片段或降低尺寸和帧率',
+    GIF_CANCELLED: '已取消 GIF 截取',
+    FILM_MEDIA_BUSY: '正在处理影片图片，请完成或取消后再操作',
+    EACCES: '没有权限写入影片目录或读取所选文件',
+    EPERM: '没有权限写入影片目录或读取所选文件',
+    ENOSPC: '磁盘空间不足，无法保存图片',
+    ENOENT: '影片或图片文件不存在，请检查来源是否在线',
+
     SOURCE_NOT_FOUND: '影片来源不存在',
     FILM_NOT_FOUND: '影片不存在',
     NFO_NOT_FOUND: '没有找到可读取的 NFO',

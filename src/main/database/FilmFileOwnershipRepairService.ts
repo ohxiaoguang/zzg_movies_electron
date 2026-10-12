@@ -73,6 +73,8 @@ interface FilmFileRow {
 }
 
 interface FilmAssetRow {
+  custom_cover?: number;
+  user_managed?: number;
   id: string;
   film_id: string;
   asset_type: string;
@@ -289,10 +291,23 @@ export class FilmFileOwnershipRepairService {
     const survivorRows = this.db.prepare('SELECT * FROM film_asset WHERE film_id = ?').all(survivorFilmId) as FilmAssetRow[];
     const mergedRows = this.db.prepare('SELECT * FROM film_asset WHERE film_id = ?').all(mergedFilmId) as FilmAssetRow[];
     for (const row of mergedRows) {
+      // Prefer the surviving film's chosen cover when both records have one.
+      const hasCover = survivorRows.some((asset) => asset.custom_cover);
+      if (row.custom_cover && hasCover) {
+        this.db.prepare('UPDATE film_asset SET custom_cover = 0 WHERE id = ?').run(row.id);
+        row.custom_cover = 0;
+      }
       const duplicate = survivorRows.find((candidate) => candidate.asset_type === row.asset_type && safeNormalize(candidate.relative_path) === safeNormalize(row.relative_path));
       if (duplicate) {
         if (duplicate.missing && !row.missing) {
           this.db.prepare('UPDATE film_asset SET sort_order = ?, file_size = ?, file_modified_at = ?, missing = 0 WHERE id = ?').run(row.sort_order, row.file_size, row.file_modified_at, duplicate.id);
+        }
+        if (row.custom_cover) this.db.prepare('UPDATE film_asset SET custom_cover = 0 WHERE id = ?').run(row.id);
+        if (row.user_managed || row.custom_cover) {
+          this.db.prepare('UPDATE film_asset SET user_managed = 1, custom_cover = ? WHERE id = ?')
+            .run(duplicate.custom_cover || row.custom_cover ? 1 : 0, duplicate.id);
+          duplicate.user_managed = 1;
+          duplicate.custom_cover = duplicate.custom_cover || row.custom_cover;
         }
         this.db.prepare('DELETE FROM film_asset WHERE id = ?').run(row.id);
         report.duplicateAssetsRemoved += 1;

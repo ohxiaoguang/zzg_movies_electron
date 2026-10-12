@@ -60,7 +60,7 @@ describe('custom categories', () => {
 
   it('normalizes names, rejects empty/case duplicates, and persists ordering', async () => {
     const context = await scannedContext();
-    expect(context.database.schemaVersion).toBe(17);
+    expect(context.database.schemaVersion).toBe(18);
     expect(context.database.hasTable('genre')).toBe(true);
     expect(context.database.hasTable('film_genre')).toBe(true);
     expect((context.database.db.prepare("SELECT 1 AS present FROM pragma_table_info('film') WHERE name = 'status'").get() as { present: number }).present).toBe(1);
@@ -76,7 +76,7 @@ describe('custom categories', () => {
     databases.splice(databases.indexOf(context.database), 1);
     const reopened = new DatabaseManager(databasePath);
     databases.push(reopened);
-    expect(reopened.schemaVersion).toBe(17);
+    expect(reopened.schemaVersion).toBe(18);
     expect(new FilmRepository(reopened.db).listCategories().map((item) => item.name)).toEqual(['悬疑', 'Classic Films']);
   });
 

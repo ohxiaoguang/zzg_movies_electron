@@ -17,6 +17,9 @@ import type {
   CreateSourceInput,
   DesktopSubtitleTrackDto,
   FilmPartDto,
+  FilmGifInput,
+  FilmGifProgressDto,
+  FilmGifResultDto,
   FilmDetailDto,
   FilmPageDto,
   FilmNavigationCountsDto,
@@ -82,6 +85,11 @@ export interface FilmLibraryApi {
     findDeleted(input: FindDeletedSourceInput): Promise<ApiResult<MediaSourceDto | null>>;
   };
   films: {
+    setCover(filmId: string, assetId: string | null): Promise<ApiResult<FilmDetailDto>>;
+    importCover(filmId: string): Promise<ApiResult<FilmDetailDto | null>>;
+    createGif(input: FilmGifInput): Promise<ApiResult<FilmGifResultDto>>;
+    cancelGif(requestId: string): Promise<ApiResult<null>>;
+    onGifProgress(listener: (progress: FilmGifProgressDto) => void): () => void;
     page(query: FilmPageQuery): Promise<ApiResult<FilmPageDto>>;
     navigationCounts(): Promise<ApiResult<FilmNavigationCountsDto>>;
     exportCsv(query: FilmPageQuery): Promise<ApiResult<FilmCsvExportResultDto>>;

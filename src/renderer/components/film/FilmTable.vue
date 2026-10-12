@@ -39,8 +39,8 @@ function availabilityLabel(value: FilmSummaryDto['availability']): string {
 <style scoped>
 .film-table { cursor: pointer; }
 .table-title { display: flex; align-items: center; gap: 12px; }
-.table-thumb { width: 34px; height: 50px; flex: 0 0 auto; overflow: hidden; border-radius: 5px; background: #252b38; }
-.table-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.table-thumb { width: 80px; aspect-ratio: 16 / 9; flex: 0 0 auto; overflow: hidden; border-radius: 5px; background: #252b38; }
+.table-thumb img { width: 100%; height: 100%; object-fit: contain; }
 .table-title strong { display: block; max-width: 330px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .table-title small { display: block; max-width: 330px; margin-top: 5px; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .ok-mark { color: var(--accent); font-size: 12px; }

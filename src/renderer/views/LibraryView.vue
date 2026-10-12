@@ -148,7 +148,7 @@ function changePage(page: number): void { library.filters.page = page; void libr
     <div class="page-heading">
       <div><div class="eyebrow">YOUR OFFLINE CINEMA</div><h1 class="page-title">{{ allData ? '所有数据' : library.filters.organizationState === 'unorganized' ? '未整理' : library.filters.organizationState === 'organized' ? '已整理' : library.filters.favoriteOnly ? '收藏' : '全部影片' }}</h1><p class="page-caption">{{ library.pageData.total }} 条记录 · 所有资料只保存在本机</p></div>
       <section class="global-filters" aria-label="全局筛选">
-        <div class="global-filter-heading"><strong>全局筛选</strong><span>跨页面生效 · 重启后保留</span><el-button v-if="library.filters.sourceIds?.length || library.filters.categoryIds?.length" link size="small" @click="clearGlobalFilters">清空全局筛选</el-button></div>
+        <div class="global-filter-heading" title="跨页面生效 · 重启后保留"><strong>全局筛选</strong><span>跨页面生效 · 重启后保留</span><el-button v-if="library.filters.sourceIds?.length || library.filters.categoryIds?.length" link size="small" @click="clearGlobalFilters">清空全局筛选</el-button></div>
         <div class="global-filter-fields">
           <div class="source-filter" role="group" aria-label="来源（可多选）">
             <button type="button" class="source-filter-button" :aria-pressed="!library.filters.sourceIds?.length" @click="clearSourceFilter">全部来源</button>
@@ -160,8 +160,8 @@ function changePage(page: number): void { library.filters.page = page; void libr
       </section>
       <div class="heading-actions"><el-button v-if="exportPage" :loading="exportingCsv" @click="exportCsv"><Download />导出 CSV</el-button><el-button v-if="allData" type="danger" :disabled="!selectedRecordIds.length" :loading="deletingRecords" @click="deleteRecords(selectedRecordIds)">删除选中</el-button><el-button v-else type="primary" @click="startScan"><Operation />扫描来源</el-button></div>
     </div>
-    <div class="page-filter-heading">当前页筛选<span>切换影片页面后重置</span></div>
     <div class="toolbar library-toolbar" role="group" aria-label="当前页筛选">
+      <div class="page-filter-heading" title="切换影片页面后重置">当前页筛选</div>
       <el-input v-model="library.filters.search" clearable placeholder="搜索标题、文件名…" @input="queueSearch"><template #prefix><Search /></template></el-input>
       <el-select v-model="library.filters.nfoTagIds" multiple filterable clearable placeholder="NFO 标签" @change="filterChanged"><el-option v-for="tag in nfoTags" :key="tag.id" :label="tag.name" :value="tag.id" /></el-select>
       <el-select v-model="library.filters.actor" filterable clearable placeholder="NFO 演员" @change="filterChanged"><el-option v-for="actor in actors" :key="actor.name" :label="`${actor.name} (${actor.filmCount})`" :value="actor.name" /></el-select>
@@ -182,20 +182,25 @@ function changePage(page: number): void { library.filters.page = page; void libr
 </template>
 
 <style scoped>
-.library-page .page-heading { align-items: center; flex-wrap: wrap; }
-.global-filters { flex: 1; min-width: 360px; max-width: 840px; padding: 12px 14px; border: 1px solid rgba(152, 227, 194, .2); border-radius: 12px; background: rgba(152, 227, 194, .04); }
-.global-filter-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; min-height: 20px; margin-bottom: 8px; font-size: 11px; }
+.library-page .page-heading { align-items: center; flex-wrap: wrap; gap: 14px; margin-bottom: 10px; }
+.library-page .page-heading .eyebrow { display: none; }
+.library-page .page-title { margin: 0; font-size: 24px; }
+.library-page .page-caption { margin: 4px 0 0; }
+.library-toolbar { gap: 8px; padding: 8px 10px; margin-bottom: 12px; border-radius: 10px; }
+.global-filters { flex: 1; min-width: 360px; max-width: none; display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid rgba(152, 227, 194, .2); border-radius: 12px; background: rgba(152, 227, 194, .04); }
+.global-filter-heading { display: flex; flex-direction: column; align-items: flex-start; flex: 0 0 auto; gap: 2px; margin-bottom: 0; font-size: 11px; }
 .global-filter-heading strong { color: var(--accent); font-weight: 600; }
+.global-filter-heading > span { display: none; }
 .global-filter-heading span, .page-filter-heading span { color: var(--muted); font-size: 11px; }
 .global-filter-heading .el-button { margin-left: auto; }
-.global-filter-fields { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 10px; }
+.global-filter-fields { display: flex; flex: 1; min-width: 0; align-items: center; flex-wrap: wrap; gap: 8px; }
 .global-filter-fields .source-filter { display: flex; flex: 1 1 240px; flex-wrap: wrap; gap: 7px; min-width: 0; }
-.source-filter-button { max-width: 100%; padding: 7px 11px; border: 1px solid var(--line); border-radius: 7px; color: var(--muted); background: transparent; font: inherit; font-size: 12px; overflow-wrap: anywhere; cursor: pointer; }
+.source-filter-button { max-width: 100%; padding: 5px 9px; border: 1px solid var(--line); border-radius: 7px; color: var(--muted); background: transparent; font: inherit; font-size: 12px; overflow-wrap: anywhere; cursor: pointer; }
 .source-filter-button:hover, .source-filter-button:focus-visible { border-color: var(--accent); color: var(--accent); }
 .source-filter-button[aria-pressed="true"] { color: #12211d; border-color: var(--accent); background: var(--accent); font-weight: 600; }
-.global-filter-fields .category-filter { flex: 0 1 260px; min-width: 220px; }
+.global-filter-fields .category-filter { flex: 0 1 240px; min-width: 200px; }
 .filter-storage-error { display: block; margin-top: 8px; color: #ffadad; }
-.page-filter-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; color: var(--subtle); font-size: 12px; }
+.page-filter-heading { display: flex; align-items: center; flex: 0 0 auto; gap: 8px; margin-bottom: 0; color: var(--subtle); font-size: 12px; }
 .heading-actions { display: flex; gap: 9px; }
 .heading-actions .el-button svg { width: 15px; margin-right: 5px; }
 .library-toolbar .el-input { width: 260px; }
@@ -203,5 +208,5 @@ function changePage(page: number): void { library.filters.page = page; void libr
 .library-toolbar .el-radio-button svg { width: 15px; }
 .error-banner { padding: 13px 16px; margin-bottom: 16px; border: 1px solid rgba(255, 120, 120, .25); border-radius: 9px; color: #ffadad; background: rgba(255, 100, 100, .07); font-size: 13px; }
 @media (max-width: 1100px) { .global-filters { order: 3; flex-basis: 100%; max-width: none; min-width: 0; }.heading-actions { margin-left: auto; } }
-@media (max-width: 760px) { .global-filters { width: 100%; }.global-filter-fields { flex-direction: column; }.global-filter-fields .source-filter { flex: auto; }.global-filter-fields .el-select { width: 100%; flex: auto; min-width: 0; }.heading-actions { margin-left: 0; flex-wrap: wrap; }.library-toolbar .el-input { width: 100%; } }
+@media (max-width: 760px) { .global-filters { width: 100%; align-items: flex-start; }.global-filter-fields { flex-direction: column; }.global-filter-fields .source-filter { flex: auto; }.global-filter-fields .el-select { width: 100%; flex: auto; min-width: 0; }.heading-actions { margin-left: 0; flex-wrap: wrap; }.library-toolbar .el-input { width: min(100%, 240px); flex: 1 1 180px; } }
 </style>

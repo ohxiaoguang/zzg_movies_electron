@@ -88,6 +88,7 @@ export interface FindDeletedSourceInput {
 }
 
 export interface FilmAssetDto {
+  customCover?: boolean;
   id: string;
   assetType: AssetType;
   relativePath: string;
@@ -196,6 +197,7 @@ export interface FilmSummaryDto {
   customCategories: CustomCategoryDto[];
   rating: number;
   missing: boolean;
+  /** Primary cover: custom selection, then fanart, thumb and poster. */
   posterAssetId: string | null;
   previewAssetId: string | null;
   allowOriginalPreview: boolean;
@@ -290,6 +292,28 @@ export interface FilmCsvExportResultDto {
   saved: boolean;
   rowCount: number;
   filePath?: string;
+}
+
+export interface FilmGifInput {
+  requestId: string;
+  filmId: string;
+  partId: string;
+  startSeconds: number;
+  endSeconds: number;
+  width: number;
+  fps: number;
+  setAsCover: boolean;
+}
+
+export interface FilmGifProgressDto {
+  requestId: string;
+  percent: number;
+}
+
+export interface FilmGifResultDto {
+  detail: FilmDetailDto;
+  assetId: string;
+  filename: string;
 }
 
 export interface FilmUpdateInput {
@@ -410,6 +434,8 @@ export interface WebHealthDto {
 }
 
 export interface LanServerInfoDto {
+  cardSize: number;
+  pageSize: number;
   service: 'local-film-library';
   version: string;
   apiVersion: 'v1';

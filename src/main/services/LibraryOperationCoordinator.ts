@@ -1,11 +1,12 @@
 /** Serializes filesystem/index changes across desktop and web entry points. */
 export class LibraryOperationCoordinator {
-  private active: 'scan' | 'transfer' | null = null;
+  private active: 'scan' | 'transfer' | 'media' | null = null;
   private stopping = false;
   private waiters: Array<() => void> = [];
 
-  public acquire(kind: 'scan' | 'transfer'): () => void {
+  public acquire(kind: 'scan' | 'transfer' | 'media'): () => void {
     if (this.stopping) throw new Error('APPLICATION_SHUTTING_DOWN');
+    if (this.active === 'media') throw new Error('FILM_MEDIA_BUSY');
     if (this.active === 'transfer') throw new Error('SOURCE_TRANSFER_ALREADY_RUNNING');
     if (this.active === 'scan') throw new Error(kind === 'scan' ? 'SCAN_ALREADY_RUNNING' : 'SOURCE_TRANSFER_SCAN_RUNNING');
     this.active = kind;

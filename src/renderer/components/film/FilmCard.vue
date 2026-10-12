@@ -168,23 +168,23 @@ onBeforeUnmount(() => {
 <style scoped>
 .film-card { width: 100%; min-width: 0; cursor: pointer; transition: filter .25s ease; }
 .film-card:hover { filter: brightness(1.04); }
-.film-poster { position: relative; aspect-ratio: 2 / 3; overflow: hidden; border-radius: 13px; background: #202532; box-shadow: 0 14px 32px rgba(0, 0, 0, .22); }
-.poster-image { display: block; width: 100%; height: 100%; object-fit: cover; }
+.film-poster { position: relative; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 13px; background: #202532; box-shadow: 0 14px 32px rgba(0, 0, 0, .22); }
+.poster-image { display: block; width: 100%; height: 100%; object-fit: contain; }
 .poster-placeholder { display: flex; width: 100%; height: 100%; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: #778096; background: linear-gradient(155deg, #242a38, #171a24); }
 .poster-placeholder span { color: #9fa7b8; font-size: 38px; font-weight: 800; }
 .film-card-topline, .film-card-bottomline { position: absolute; right: 10px; left: 10px; display: flex; align-items: center; justify-content: space-between; }
 .film-card-topline { top: 10px; }
 .film-card-badges { display: grid; justify-items: start; gap: 6px; }
-.film-card-actions { display: flex; margin-left: auto; flex-direction: column; align-items: center; gap: 6px; }
-.film-card-bottomline { right: 48px; bottom: 10px; }
-.preview-trigger-stack { position: absolute; z-index: 3; right: 9px; bottom: 9px; display: flex; flex-direction: column; gap: 5px; }
+.film-card-actions { display: flex; margin-left: auto; flex-direction: row; align-items: center; gap: 6px; }
+.film-card-bottomline { right: 118px; bottom: 10px; }
+.preview-trigger-stack { position: absolute; z-index: 3; right: 9px; bottom: 9px; display: flex; flex-direction: row; gap: 5px; }
 .preview-trigger-stack button { display: grid; width: 30px; height: 30px; padding: 0; place-items: center; border: 1px solid rgba(255,255,255,.2); border-radius: 8px; color: #e7edf4; background: rgba(9,12,16,.78); cursor: pointer; backdrop-filter: blur(8px); }
 .preview-trigger-stack button:hover, .preview-trigger-stack button:focus-visible { border-color: var(--accent); color: var(--accent); outline: 2px solid rgba(152,227,194,.25); }
 .preview-trigger-stack button:disabled { cursor: not-allowed; opacity: .28; }
 .preview-trigger-stack svg { width: 15px; height: 15px; }
 @media (hover: none), (pointer: coarse) { .preview-trigger-stack { display: none; } }
 .favorite-button, .folder-button { display: grid; width: 30px; height: 30px; padding: 0; place-items: center; border: 1px solid rgba(255,255,255,.16); border-radius: 50%; color: #e8edf4; background: rgba(9,12,16,.72); cursor: pointer; backdrop-filter: blur(8px); }.favorite-button svg, .folder-button svg { width: 15px; }.favorite-button.active { border-color: rgba(255,217,139,.55); color: #ffd98b; background: rgba(62,45,15,.78); }.favorite-button:hover, .favorite-button:focus-visible, .folder-button:hover, .folder-button:focus-visible { border-color: var(--accent); color: var(--accent); outline: 2px solid rgba(152,227,194,.25); }.favorite-button:disabled, .folder-button:disabled { cursor: wait; opacity: .65; }
-.organization-chip, .category-chips > span { padding: 4px 7px; border-radius: 6px; color: #eef3f1; background: rgba(9, 12, 16, .68); font-size: 10px; backdrop-filter: blur(8px); }.category-chips { display: flex; min-width: 0; gap: 4px; overflow: hidden; }.category-chips > span { max-width: 76px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.organization-chip { color: #ffd19e; }
+.organization-chip, .category-chips > span { padding: 4px 7px; border-radius: 6px; color: #eef3f1; background: rgba(9, 12, 16, .68); font-size: 10px; backdrop-filter: blur(8px); }.category-chips { display: flex; min-width: 0; gap: 4px; overflow: hidden; }.category-chips > span { max-width: 76px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.organization-chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #ffd19e; }
 .film-card-info { padding: 10px 2px 4px; }
 .film-card-title { overflow: hidden; color: var(--ink); font-size: 14px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .film-card-meta { display: flex; justify-content: space-between; gap: 10px; margin-top: 5px; overflow: hidden; color: var(--muted); font-size: 11px; }

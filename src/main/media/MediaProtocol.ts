@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { DEFAULT_COVER_ASSET_TYPES } from '../../shared/enums';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { protocol } from 'electron';
@@ -36,7 +37,7 @@ export class MediaProtocol {
       const route = parseMediaUrl(request.url);
       if (!route) return new Response('Not Found', { status: 404 });
       const preferredPoster = route.kind === 'poster'
-        ? this.films.preferredAssetLocation(route.id, ['poster', 'thumb'])
+        ? this.films.preferredAssetLocation(route.id, DEFAULT_COVER_ASSET_TYPES)
         : null;
       const generatedPoster = route.kind === 'poster' && !preferredPoster;
       const location = preferredPoster ?? this.resolveLocation(route.kind, route.id);

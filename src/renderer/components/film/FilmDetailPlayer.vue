@@ -14,6 +14,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   positionChange: [currentSeconds: number, durationSeconds: number, partId: string];
   addToResonance: [];
+  captureGif: [];
   fullscreenChange: [value: boolean];
 }>();
 
@@ -546,6 +547,7 @@ onBeforeUnmount(() => {
         <small v-if="source" class="playback-mode-badge" :class="{ fallback: playbackSourceMode === 'compatibility' }">{{ playbackModeLabel }}</small>
       </div>
       <div class="player-actions">
+        <el-button v-if="!appFullscreen" size="small" :disabled="!selectedPart || !durationSeconds" @click="emit('captureGif')">截取 GIF</el-button>
         <button v-if="appFullscreen" type="button" class="app-playback-button" @click="togglePlayback">{{ isPlaying ? '暂停' : '播放' }}</button>
         <button ref="fullscreenButton" type="button" class="app-fullscreen-button" :aria-pressed="appFullscreen" :disabled="!source" @click="toggleFullscreen">{{ appFullscreen ? '退出全屏' : '应用内全屏' }}</button>
         <el-dropdown v-if="appFullscreen && vrEnabled" class="fullscreen-vr-menu" trigger="click" @command="($event: string) => $event === 'mute' ? toggleMute() : resetVrView()">

@@ -53,7 +53,15 @@ try {
   fs.writeFileSync(path.join(mediaRoot, 'Smoke Movie.nfo'), '<movie><title>Smoke Movie</title><tag>Smoke Tag</tag><actor>Smoke Actor</actor><plot>Smoke summary</plot></movie>');
   fs.writeFileSync(path.join(mediaRoot, 'Smoke Movie.zh-Hans.srt'), '1\n00:00:00,000 --> 00:00:00,900\n烟雾测试字幕\n', 'utf8');
   fs.writeFileSync(path.join(mediaRoot, 'Smoke Movie-poster.jpg'), 'poster');
-  fs.writeFileSync(path.join(mediaRoot, 'Smoke Movie-fanart.jpg'), 'fanart');
+  if (ffmpegAvailable) {
+    const fanart = spawnSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi',
+      '-i', 'testsrc2=size=640x360:rate=1', '-frames:v', '1', '-q:v', '2',
+      path.join(mediaRoot, 'Smoke Movie-fanart.jpg')], { windowsHide: true, stdio: 'pipe' });
+    if (fanart.status !== 0) throw new Error(`Could not generate fanart fixture: ${String(fanart.stderr)}`);
+  } else {
+    fs.writeFileSync(path.join(mediaRoot, 'Smoke Movie-fanart.jpg'), Buffer.from(
+      'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64'));
+  }
   fs.writeFileSync(path.join(mediaRoot, 'extrafanart', '1.jpg'), 'extra');
 
   child = spawn(executable, [
@@ -148,6 +156,21 @@ try {
         if (directoryRescanStatus.ok && directoryRescanStatus.data && directoryRescanStatus.data.status !== 'running') break;
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
+      const gifProbe = detail.ok && ${ffmpegAvailable} ? await (async () => {
+        const progress = [];
+        const requestId = crypto.randomUUID();
+        const unsubscribe = window.filmLibrary.films.onGifProgress((event) => {
+          if (event.requestId === requestId) progress.push(event.percent);
+        });
+        const generated = await window.filmLibrary.films.createGif({ requestId, filmId: detail.data.id,
+          partId: detail.data.parts[0].id, startSeconds: 0, endSeconds: 0.5, width: 320, fps: 10, setAsCover: true });
+        unsubscribe();
+        if (!generated.ok) return { generated };
+        const response = await fetch('film-media://asset/' + generated.data.assetId);
+        const header = new TextDecoder().decode((await response.arrayBuffer()).slice(0, 6));
+        const restoredCover = await window.filmLibrary.films.setCover(detail.data.id, null);
+        return { generated, status: response.status, contentType: response.headers.get('content-type'), header, progress, restoredCover };
+      })() : null;
       const actorList = await window.filmLibrary.actors.list();
       const actorFiltered = await window.filmLibrary.films.page({ page: 1, pageSize: 20, actor: 'Smoke Actor' });
       const parts = detail.ok ? await window.filmLibrary.films.partsList(detail.data.id) : { ok: false };
@@ -178,6 +201,14 @@ try {
       const organizedActionsText = document.querySelector('.heading-actions')?.textContent || '';
       location.hash = '#/library?smoke=1';
       for (let index = 0; index < 50 && !document.querySelector('.film-card'); index += 1) await new Promise((resolve) => setTimeout(resolve, 100));
+      const cardFrame = document.querySelector('.film-poster');
+      const cardBox = cardFrame?.getBoundingClientRect();
+      const cardRatio = cardBox?.height ? cardBox.width / cardBox.height : 0;
+      const cardImage = cardFrame?.querySelector('img');
+      const cardImageFit = cardImage ? getComputedStyle(cardImage).objectFit : '';
+      const defaultFanart = detail.ok ? detail.data.images.find((image) => image.assetType === 'fanart') : null;
+      const usesFanart = Boolean(defaultFanart && page.data.items[0].posterAssetId === defaultFanart.id
+        && cardImage?.src.includes(defaultFanart.id));
       document.querySelector('.film-card')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       await new Promise((resolve) => setTimeout(resolve, 500));
       const detailVideo = document.querySelector('.detail-player-video');
@@ -217,13 +248,13 @@ try {
       document.querySelector('.actor-links button')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       await new Promise((resolve) => setTimeout(resolve, 300));
       const detailSelectedActor = new URLSearchParams(location.hash.split('?')[1] || '').get('actor');
-      const ui = { sidebarText, sourcesPageText, actorsPageText, selectedActor, categoriesPageText, organizedActionsText, detailHeaderText, drawerText, shortcutStartText, detailVideoCount, detailPlayerHeight, detailStageRatio, detailDrawerHeaderHeight, detailTabsText, detailColumnRatio, detailBodyOverflow, detailDrawerWidthRatio, hasImageThumbnail: Boolean(imageThumbnail), imageViewerOpen, detailActorText, detailSelectedActor, detailHeader: Boolean(detailHeader) };
+      const ui = { cardRatio, cardImageFit, usesFanart, sidebarText, sourcesPageText, actorsPageText, selectedActor, categoriesPageText, organizedActionsText, detailHeaderText, drawerText, shortcutStartText, detailVideoCount, detailPlayerHeight, detailStageRatio, detailDrawerHeaderHeight, detailTabsText, detailColumnRatio, detailBodyOverflow, detailDrawerWidthRatio, hasImageThumbnail: Boolean(imageThumbnail), imageViewerOpen, detailActorText, detailSelectedActor, detailHeader: Boolean(detailHeader) };
       const setting = await window.filmLibrary.settings.update({ cardSize: 280, minimizeToTray: true });
       const removed = created.ok ? await window.filmLibrary.sources.remove({ id: created.data.id, mode: 'keep-records' }) : { ok: false };
       const allData = await window.filmLibrary.films.recordsPageAll({ page: 1, pageSize: 20 });
       const restored = created.ok ? await window.filmLibrary.sources.restore({ id: created.data.id }) : { ok: false };
       const after = await window.filmLibrary.sources.list();
-      return { account, health, info, before, created, previewEnabled, started, scanStatus, page, detail, localWebSettings, localWeb, previewProbe, directoryRescan, directoryRescanStatus, actorList, actorFiltered, parts, unorganizedBefore, classic, mystery, categorized, favorited, patched, patchedDetail, organizedAfter, ui, setting, removed, allData, restored, after };
+      return { account, health, info, before, created, previewEnabled, started, scanStatus, page, detail, localWebSettings, localWeb, previewProbe, gifProbe, directoryRescan, directoryRescanStatus, actorList, actorFiltered, parts, unorganizedBefore, classic, mystery, categorized, favorited, patched, patchedDetail, organizedAfter, ui, setting, removed, allData, restored, after };
     })()`, true);
 
     if (evaluation?.exceptionDetails) throw new Error(`Renderer evaluation failed: ${JSON.stringify(evaluation.exceptionDetails)}`);
@@ -242,6 +273,20 @@ try {
       if (result.previewProbe?.status !== 206 || (videoFormat === 'mpg' && (result.previewProbe.contentType !== 'video/mp4' || !result.previewProbe.hasFtyp)) || result.previewProbe.byteLength !== 10 || !result.previewProbe.contentRange?.startsWith('bytes 0-9/') || result.previewProbe.secondStatus !== 206 || result.previewProbe.secondByteLength !== 100 || !result.previewProbe.secondContentRange?.startsWith('bytes 100-199/')) throw new Error(`Compatibility preview failed: ${JSON.stringify(result.previewProbe)}`);
     } else if (result.previewProbe?.status !== 206 || result.previewProbe.directBody !== 'Smoke Movi') {
       throw new Error(`Original preview protocol failed: ${JSON.stringify(result.previewProbe)}`);
+    }
+    if (ffmpegAvailable && (!result.gifProbe?.generated?.ok || result.gifProbe.status !== 200
+      || result.gifProbe.contentType !== 'image/gif' || !result.gifProbe.header.startsWith('GIF')
+      || result.gifProbe.generated.data.detail.posterAssetId !== result.gifProbe.generated.data.assetId
+      || !result.gifProbe.progress.includes(100) || !result.gifProbe.restoredCover?.ok
+      || result.gifProbe.restoredCover.data.posterAssetId !== result.detail.data.posterAssetId)) {
+      throw new Error(`GIF/cover IPC verification failed: ${JSON.stringify(result.gifProbe)}`);
+    }
+    if (result.ui?.cardRatio < 1.75 || result.ui?.cardRatio > 1.79
+      || result.ui?.cardImageFit !== 'contain' || !result.ui?.usesFanart) {
+      throw new Error(`Landscape cover verification failed: ${JSON.stringify(result.ui)}`);
+    }
+    if (!result.ui?.drawerText.includes('设置封面 / GIF') || !result.ui.drawerText.includes('截取 GIF')) {
+      throw new Error('GIF/cover entry points missing');
     }
     if (!result.directoryRescan?.ok || result.directoryRescanStatus?.data?.status !== 'completed') throw new Error(`Directory rescan failed: ${JSON.stringify({ directoryRescan: result.directoryRescan, status: result.directoryRescanStatus })}`);
     if (!result.actorList?.ok || result.actorList.data[0]?.name !== 'Smoke Actor' || result.actorList.data[0]?.filmCount !== 1 || !result.actorFiltered?.ok || result.actorFiltered.data.total !== 1) throw new Error(`Actor index failed: ${JSON.stringify({ actorList: result.actorList, actorFiltered: result.actorFiltered })}`);
@@ -282,11 +327,22 @@ try {
           const ready = await cdpEvaluate(browserSocket, `document.readyState === 'complete' && document.querySelectorAll('#source-buttons button').length >= 3 && document.querySelector('#film-grid')?.getAttribute('aria-busy') === 'false'`, false);
           return ready?.result?.value === true;
         }, timeoutMs, 'Web filter page did not finish loading');
+        await cdpEvaluate(browserSocket, "localStorage.setItem('film-library-web-card-size', '140'); true", false);
+        const displaySettings = await cdpEvaluate(socket, "window.filmLibrary.settings.update({ cardSize: 240, pageSize: 48 })", true);
+        if (!displaySettings?.result?.value?.ok) throw new Error('Desktop display settings update failed');
+        await cdpEvaluate(browserSocket, "window.dispatchEvent(new Event('focus')); true", false);
         await verifyWebLibraryFilters((expression, awaitPromise) => cdpEvaluate(browserSocket, expression, awaitPromise));
+        const updatedDisplay = await cdpEvaluate(socket, "window.filmLibrary.settings.update({ cardSize: 280, pageSize: 96 })", true);
+        if (!updatedDisplay?.result?.value?.ok) throw new Error('Second display settings update failed');
+        await cdpEvaluate(browserSocket, "window.dispatchEvent(new Event('focus')); true", false);
+        await waitFor(async () => {
+          const synced = await cdpEvaluate(browserSocket, "document.documentElement.style.getPropertyValue('--card-width') === '280px' && document.querySelector('#page-size-value').textContent === '96' && document.querySelector('#film-grid').getAttribute('aria-busy') === 'false'", false);
+          return synced?.result?.value === true;
+        }, timeoutMs, 'Web display settings did not follow subsequent desktop changes');
         const webScreenshot = await cdpCommand(browserSocket, 'Page.captureScreenshot', { format: 'png' });
         fs.writeFileSync(path.join(projectRoot, 'out/filter-web.png'), Buffer.from(webScreenshot.data, 'base64'));
         await cdpCommand(browserSocket, 'Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
-        const mobile = await cdpEvaluate(browserSocket, 'document.documentElement.scrollWidth <= window.innerWidth && document.querySelectorAll(\'#source-buttons button[aria-pressed="true"]\').length === 2', false);
+        const mobile = await cdpEvaluate(browserSocket, 'document.documentElement.scrollWidth <= window.innerWidth && document.querySelectorAll(\'#source-buttons button[aria-pressed="true"]\').length === 2 && document.querySelector(\'.global-filters\').getBoundingClientRect().height < 170', false);
         if (mobile?.result?.value !== true) throw new Error('Web filters overflow the mobile viewport');
         await new Promise((resolve) => setTimeout(resolve, 400));
         const mobileScreenshot = await cdpCommand(browserSocket, 'Page.captureScreenshot', { format: 'png' });

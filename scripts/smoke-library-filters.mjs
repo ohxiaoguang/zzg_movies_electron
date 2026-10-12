@@ -80,10 +80,12 @@ export async function verifyWebLibraryFilters(evaluate) {
   await evaluate('location.reload(); true', false);
   await new Promise((resolve) => setTimeout(resolve, 500));
   const restored = await evaluate(`(async () => {
+    const server = (await (await fetch('/api/v1/server-info')).json()).data;
     for (let attempt = 0; attempt < 100; attempt += 1) {
       if (document.querySelectorAll('#source-buttons button[data-source-id][aria-pressed="true"]').length === 2 &&
           document.querySelectorAll('#category-options input:checked').length === 2 &&
-          document.documentElement.style.getPropertyValue('--card-width') === '240px') return true;
+          document.documentElement.style.getPropertyValue('--card-width') === server.cardSize + 'px' &&
+          document.querySelector('#page-size-value').textContent === String(server.pageSize)) return true;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     throw new Error('Web preferences did not survive reload');
@@ -133,14 +135,18 @@ async function webFlow() {
   await delay(200); await settled();
   assert(document.querySelectorAll('#category-options input:checked').length === 2, 'Refresh reset web categories');
   document.querySelector('.nav-item[data-view="settings"]').click();
-  const size = document.querySelector('#card-size');
-  assert(size && document.querySelector('#settings-view').contains(size), 'Card size missing from web settings');
-  size.value = '240';
-  size.dispatchEvent(new Event('input', { bubbles: true }));
+  const serverResponse = await fetch('/api/v1/server-info');
+  const server = (await serverResponse.json()).data;
+  const size = document.querySelector('#card-size-value');
+  assert(size && document.querySelector('#settings-view').contains(size), 'Shared card size missing from web settings');
+  await waitFor(() => size.textContent === server.cardSize + ' px');
+  assert(document.querySelector('#page-size-value').textContent === String(server.pageSize), 'Web page size did not follow desktop settings');
+  assert(!document.querySelector('#card-size'), 'Independent browser card size control is still present');
   document.querySelector('.nav-item[data-library-mode="all"]').click();
   await settled();
   assert(document.querySelector('#result-summary').textContent === '1 部影片', 'Web category/source query failed');
-  assert(document.documentElement.style.getPropertyValue('--card-width') === '240px', 'Web card size not applied');
+  assert(document.documentElement.style.getPropertyValue('--card-width') === server.cardSize + 'px', 'Shared card size not applied');
+  assert(Math.abs(document.querySelector('.film-card').getBoundingClientRect().width - server.cardSize) < 1, 'Web cards stretched beyond the shared width');
   assert(document.querySelector('.global-filters').getBoundingClientRect().bottom <= document.querySelector('.filters').getBoundingClientRect().top, 'Web global controls are not above local filters');
   return true;
 }

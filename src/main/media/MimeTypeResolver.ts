@@ -1,6 +1,7 @@
 import path from 'node:path';
 
 const MIME_TYPES: Record<string, string> = {
+  '.gif': 'image/gif',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.png': 'image/png',

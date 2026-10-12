@@ -132,7 +132,7 @@ describe('renderer regressions', () => {
     expect(header).toContain('flex-wrap: wrap');
     expect(header).toContain("favorite ? '已收藏' : '收藏'");
     expect(header).toContain('v-for="item in categories"');
-    expect(header).toContain('aspect-ratio: 2 / 3');
+    expect(header).toContain('aspect-ratio: 16 / 9');
     expect(drawer).toContain('grid-template-columns: minmax(240px, 1fr) minmax(0, 3fr)');
     expect(drawer).toContain('overflow: hidden');
     expect(header).not.toContain('+N');

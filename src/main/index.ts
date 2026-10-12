@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { FilmMediaService } from './services/FilmMediaService';
 import path from 'node:path';
 import { app, BrowserWindow, protocol, safeStorage } from 'electron';
 import { DatabaseManager } from './database/DatabaseManager';
@@ -137,6 +138,8 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
   );
   const accountCredentials = new AccountCredentialService(path.join(app.getPath('userData'), 'account-credentials.json'));
   const lanAuth = new LanAuthService(lanDevices, logger, accountCredentials);
+  const filmMedia = new FilmMediaService(database, films, mediaCapabilities);
+  app.on('before-quit', () => filmMedia.cancelAll());
   const management = new FilmLibraryManagementService(database, films, sources, libraryRead, scan, logger);
   const cloudBackupConfig = new CloudBackupConfigService(
     path.join(app.getPath('userData'), 'cloud-backup-config.json'),
@@ -219,6 +222,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
     mainWindow = window;
     desktopIntegration!.attachWindow(window);
     registerIpcHandlers({
+      filmMedia,
       window,
       database: database!,
       sources,
