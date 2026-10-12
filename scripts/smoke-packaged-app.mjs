@@ -305,6 +305,30 @@ try {
       const screenshot = await cdpCommand(socket, 'Page.captureScreenshot', { format: 'png' });
       fs.writeFileSync(path.join(projectRoot, 'out/filter-desktop.png'), Buffer.from(screenshot.data, 'base64'));
     }
+    const logsCheck = await cdpEvaluate(socket, `(async () => {
+      const recent = await window.filmLibrary.app.readLogs();
+      if (!recent.ok || !recent.data.entries.length) throw new Error('Cannot read app logs through preload');
+      location.hash = '#/settings';
+      for (let i = 0; i < 50; i++) {
+        const button = [...document.querySelectorAll('button')].find((item) => item.textContent.trim() === '查看日志');
+        if (button) { button.click(); break; }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      for (let i = 0; i < 50; i++) {
+        const dialog = [...document.querySelectorAll('.el-dialog')].find((item) => item.textContent.includes('应用日志'));
+        if (dialog?.querySelectorAll('.el-table__body-wrapper tbody tr').length) {
+          if (!dialog.textContent.includes('警告与错误') && !dialog.querySelector('.log-toolbar .el-select')) throw new Error('Missing log filters');
+          dialog.querySelector('.el-dialog__headerbtn').click();
+          location.hash = '#/library';
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          return true;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      throw new Error('Log viewer did not render records');
+    })()`, true);
+    if (logsCheck.exceptionDetails || logsCheck.result?.value !== true) throw new Error('Log viewer smoke: ' + JSON.stringify(logsCheck));
+    console.log('LOG_VIEWER_OK read=ok settings=ok records=visible');
     await verifyResonanceScenes((expression, awaitPromise) => cdpEvaluate(socket, expression, awaitPromise), ffmpegAvailable ? (videoFormat === 'mpg' ? 'part' : 'original-part') : null);
     if (process.env.SMOKE_WEB_FILTERS === '1') {
       const browserExecutable = process.env.SMOKE_BROWSER_EXECUTABLE || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe';

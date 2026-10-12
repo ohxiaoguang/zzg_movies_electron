@@ -80,7 +80,7 @@ export class CloudBackupService {
     }
   }
 
-  public runBackup(trigger: BackupTrigger, force = false, timeoutMs = 15_000): Promise<CloudBackupRunResultDto> {
+  public runBackup(trigger: BackupTrigger, force = false, timeoutMs = 60_000): Promise<CloudBackupRunResultDto> {
     if (this.shuttingDown && trigger !== 'shutdown') return Promise.reject(new Error('APPLICATION_SHUTTING_DOWN'));
     if (this.shutdownExpired) return Promise.reject(new Error('CLOUD_BACKUP_TIMEOUT'));
     if (this.running) {
@@ -140,7 +140,7 @@ export class CloudBackupService {
     return this.runBackup('startup');
   }
 
-  public async backupOnShutdown(timeoutMs = 8_000): Promise<CloudBackupRunResultDto | null> {
+  public async backupOnShutdown(timeoutMs = 120_000): Promise<CloudBackupRunResultDto | null> {
     if (!this.status().autoBackupOnQuit || !this.status().configured) return null;
     this.shuttingDown = true;
     this.publishActivity('shutdown', 'running');
@@ -239,6 +239,7 @@ export class CloudBackupService {
       const hash = createHash('sha256').update(content).digest('hex');
       if (!force && hash === this.config.getStored().lastSqliteHash) {
         safeUnlink(destination);
+        this.logger.info('SQLite backup unchanged', { trigger });
         return false;
       }
       const context = await this.githubContext();
@@ -261,6 +262,7 @@ export class CloudBackupService {
         }),
       }, timeoutMs);
       if (!response.commit?.sha) throw new Error('CLOUD_BACKUP_REMOTE_INVALID');
+      this.logger.info('SQLite backup uploaded', { trigger, commitSha: response.commit.sha, bytes: content.length });
       this.config.markSqliteSuccess(hash);
       safeUnlink(destination);
       return true;
@@ -478,7 +480,7 @@ export class CloudBackupService {
     const code = error instanceof Error ? error.message : 'CLOUD_BACKUP_FAILED';
     this.state = 'error';
     try { this.config.markError(code); } catch { /* Keep the original error. */ }
-    this.logger.warn('Cloud backup operation failed', { errorCode: code });
+    this.logger.warn('Cloud backup operation failed', { backupKind: this.backupKind, errorCode: code });
   }
 }
 

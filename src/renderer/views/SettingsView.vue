@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { nextTick, onMounted, onBeforeUnmount, reactive, ref } from 'vue';
+import { computed, nextTick, onMounted, onBeforeUnmount, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { FolderOpened, Setting, VideoCamera } from '@element-plus/icons-vue';
 import type {
   AppInfoDto,
+  AppLogsDto,
   CloudBackupActivityDto,
   AccountAuthStatusDto,
   CloudBackupRestorePreviewDto,
@@ -19,6 +20,35 @@ import { useResonanceStore } from '../stores/resonance';
 const library = useLibraryStore();
 const resonance = useResonanceStore();
 const info = ref<AppInfoDto | null>(null);
+const logsVisible = ref(false);
+const logsLoading = ref(false);
+const logs = ref<AppLogsDto>({ entries: [], truncated: false });
+const logSearch = ref('');
+const logFilter = ref('all');
+const filteredLogs = computed(() => {
+  const query = logSearch.value.trim().toLocaleLowerCase();
+  return logs.value.entries.filter((entry) => {
+    if (logFilter.value === 'backup' && !/backup|备份/i.test(entry.message + entry.details)) return false;
+    if (logFilter.value === 'errors' && !['warn', 'error'].includes(entry.level)) return false;
+    return !query || `${entry.at} ${entry.level} ${entry.message} ${entry.details}`.toLocaleLowerCase().includes(query);
+  });
+});
+async function refreshLogs(): Promise<void> {
+  logsLoading.value = true;
+  try {
+    const result = await window.filmLibrary.app.readLogs();
+    if (result.ok) logs.value = result.data;
+    else ElMessage.error(result.error.message);
+  } catch { ElMessage.error('读取日志失败，请尝试打开日志目录'); }
+  finally { logsLoading.value = false; }
+}
+function viewLogs(filter = 'all'): void {
+  logFilter.value = filter;
+  logSearch.value = '';
+  logsVisible.value = true;
+  void refreshLogs();
+}
+
 const form = reactive<SettingsDto>({
   slackingMode: false,
   slackingScalePercent: 40,
@@ -409,7 +439,7 @@ function formatDate(value: string | null | undefined): string {
 
 <template>
   <div class="page-wrap settings-page"><div class="page-heading"><div><div class="eyebrow">LOCAL CONFIGURATION</div><h1 class="page-title">设置</h1><p class="page-caption">调整启动、托盘、网页服务和本地预览行为。</p></div><el-button type="primary" :loading="saving" @click="save">保存设置</el-button></div>
-    <div class="settings-grid"><section class="settings-card"><div class="settings-title"><Setting /><span>应用数据</span></div><div class="data-row"><span>数据库位置</span><code>{{ info?.databasePath || '读取中…' }}</code></div><div class="data-row"><span>日志目录</span><code>{{ info?.logsDirectory || '读取中…' }}</code></div><div class="settings-actions\"><el-button size="small" @click="openFolder('data')"><FolderOpened />打开数据目录</el-button><el-button size="small" @click="openFolder('logs')">打开日志目录</el-button></div></section>
+    <div class="settings-grid"><section class="settings-card"><div class="settings-title"><Setting /><span>应用数据</span></div><div class="data-row"><span>数据库位置</span><code>{{ info?.databasePath || '读取中…' }}</code></div><div class="data-row"><span>日志目录</span><code>{{ info?.logsDirectory || '读取中…' }}</code></div><div class="settings-actions\"><el-button size="small" @click="openFolder('data')"><FolderOpened />打开数据目录</el-button><el-button size="small" @click="viewLogs()">查看日志</el-button><el-button size="small" @click="openFolder('logs')">打开日志目录</el-button></div></section>
       <section class="settings-card"><div class="settings-title"><VideoCamera /><span>卡片与播放</span></div><div class="setting-row"><label>摸鱼模式</label><el-switch v-model="form.slackingMode" aria-label="摸鱼模式" /><span class="muted">视频靠右下，图片居中，外框保持不变；保存后生效</span></div><div class="setting-row"><label>摸鱼画面比例</label><el-select v-model="form.slackingScalePercent" aria-label="摸鱼画面比例" style="width: 130px"><el-option v-for="percent in [60, 40, 35, 30, 25, 20]" :key="percent" :label="`${percent}%`" :value="percent" /></el-select><span class="muted">视频和封面的宽高比例</span></div><div class="setting-row"><label>字幕字号</label><el-input-number v-model="form.subtitleFontSizePx" aria-label="字幕字号" :min="12" :max="48" :step="2" /><span>px</span></div><p class="muted subtitle-settings-note">字幕保留在播放器大框底部，不随摸鱼画面缩小。</p><div class="setting-row"><label>悬浮延迟</label><el-input-number v-model="form.hoverDelayMs" :min="100" :max="3000" :step="50" /><span>ms</span></div><div class="setting-row"><label>预览弹窗消失延迟</label><el-input-number v-model="form.hoverCloseDelayMs" :min="0" :max="5000" :step="50" /><span>ms</span><span class="muted">桌面与网页</span></div><div class="setting-row"><label>默认卡片宽度</label><el-input-number v-model="form.cardSize" :min="140" :max="320" :step="10" /><span>px</span></div><div class="setting-row"><label>图片轮播间隔</label><el-input-number v-model="form.slideshowIntervalMs" :min="500" :max="10000" :step="100" /><span>ms</span></div><div class="setting-row"><label>快进/快退步进</label><el-input-number v-model="form.detailPlayerSeekStepSeconds" :min="1" :max="60" :step="1" /><span>秒</span><span class="muted">桌面与网页播放器</span></div><div class="setting-row"><label>Shift 微调步进</label><el-input-number v-model="form.detailPlayerFineSeekStepSeconds" :min="0.01" :max="5" :step="0.05" :precision="2" /><span>秒</span><span class="muted">桌面与网页播放器</span></div><div class="setting-row"><label>每页数量</label><el-input-number v-model="form.pageSize" :min="12" :max="200" :step="12" /></div></section>
       <section class="settings-card wide startup-settings-card">
         <div class="settings-title"><span>启动与系统托盘</span><span class="muted">Windows 正式安装版</span></div>
@@ -455,6 +485,7 @@ function formatDate(value: string | null | undefined): string {
           <el-button size="small" :loading="cloudChanging" @click="testCloudConnection">测试连接</el-button>
           <el-button size="small" type="primary" :loading="cloudChanging" @click="runCloudBackup(false)">立即备份</el-button>
           <el-button size="small" :loading="cloudChanging" @click="openRestoreDialog">查看与恢复</el-button>
+          <el-button size="small" @click="viewLogs('backup')">查看备份日志</el-button>
           <el-button v-if="cloudStatus?.tokenConfigured" size="small" type="danger" plain :loading="cloudChanging" @click="clearCloudToken">清除令牌</el-button>
         </div>
         <p class="cloud-warning">同名文件只有在文件大小或影片时长能够唯一确认时才会自动恢复；仍不唯一的影片会跳过。“查看与恢复”仍只恢复 JSON 整理数据。SQLite 快照需下载后手动恢复，或用数据库工具分析；不会自动覆盖本机数据库。GitHub 令牌使用 Windows 系统加密保存，不会写入备份文件。</p>
@@ -503,6 +534,24 @@ function formatDate(value: string | null | undefined): string {
       <section class="settings-card wide"><div class="settings-title"><span>扫描选项</span></div><div class="setting-row"><label>启动时自动扫描</label><el-switch v-model="form.autoScanOnStartup" /><span class="muted">默认关闭，避免外部磁盘未就绪时误判</span></div><el-form label-position="top"><el-form-item label="影片扩展名"><el-input :model-value="listText(form.videoExtensions)" @update:model-value="updateVideoExtensions" /></el-form-item><el-form-item label="图片扩展名"><el-input :model-value="listText(form.imageExtensions)" @update:model-value="updateImageExtensions" /></el-form-item><el-form-item label="忽略目录"><el-input type="textarea" :rows="3" :model-value="listText(form.ignoredDirectories)" @update:model-value="updateIgnoredDirectories" /></el-form-item></el-form></section>
       <section class="settings-card wide"><div class="settings-title"><span>可选 ffprobe / ffmpeg</span><span class="muted">MKV、MPG/MPEG、AVI、TS、FLV、WMV 兼容缓存会查找 ffprobe 同目录或系统 PATH 中的 ffmpeg</span></div><el-input v-model="form.ffprobePath" placeholder="留空则尝试使用 PATH 中的 ffprobe；兼容预览还需要 ffmpeg"><template #append><el-button @click="testFfprobe">测试 ffprobe</el-button></template></el-input><p v-if="ffprobeResult" class="test-result">{{ ffprobeResult }}</p></section>
     </div>
+    <el-dialog v-model="logsVisible" title="应用日志" width="min(1000px, 94vw)">
+      <div class="log-toolbar">
+        <el-select v-model="logFilter" aria-label="日志类型">
+          <el-option label="全部日志" value="all" />
+          <el-option label="备份日志" value="backup" />
+          <el-option label="警告与错误" value="errors" />
+        </el-select>
+        <el-input v-model="logSearch" clearable placeholder="搜索消息、错误代码…" aria-label="搜索日志" />
+        <el-button :loading="logsLoading" @click="refreshLogs">刷新</el-button>
+        <el-button @click="openFolder('logs')">打开日志目录</el-button>
+      </div>
+      <p class="log-note">最新记录在前 · 显示 {{ filteredLogs.length }} 条{{ logs.truncated ? ' · 仅加载最近 1000 条或 512 KiB；更早记录请打开日志目录查看' : '' }}</p>
+      <el-table v-loading="logsLoading" :data="filteredLogs" max-height="min(520px, 60vh)" empty-text="没有符合条件的日志">
+        <el-table-column label="时间" width="170"><template #default="{ row }">{{ row.at ? formatDate(row.at) : '—' }}</template></el-table-column>
+        <el-table-column label="级别" width="90"><template #default="{ row }"><el-tag :type="row.level === 'error' ? 'danger' : row.level === 'warn' ? 'warning' : 'info'" size="small">{{ row.level }}</el-tag></template></el-table-column>
+        <el-table-column label="消息与详情" min-width="360"><template #default="{ row }"><div class="log-message">{{ row.message }}</div><pre v-if="row.details" class="log-details">{{ row.details }}</pre></template></el-table-column>
+      </el-table>
+    </el-dialog>
     <el-dialog v-model="restoreDialogVisible" title="从 GitHub 恢复影片整理数据" width="min(720px, 92vw)">
       <el-form label-position="top">
         <el-form-item label="备份版本">
@@ -536,6 +585,13 @@ function formatDate(value: string | null | undefined): string {
 </template>
 
 <style scoped>
+.log-toolbar { display: flex; flex-wrap: wrap; gap: 8px; }
+.log-toolbar .el-select { width: 145px; }
+.log-toolbar .el-input { flex: 1; min-width: 180px; }
+.log-note { color: var(--muted); font-size: 12px; }
+.log-message, .log-details { white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.log-details { margin: 5px 0 0; color: var(--muted); font-size: 11px; }
+
 .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; max-width: 1000px; }.settings-card { padding: 20px; border: 1px solid var(--line); border-radius: 14px; background: rgba(21,24,33,.8); }.settings-card.wide { grid-column: 1 / -1; }.settings-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 20px; color: var(--ink); font-size: 13px; font-weight: 750; }.settings-title svg { width: 17px; color: var(--accent); }.data-row { display: grid; grid-template-columns: 92px 1fr; gap: 10px; margin: 12px 0; color: var(--muted); font-size: 11px; }.data-row code { overflow: hidden; color: #b9c1d0; text-overflow: ellipsis; white-space: nowrap; }.settings-actions { display: flex; gap: 8px; margin-top: 18px; }.settings-actions svg { width: 13px; margin-right: 5px; }.setting-row { display: flex; align-items: center; gap: 9px; margin: 14px 0; color: var(--muted); font-size: 12px; }.setting-row label { width: 120px; color: var(--ink); }.setting-row .el-input-number { width: 130px; }.setting-row .muted { margin-left: 8px; }.settings-card :deep(.el-form-item) { margin-bottom: 15px; }.test-result { margin: 11px 0 0; color: var(--accent); font-size: 12px; }
 .cache-directory { grid-template-columns: 76px minmax(0, 1fr); }.cache-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 16px 0 12px; }.cache-metrics > div { padding: 12px; border: 1px solid var(--line); border-radius: 9px; background: rgba(12,15,21,.45); }.cache-metrics span, .cache-metrics strong { display: block; }.cache-metrics span { color: var(--muted); font-size: 11px; }.cache-metrics strong { margin-top: 7px; color: var(--ink); font-size: 18px; }.cache-limit { display: flex; align-items: center; gap: 7px; margin-top: 6px; }.cache-limit span { display: inline; }.cache-note { margin: 10px 0 0; font-size: 11px; line-height: 1.6; }
 .startup-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }.startup-option { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px; border: 1px solid var(--line); border-radius: 9px; background: rgba(12,15,21,.45); }.startup-option strong, .startup-option small { display: block; }.startup-option strong { color: var(--ink); font-size: 12px; }.startup-option small { margin-top: 5px; color: var(--muted); font-size: 10px; line-height: 1.5; }

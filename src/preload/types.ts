@@ -1,3 +1,4 @@
+import type { AppLogsDto } from '../shared/contracts';
 import type {
   ApiResult,
   AccountAuthStatusDto,
@@ -139,6 +140,7 @@ export interface FilmLibraryApi {
     info(): Promise<ApiResult<AppInfoDto>>;
     health(): Promise<ApiResult<AppHealthDto>>;
     openDataFolder(): Promise<ApiResult<null>>;
+    readLogs(): Promise<ApiResult<AppLogsDto>>;
     openLogsFolder(): Promise<ApiResult<null>>;
   };
   lanServer: {

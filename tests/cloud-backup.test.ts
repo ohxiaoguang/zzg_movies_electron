@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DatabaseManager } from '../src/main/database/DatabaseManager';
 import { FilmRepository } from '../src/main/database/repositories/FilmRepository';
 import { AppLogger } from '../src/main/system/AppLogger';
@@ -16,6 +16,8 @@ const roots: string[] = [];
 const databases: DatabaseManager[] = [];
 
 afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
   for (const database of databases.splice(0)) database.close();
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
@@ -182,6 +184,30 @@ describe('logical cloud backup', () => {
     await shutdown;
     expect(uploads.map((document) => document.counts.favorites)).toEqual([0, 1]);
     expect(fs.existsSync(context.config.pendingFilePath)).toBe(false);
+  });
+
+  it('allows both shutdown uploads to finish when each takes longer than the former eight-second deadline', async () => {
+    const context = await backupFixture();
+    const snapshot = path.join(context.root, 'seed.sqlite');
+    await context.library.exportSqliteSnapshot(snapshot);
+    vi.spyOn(context.library, 'exportSqliteSnapshot').mockImplementation(async (destination) => {
+      fs.copyFileSync(snapshot, destination);
+    });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const uploads: string[] = [];
+    const service = new CloudBackupService(context.config, context.library, context.logger, async (input, init) => {
+      if (init?.method === 'PUT') {
+        uploads.push(path.posix.basename(new URL(String(input)).pathname));
+        await new Promise((resolve) => setTimeout(resolve, 9_000));
+        return jsonResponse({ commit: { sha: 'abcdef1234567890' } });
+      }
+      return String(input).includes('/contents/') ? jsonResponse({}, 404) : jsonResponse({ private: true, default_branch: 'main' });
+    });
+    const operation = service.backupOnShutdown();
+    await vi.advanceTimersByTimeAsync(19_000);
+    expect(await operation).toMatchObject({ uploaded: true });
+    expect(uploads).toEqual(['library-backup.json', 'library-backup.sqlite']);
+    expect(service.status()).toMatchObject({ pendingUpload: false, activity: { phase: 'success', backupKind: 'sqlite' } });
   });
 
   it('bounds shutdown including an existing upload and saves the newest pending data', async () => {

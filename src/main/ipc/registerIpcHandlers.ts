@@ -1,3 +1,4 @@
+import { readRecentAppLogs } from '../system/AppLogReader';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -362,6 +363,7 @@ export function registerIpcHandlers(context: IpcContext): () => void {
     if (error) throw new Error('FOLDER_OPEN_FAILED');
     return null;
   });
+  handle(IPC_CHANNELS.appReadLogs, () => readRecentAppLogs(path.join(app.getPath('logs'), 'application.log')));
   handle(IPC_CHANNELS.appOpenLogsFolder, async () => {
     const error = await shell.openPath(app.getPath('logs'));
     if (error) throw new Error('FOLDER_OPEN_FAILED');
@@ -554,6 +556,7 @@ function publicMessage(code: string): string {
     CLOUD_BACKUP_TIMEOUT: '连接 GitHub 超时，已保留待上传备份',
     CLOUD_BACKUP_FILE_INVALID: '云端备份文件格式无效',
     CLOUD_BACKUP_CHECKSUM_MISMATCH: '云端备份校验失败，未进行恢复',
+    APP_LOG_READ_FAILED: '读取日志失败，可以尝试打开日志目录查看',
     CLOUD_BACKUP_SQLITE_TOO_LARGE: 'SQLite 数据库快照超过 95 MiB，已停止数据库上传；JSON 备份仍保留',
     CLOUD_BACKUP_FILE_TOO_LARGE: '备份文件超过 20 MB，已停止上传',
     CLOUD_BACKUP_EMPTY_LIBRARY: '当前影片库为空，为避免覆盖有效备份已停止自动上传',

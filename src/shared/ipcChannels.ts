@@ -57,6 +57,7 @@ export const IPC_CHANNELS = {
   appInfo: 'app:info',
   appHealth: 'app:health',
   appOpenDataFolder: 'app:open-data-folder',
+  appReadLogs: 'app:read-logs',
   appOpenLogsFolder: 'app:open-logs-folder',
   accountStatus: 'account:status',
   accountSetup: 'account:setup',

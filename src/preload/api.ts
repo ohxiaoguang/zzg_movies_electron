@@ -130,6 +130,7 @@ export const filmLibraryApi: FilmLibraryApi = {
     info: () => invoke(IPC_CHANNELS.appInfo),
     health: () => invoke(IPC_CHANNELS.appHealth),
     openDataFolder: () => invoke(IPC_CHANNELS.appOpenDataFolder),
+    readLogs: () => invoke(IPC_CHANNELS.appReadLogs),
     openLogsFolder: () => invoke(IPC_CHANNELS.appOpenLogsFolder),
   },
   lanServer: {

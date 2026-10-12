@@ -802,3 +802,14 @@ export interface FfprobeTestResult {
   message: string;
   version: string | null;
 }
+
+export interface AppLogEntryDto {
+  at: string;
+  level: string;
+  message: string;
+  details: string;
+}
+export interface AppLogsDto {
+  entries: AppLogEntryDto[];
+  truncated: boolean;
+}
