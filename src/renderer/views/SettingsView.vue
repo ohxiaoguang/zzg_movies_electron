@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { nextTick, onMounted, reactive, ref } from 'vue';
+import { nextTick, onMounted, onBeforeUnmount, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { FolderOpened, Setting, VideoCamera } from '@element-plus/icons-vue';
 import type {
   AppInfoDto,
+  CloudBackupActivityDto,
   AccountAuthStatusDto,
   CloudBackupRestorePreviewDto,
   CloudBackupStatusDto,
@@ -61,6 +62,9 @@ const cloudForm = reactive({
   autoBackupOnQuit: false,
 });
 const cloudChanging = ref(false);
+const backupActivity = ref<CloudBackupActivityDto | null>(null);
+const stopBackupActivity = window.filmLibrary.cloudBackup.onActivity((activity) => { backupActivity.value = activity; });
+onBeforeUnmount(() => stopBackupActivity());
 const restoreDialogVisible = ref(false);
 const cloudVersions = ref<CloudBackupVersionDto[]>([]);
 const selectedBackupSha = ref('');
@@ -331,7 +335,7 @@ async function runCloudBackup(force = false): Promise<void> {
     }
     const status = await window.filmLibrary.cloudBackup.status();
     if (status.ok) applyCloudStatus(status.data);
-    ElMessage.success(result.data.skipped ? '数据没有变化，无需重复上传' : `已备份 ${result.data.counts.films} 部影片的数据`);
+    ElMessage.success(result.data.skipped ? 'JSON 与 SQLite 均无变化，无需重复上传' : `JSON 与 SQLite 备份完成（${result.data.counts.films} 部影片）`);
   } finally {
     cloudChanging.value = false;
   }
@@ -417,7 +421,7 @@ function formatDate(value: string | null | undefined): string {
       </section>
       <section class="settings-card wide cloud-backup-card">
         <div class="settings-title"><span>GitHub 云备份</span><span class="muted">文件名匹配 · 文件大小和时长辅助</span></div>
-        <p class="cloud-description">备份文件名、收藏状态、自定义分类、精彩片段和共鸣场景（含临时场景、播放位置与 VR 视角），不上传影片、路径、海报或数据库。请使用专门的 GitHub 私有仓库。</p>
+        <p class="cloud-description">备份文件名、收藏状态、自定义分类、精彩片段和共鸣场景（含临时场景、播放位置与 VR 视角），同时额外备份完整 SQLite 数据库（含本地路径、手动封面选择和设备授权记录），供手动恢复与分析；不上传影片或图片文件。请使用专门的 GitHub 私有仓库。</p>
         <div class="cloud-config-grid">
           <el-form label-position="top">
             <el-form-item label="私有仓库地址">
@@ -432,7 +436,8 @@ function formatDate(value: string | null | undefined): string {
           </el-form>
           <div class="cloud-status-panel">
             <div class="data-row"><span>状态</span><strong>{{ cloudStatus?.state === 'running' ? '正在备份' : cloudStatus?.state === 'success' ? '备份正常' : cloudStatus?.state === 'error' ? '需要处理' : cloudStatus?.configured ? '已配置' : '未配置' }}</strong></div>
-            <div class="data-row"><span>备份文件</span><code>{{ cloudStatus?.backupPath || 'library-backup.json' }}</code></div>
+            <div class="data-row"><span>JSON 备份</span><code>{{ cloudStatus?.backupPath || 'library-backup.json' }}</code></div>
+            <div class="data-row"><span>SQLite 快照</span><code>library-backup.sqlite</code></div>
             <div class="data-row"><span>最近成功</span><span>{{ formatDate(cloudStatus?.lastSuccessAt) }}</span></div>
             <div class="data-row"><span>待重试</span><span>{{ cloudStatus?.pendingUpload ? '有' : '无' }}</span></div>
             <div v-if="cloudStatus?.lastErrorCode" class="cloud-error">诊断代码：{{ cloudStatus.lastErrorCode }}</div>
@@ -442,6 +447,9 @@ function formatDate(value: string | null | undefined): string {
           <div class="startup-option"><div><strong>启动时自动备份</strong><small>内容未变化时不会产生新提交</small></div><el-switch v-model="cloudForm.autoBackupOnStartup" /></div>
           <div class="startup-option"><div><strong>退出时自动备份</strong><small>失败会保留待上传文件，下次启动重试</small></div><el-switch v-model="cloudForm.autoBackupOnQuit" /></div>
         </div>
+        <p v-if="backupActivity?.phase === 'running'" role="status" aria-live="polite">
+          {{ backupActivity.backupKind === 'sqlite' ? '2/2 正在生成并同步 SQLite 数据库快照…' : '1/2 正在同步 JSON 整理数据…' }}
+        </p>
         <div class="settings-actions">
           <el-button size="small" :loading="cloudChanging" @click="saveCloudConfig()">保存云备份设置</el-button>
           <el-button size="small" :loading="cloudChanging" @click="testCloudConnection">测试连接</el-button>
@@ -449,7 +457,7 @@ function formatDate(value: string | null | undefined): string {
           <el-button size="small" :loading="cloudChanging" @click="openRestoreDialog">查看与恢复</el-button>
           <el-button v-if="cloudStatus?.tokenConfigured" size="small" type="danger" plain :loading="cloudChanging" @click="clearCloudToken">清除令牌</el-button>
         </div>
-        <p class="cloud-warning">同名文件只有在文件大小或影片时长能够唯一确认时才会自动恢复；仍不唯一的影片会跳过。令牌使用 Windows 系统加密保存，不会写入备份文件。</p>
+        <p class="cloud-warning">同名文件只有在文件大小或影片时长能够唯一确认时才会自动恢复；仍不唯一的影片会跳过。“查看与恢复”仍只恢复 JSON 整理数据。SQLite 快照需下载后手动恢复，或用数据库工具分析；不会自动覆盖本机数据库。GitHub 令牌使用 Windows 系统加密保存，不会写入备份文件。</p>
       </section>
       <section class="settings-card wide cache-settings-card">
         <div class="settings-title"><span>网页播放缓存</span><span class="muted">Remux、转码分片和网页字幕</span></div>

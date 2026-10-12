@@ -157,6 +157,9 @@ describe('logical cloud backup', () => {
     const uploads: Array<{ counts: { favorites: number } }> = [];
     let remote = '';
     const fetcher = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      if (String(input).includes('/contents/library-backup.sqlite')) {
+        return init?.method === 'PUT' ? jsonResponse({ commit: { sha: 'sqlite-commit' } }) : jsonResponse({}, 404);
+      }
       if (init?.method === 'PUT') {
         const content = (JSON.parse(String(init.body)) as { content: string }).content;
         uploads.push(JSON.parse(Buffer.from(content, 'base64').toString('utf8')));
@@ -335,7 +338,58 @@ describe('logical cloud backup', () => {
     expect(config.status('ready')).toMatchObject({ configured: true, tokenConfigured: true });
   });
 
-  it('uploads one JSON file through the GitHub contents API and removes the pending outbox', async () => {
+  it('backs up committed WAL data independently from JSON, retries SQLite failures and keeps JSON restore unchanged', async () => {
+    const context = await backupFixture();
+    const contents = new Map<string, string>();
+    const uploads: string[] = [];
+    let failSqlite = false;
+    const service = new CloudBackupService(context.config, context.library, context.logger, async (input, init) => {
+      const url = new URL(String(input));
+      if (!url.pathname.includes('/contents/')) return jsonResponse({ private: true, default_branch: 'main' });
+      const filename = path.posix.basename(url.pathname);
+      if (init?.method === 'PUT') {
+        if (filename.endsWith('.sqlite') && failSqlite) return jsonResponse({}, 500);
+        const body = JSON.parse(String(init.body));
+        if (contents.has(filename)) expect(body.sha).toBe(`blob-${filename}`);
+        contents.set(filename, body.content);
+        uploads.push(filename);
+        return jsonResponse({ commit: { sha: 'abcdef1234567890' } });
+      }
+      return contents.has(filename)
+        ? jsonResponse({ sha: `blob-${filename}`, encoding: 'base64', content: contents.get(filename) })
+        : jsonResponse({}, 404);
+    });
+    expect((await service.runBackup('manual')).uploaded).toBe(true);
+    expect(uploads).toEqual(['library-backup.json', 'library-backup.sqlite']);
+    expect((await service.runBackup('manual')).skipped).toBe(true);
+    expect(uploads).toHaveLength(2);
+    const hash = context.library.exportDocument().dataHash;
+    context.database.db.prepare('UPDATE film SET notes = ? WHERE id = ?').run('SQLite-only edit', context.filmId);
+    context.database.db.prepare(`INSERT INTO film_asset (id, film_id, asset_type, relative_path, user_managed, custom_cover)
+      VALUES ('manual-cover', ?, 'extra_fanart', 'movie-gif-test.gif', 1, 1)`).run(context.filmId);
+    expect(context.library.exportDocument().dataHash).toBe(hash);
+    failSqlite = true;
+    await expect(service.runBackup('manual')).rejects.toThrow('CLOUD_BACKUP_REMOTE_FAILED');
+    expect(service.status()).toMatchObject({ pendingUpload: true, activity: { backupKind: 'sqlite', phase: 'error' } });
+    expect(fs.existsSync(context.config.pendingFilePath)).toBe(false);
+    failSqlite = false;
+    expect((await service.backupOnStartup())?.uploaded).toBe(true);
+    expect(uploads).toEqual(['library-backup.json', 'library-backup.sqlite', 'library-backup.sqlite']);
+    expect(service.status().pendingUpload).toBe(false);
+    const snapshot = path.join(context.root, 'downloaded.sqlite');
+    fs.writeFileSync(snapshot, Buffer.from(contents.get('library-backup.sqlite')!, 'base64'));
+    const reopened = new DatabaseManager(snapshot);
+    databases.push(reopened);
+    expect(reopened.db.pragma('integrity_check', { simple: true })).toBe('ok');
+    expect(reopened.db.prepare('SELECT notes FROM film WHERE id = ?').get(context.filmId)).toEqual({ notes: 'SQLite-only edit' });
+    expect(reopened.db.prepare('SELECT relative_path, custom_cover FROM film_asset WHERE id = ?').get('manual-cover')).toEqual({ relative_path: 'movie-gif-test.gif', custom_cover: 1 });
+    expect(await service.previewRestore('abcdef1234567890')).toMatchObject({ matchedFilms: 1 });
+    context.database.db.prepare('DELETE FROM film').run();
+    await expect(service.runBackup('startup')).rejects.toThrow('CLOUD_BACKUP_EMPTY_LIBRARY');
+    expect(uploads).toHaveLength(3);
+  });
+
+  it('uploads JSON and SQLite files through the GitHub contents API and removes the pending outbox', async () => {
     const context = createDatabase();
     const sourceId = insertSource(context.database, 'source');
     const film = insertFilm(context.database, sourceId, 'movie.mkv', 123, 45);
@@ -357,6 +411,9 @@ describe('logical cloud backup', () => {
     const fetcher = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
       const url = String(input);
       requests.push({ url, init });
+      if (url.includes('/contents/library-backup.sqlite')) {
+        return init?.method === 'PUT' ? jsonResponse({ commit: { sha: 'sqlite-commit' } }) : jsonResponse({}, 404);
+      }
       if (url.endsWith('/repos/owner/private-repo')) return jsonResponse({ private: true, default_branch: 'main' });
       if (url.includes('/commits?')) return jsonResponse([{
         sha: 'abcdef1234567890',
@@ -384,7 +441,7 @@ describe('logical cloud backup', () => {
     const result = await service.runBackup('manual');
     stopActivities();
     expect(result).toMatchObject({ uploaded: true, skipped: false, commitSha: 'abcdef1234567890' });
-    expect(activities).toEqual(['manual:running', 'manual:success']);
+    expect(activities).toEqual(['manual:running', 'manual:running', 'manual:success']);
     expect(service.status().activity).toMatchObject({ trigger: 'manual', phase: 'success' });
     expect(fs.existsSync(config.pendingFilePath)).toBe(false);
     const upload = requests.find((request) => request.init?.method === 'PUT');

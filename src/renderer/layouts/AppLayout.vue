@@ -30,10 +30,10 @@ let startupStatusTimer: number | null = null;
 const startupBackupText = computed(() => {
   const activity = startupBackupActivity.value;
   if (!activity) return '';
-  if (activity.phase === 'running') return '启动自动备份：正在同步到 GitHub…';
-  if (activity.phase === 'success') return '启动自动备份：备份完成';
-  if (activity.phase === 'skipped') return '启动自动备份：云端已是最新';
-  return '启动自动备份失败，请到设置中查看原因';
+  if (activity.phase === 'running') return activity.backupKind === 'sqlite' ? '启动自动备份：2/2 正在备份 SQLite 数据库…' : '启动自动备份：1/2 正在备份 JSON 整理数据…';
+  if (activity.phase === 'success') return '启动自动备份：JSON 与 SQLite 备份完成';
+  if (activity.phase === 'skipped') return '启动自动备份：JSON 与 SQLite 均无变化';
+  return `启动自动备份：${activity.backupKind === 'sqlite' ? 'SQLite' : 'JSON'} 备份失败，请到设置中查看原因`;
 });
 async function loadCounts(): Promise<void> {
   const result = await window.filmLibrary.films.navigationCounts();
@@ -140,8 +140,8 @@ function handleBackupActivity(activity: CloudBackupActivityDto): void {
   <div v-if="shutdownBackupActivity?.phase === 'running'" class="shutdown-backup-overlay" role="alert" aria-live="assertive">
     <section class="shutdown-backup-card">
       <span class="shutdown-backup-spinner" />
-      <h2>正在备份影片整理数据</h2>
-      <p>正在同步到 GitHub，完成后会自动退出…</p>
+      <h2>{{ shutdownBackupActivity.backupKind === 'sqlite' ? '2/2 正在备份 SQLite 数据库' : '1/2 正在备份 JSON 整理数据' }}</h2>
+      <p>将依次同步 JSON 与 SQLite 到 GitHub，完成后会自动退出…</p>
     </section>
   </div>
 </template>

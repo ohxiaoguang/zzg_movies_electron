@@ -69,6 +69,11 @@ export class LibraryDataBackupService {
     private readonly clock: () => Date = () => new Date(),
   ) {}
 
+  public async exportSqliteSnapshot(destination: string): Promise<void> {
+    this.database.assertTransfersRecovered();
+    await this.database.db.backup(destination);
+  }
+
   public exportDocument(): LibraryDataBackupDocument {
     return this.database.transaction(() => {
       const filmRows = this.database.db.prepare(

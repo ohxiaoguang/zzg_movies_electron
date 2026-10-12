@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
 import type {
   CloudBackupConfigUpdateInput,
   CloudBackupActivityDto,
@@ -35,6 +36,7 @@ interface GitHubContentResponse {
 const MAX_BACKUP_BYTES = 20 * 1024 * 1024;
 
 export class CloudBackupService {
+  private backupKind: 'json' | 'sqlite' = 'json';
   private state: CloudBackupState = 'ready';
   private running: Promise<CloudBackupRunResultDto> | null = null;
   private activity: CloudBackupActivityDto | null = null;
@@ -85,6 +87,7 @@ export class CloudBackupService {
       this.publishActivity(trigger, 'running');
       return this.observeRun(trigger, this.running);
     }
+    this.backupKind = 'json';
     this.publishActivity(trigger, 'running');
     this.running = this.runBackupInternal(trigger, force, timeoutMs)
       .then((result) => {
@@ -119,7 +122,7 @@ export class CloudBackupService {
     errorCode: string | null = null,
   ): void {
     if (this.shuttingDown && trigger !== 'shutdown') return;
-    this.activity = { trigger, phase, at: new Date().toISOString(), commitSha, errorCode };
+    this.activity = { backupKind: this.backupKind, trigger, phase, at: new Date().toISOString(), commitSha, errorCode };
     for (const listener of this.activityListeners) {
       try {
         listener(this.activity);
@@ -212,6 +215,61 @@ export class CloudBackupService {
   }
 
   private async runBackupInternal(trigger: BackupTrigger, force: boolean, timeoutMs: number): Promise<CloudBackupRunResultDto> {
+    this.backupKind = 'json';
+    const result = await this.runJsonBackup(trigger, force, timeoutMs);
+    this.state = 'running';
+    this.backupKind = 'sqlite';
+    this.publishActivity(trigger, 'running');
+    const sqliteUploaded = await this.runSqliteBackup(trigger, force, timeoutMs);
+    this.state = 'success';
+    return { ...result, uploaded: result.uploaded || sqliteUploaded, skipped: result.skipped && !sqliteUploaded };
+  }
+
+  private async runSqliteBackup(trigger: BackupTrigger, force: boolean, timeoutMs: number): Promise<boolean> {
+    const destination = this.config.sqlitePendingFilePath;
+    const temporary = `${destination}.${randomUUID()}.tmp`;
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    try {
+      await this.libraryData.exportSqliteSnapshot(temporary);
+      if (this.shutdownExpired) throw new Error('CLOUD_BACKUP_TIMEOUT');
+      fs.renameSync(temporary, destination);
+      const stat = fs.statSync(destination);
+      if (stat.size > 95 * 1024 * 1024) throw new Error('CLOUD_BACKUP_SQLITE_TOO_LARGE');
+      const content = fs.readFileSync(destination);
+      const hash = createHash('sha256').update(content).digest('hex');
+      if (!force && hash === this.config.getStored().lastSqliteHash) {
+        safeUnlink(destination);
+        return false;
+      }
+      const context = await this.githubContext();
+      const info = await this.repositoryInfo(context, timeoutMs);
+      const branch = context.branch || info.defaultBranch;
+      const sqlitePath = path.posix.join(path.posix.dirname(context.backupPath), 'library-backup.sqlite');
+      let remote: GitHubContentResponse | null = null;
+      try {
+        remote = await this.requestJson<GitHubContentResponse>(context,
+          `/contents/${encodePath(sqlitePath)}?${new URLSearchParams({ ref: branch })}`,
+          { method: 'GET' }, timeoutMs);
+        if (!remote.sha) throw new Error('CLOUD_BACKUP_REMOTE_INVALID');
+      } catch (error) {
+        if (!(error instanceof Error && error.message === 'CLOUD_BACKUP_NOT_FOUND')) throw error;
+      }
+      const response = await this.requestJson<GitHubContentResponse>(context, `/contents/${encodePath(sqlitePath)}`, {
+        method: 'PUT', body: JSON.stringify({
+          message: `Backup SQLite snapshot (${trigger}) ${new Date().toISOString()}`,
+          content: content.toString('base64'), branch, ...(remote?.sha ? { sha: remote.sha } : {}),
+        }),
+      }, timeoutMs);
+      if (!response.commit?.sha) throw new Error('CLOUD_BACKUP_REMOTE_INVALID');
+      this.config.markSqliteSuccess(hash);
+      safeUnlink(destination);
+      return true;
+    } finally {
+      safeUnlink(temporary);
+    }
+  }
+
+  private async runJsonBackup(trigger: BackupTrigger, force: boolean, timeoutMs: number): Promise<CloudBackupRunResultDto> {
     this.state = 'running';
     const document = this.libraryData.exportDocument();
     const stored = this.config.getStored();

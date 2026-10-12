@@ -554,6 +554,7 @@ function publicMessage(code: string): string {
     CLOUD_BACKUP_TIMEOUT: '连接 GitHub 超时，已保留待上传备份',
     CLOUD_BACKUP_FILE_INVALID: '云端备份文件格式无效',
     CLOUD_BACKUP_CHECKSUM_MISMATCH: '云端备份校验失败，未进行恢复',
+    CLOUD_BACKUP_SQLITE_TOO_LARGE: 'SQLite 数据库快照超过 95 MiB，已停止数据库上传；JSON 备份仍保留',
     CLOUD_BACKUP_FILE_TOO_LARGE: '备份文件超过 20 MB，已停止上传',
     CLOUD_BACKUP_EMPTY_LIBRARY: '当前影片库为空，为避免覆盖有效备份已停止自动上传',
     CLOUD_BACKUP_LIBRARY_REGRESSION: '当前影片数量大幅减少，为避免覆盖有效备份已停止自动上传',

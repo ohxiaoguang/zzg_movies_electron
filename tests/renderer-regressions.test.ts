@@ -72,10 +72,11 @@ describe('renderer regressions', () => {
 
   it('shows startup cloud backup status at the bottom and blocks shutdown with a loading overlay', () => {
     const layout = fs.readFileSync(layoutPath, 'utf8');
-    expect(layout).toContain('启动自动备份：正在同步到 GitHub…');
+    expect(layout).toContain('启动自动备份：1/2 正在备份 JSON 整理数据…');
+    expect(layout).toContain('启动自动备份：2/2 正在备份 SQLite 数据库…');
     expect(layout).toContain('class="cloud-backup-status"');
     expect(layout).toContain("shutdownBackupActivity?.phase === 'running'");
-    expect(layout).toContain('正在同步到 GitHub，完成后会自动退出…');
+    expect(layout).toContain('将依次同步 JSON 与 SQLite 到 GitHub，完成后会自动退出…');
   });
 
   it('offers duplicate filename filtering and file-location actions in all-data mode', () => {

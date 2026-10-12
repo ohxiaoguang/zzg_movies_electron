@@ -704,6 +704,7 @@ export type CloudBackupTrigger = 'startup' | 'shutdown' | 'manual';
 export type CloudBackupActivityPhase = 'running' | 'success' | 'skipped' | 'error';
 
 export interface CloudBackupActivityDto {
+  backupKind?: 'json' | 'sqlite';
   trigger: CloudBackupTrigger;
   phase: CloudBackupActivityPhase;
   at: string;

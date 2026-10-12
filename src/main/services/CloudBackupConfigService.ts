@@ -18,6 +18,7 @@ interface StoredCloudBackupConfig {
   lastSuccessAt: string | null;
   lastCommitSha: string | null;
   lastDataHash: string | null;
+  lastSqliteHash: string | null;
   lastErrorCode: string | null;
 }
 
@@ -32,6 +33,7 @@ const DEFAULT_CONFIG: StoredCloudBackupConfig = {
   lastSuccessAt: null,
   lastCommitSha: null,
   lastDataHash: null,
+  lastSqliteHash: null,
   lastErrorCode: null,
 };
 
@@ -62,6 +64,7 @@ export class CloudBackupConfigService {
       lastSuccessAt: nullableString(parsed.lastSuccessAt),
       lastCommitSha: nullableString(parsed.lastCommitSha),
       lastDataHash: nullableString(parsed.lastDataHash),
+      lastSqliteHash: nullableString(parsed.lastSqliteHash),
       lastErrorCode: nullableString(parsed.lastErrorCode),
     };
   }
@@ -82,7 +85,7 @@ export class CloudBackupConfigService {
       lastSuccessAt: stored.lastSuccessAt,
       lastCommitSha: stored.lastCommitSha,
       lastErrorCode: stored.lastErrorCode,
-      pendingUpload: fs.existsSync(this.pendingFilePath),
+      pendingUpload: fs.existsSync(this.pendingFilePath) || fs.existsSync(this.sqlitePendingFilePath),
       activity: null,
     };
   }
@@ -113,6 +116,7 @@ export class CloudBackupConfigService {
       lastSuccessAt: targetChanged ? null : current.lastSuccessAt,
       lastCommitSha: targetChanged ? null : current.lastCommitSha,
       lastDataHash: targetChanged ? null : current.lastDataHash,
+      lastSqliteHash: targetChanged ? null : current.lastSqliteHash,
       lastErrorCode: null,
     });
   }
@@ -142,6 +146,14 @@ export class CloudBackupConfigService {
       lastDataHash: dataHash,
       lastErrorCode: null,
     });
+  }
+
+  public get sqlitePendingFilePath(): string {
+    return path.join(path.dirname(this.pendingFilePath), 'library-backup-pending.sqlite');
+  }
+
+  public markSqliteSuccess(hash: string): void {
+    this.write({ ...this.getStored(), lastSqliteHash: hash, lastSuccessAt: new Date().toISOString(), lastErrorCode: null });
   }
 
   public markError(code: string): void {
