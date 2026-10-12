@@ -97,6 +97,23 @@ describe('GIF capture and custom covers', () => {
     expect(fs.existsSync(output)).toBe(true);
   });
 
+  it('uses consistent realpath resolution when Windows exposes different synchronous directory aliases', async () => {
+    const context = await fixture();
+    const realpathSync = fs.realpathSync;
+    vi.spyOn(fs, 'realpathSync').mockImplementation((...args) => {
+      if (String(args[0]) === context.sourceRoot) return path.join(context.root, 'alternate-source-alias');
+      return realpathSync(...args);
+    });
+    const generated = await context.service.createGif(context.input, () => {});
+    expect(context.films.assetLocation(generated.assetId)!.relativePath).toBe(path.join('films', generated.filename));
+    const chosen = path.join(context.root, 'chosen.gif');
+    fs.writeFileSync(chosen, gif);
+    const imported = await context.service.importCover(context.input.filmId, chosen);
+    const location = context.films.assetLocation(imported.posterAssetId!)!;
+    expect(path.dirname(location.relativePath)).toBe('films');
+    expect(fs.readFileSync(path.join(location.rootPath, location.relativePath))).toEqual(gif);
+  });
+
   it('prefers fanart then thumb then poster, with custom GIFs taking priority', async () => {
     const context = await fixture();
     const movieRoot = path.join(context.sourceRoot, 'films');

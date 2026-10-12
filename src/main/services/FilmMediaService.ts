@@ -60,8 +60,9 @@ export class FilmMediaService {
       await fs.promises.copyFile(selectedPath, output, fs.constants.COPYFILE_EXCL);
       created = true;
       const outputStat = await fs.promises.stat(output);
+      const relativePath = path.relative(await fs.promises.realpath(location.rootPath), output);
       return this.database.transaction(() => {
-        const id = this.films.registerManualImage(filmId, path.relative(fs.realpathSync(location.rootPath), output!), outputStat);
+        const id = this.films.registerManualImage(filmId, relativePath, outputStat);
         return this.films.setCustomCover(filmId, id);
       });
     } catch (error) {
@@ -106,8 +107,10 @@ export class FilmMediaService {
       await fs.promises.copyFile(temporary, output, fs.constants.COPYFILE_EXCL);
       created = true;
       controller.signal.throwIfAborted();
+      const relativePath = path.relative(await fs.promises.realpath(location.rootPath), output);
+      controller.signal.throwIfAborted();
       const result = this.database.transaction(() => {
-        const assetId = this.films.registerManualImage(input.filmId, path.relative(fs.realpathSync(location.rootPath), output!), stat);
+        const assetId = this.films.registerManualImage(input.filmId, relativePath, stat);
         const detail = input.setAsCover ? this.films.setCustomCover(input.filmId, assetId) : this.films.detail(input.filmId)!;
         return { detail, assetId, filename };
       });
