@@ -100,6 +100,8 @@ Changes save to the active scene. Create a new scene or save a copy before tryin
 - Offline sources, failed scans, and canceled scans retain existing records. Successful scans mark indexed films that can no longer be found as missing.
 - Renaming or moving a file may leave a missing entry at its old location and import a new entry at its new location. Clean up obsolete entries in All Data.
 
+Scanning runs in a background worker. The scan result offers clickable issue counts, searchable details, related resource paths, and an open-folder action. The latest report is retained after restarting.
+
 ### NFO files, posters, stills, and comment screenshots
 
 - Read existing NFO titles, years, release dates, runtimes, summaries, actors, directors, ratings, countries, studios, and tags.
@@ -120,6 +122,7 @@ Changes save to the active scene. Create a new scene or save a copy before tryin
 
 - **Detail workspace:** metadata and categories on the left; original playback, annotations, and images on the right. Videos fit without cropping.
 - **Playback options:** use the built-in player, with a compatibility version attempted when needed, or open a local player or the video's folder.
+- **Desktop resume:** reopening a film restores the last played file and position, with a start-over button. Browsing details alone does not count as watching, and segment jumps use their own start points. Progress is saved periodically while playing and immediately on pause, file changes, closing details, and normal exit.
 - **Subtitles:** desktop and web details let you choose available subtitle tracks or turn them off. Font size is adjustable.
 - **360° VR:** supports monoscopic 360° videos with a per-file VR setting. Drag to look around, scroll to zoom, and reset the view. Resonance Ball also displays VR videos.
 - **Compact viewing mode (“摸鱼模式”):** shrink video and cover images within the same outer frame. Videos sit at the bottom right, images stay centered, and subtitles remain at the bottom of the full player area. The scale is adjustable.

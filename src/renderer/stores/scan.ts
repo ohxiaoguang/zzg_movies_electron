@@ -9,6 +9,7 @@ export const useScanStore = defineStore('scan', () => {
 
   function listen(): void {
     if (dispose) return;
+    void window.filmLibrary.scan.status().then((result) => { if (result.ok && !progress.value) progress.value = result.data; }).catch(() => undefined);
     dispose = window.filmLibrary.scan.onProgress((value: ScanProgressDto) => {
       progress.value = value as ScanStatusDto;
       if (value.status !== 'running') dialogVisible.value = true;

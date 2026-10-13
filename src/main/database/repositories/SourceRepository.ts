@@ -27,11 +27,11 @@ interface SourceRow {
 export class SourceRepository {
   public constructor(private readonly db: Database.Database) {}
 
-  public list(): MediaSourceDto[] {
+  public list(checkOnline = true): MediaSourceDto[] {
     const rows = this.db
       .prepare('SELECT * FROM media_source WHERE deleted_at IS NULL ORDER BY archived ASC, name COLLATE NOCASE ASC')
       .all() as SourceRow[];
-    return rows.map((row) => this.toDto(row));
+    return rows.map((row) => this.toDto(row, checkOnline));
   }
 
   public findDeletedByRootPath(rootPath: string): MediaSourceDto | null {
@@ -130,7 +130,7 @@ export class SourceRepository {
     }
   }
 
-  private toDto(row: SourceRow): MediaSourceDto {
+  private toDto(row: SourceRow, checkOnline = true): MediaSourceDto {
     return {
       id: row.id,
       name: row.name,
@@ -139,7 +139,7 @@ export class SourceRepository {
       recursive: Boolean(row.recursive),
       allowOriginalPreview: Boolean(row.allow_original_preview),
       archived: Boolean(row.archived),
-      online: isDirectory(row.root_path),
+      online: checkOnline && isDirectory(row.root_path),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       lastScanAt: row.last_scan_at,

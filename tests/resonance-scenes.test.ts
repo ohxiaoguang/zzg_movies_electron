@@ -35,6 +35,7 @@ beforeEach(() => {
 
 afterEach(() => {
   for (const pinia of piniaInstances.splice(0)) disposePinia(pinia);
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -47,6 +48,79 @@ async function store() {
 }
 
 describe('resonance scenes', () => {
+  it('discards pending autosaves during backup restore so old scenes cannot overwrite restored data', async () => {
+    vi.useFakeTimers();
+    const current = await store();
+    current.add(video);
+    await current.flush();
+    current.updateProgress(current.videos[0].id, 88);
+    await nextTick();
+    current.restoring = true;
+    await current.flush();
+    databaseState!.draft[0].currentSeconds = 77;
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(databaseState!.draft[0].currentSeconds).toBe(77);
+    await current.reload();
+    current.restoring = false;
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(current.videos[0].currentSeconds).toBe(77);
+    expect(databaseState!.draft[0].currentSeconds).toBe(77);
+  });
+
+  it('throttles continuous progress and flushes the latest position immediately', async () => {
+    vi.useFakeTimers();
+    const current = await store();
+    current.add(video);
+    await current.flush();
+    const save = vi.mocked(window.filmLibrary.resonance.save);
+    save.mockClear();
+    for (let i = 1; i <= 9; i++) {
+      current.updateProgress(current.videos[0].id, i * 10);
+      await nextTick();
+      await vi.advanceTimersByTimeAsync(100);
+    }
+    expect(save).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(databaseState?.draft[0].currentSeconds).toBe(90);
+    current.updateProgress(current.videos[0].id, 99);
+    await current.flush();
+    expect(databaseState?.draft[0].currentSeconds).toBe(99);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(save).toHaveBeenCalledTimes(2);
+  });
+
+  it('coalesces updates while storage is slow instead of queuing obsolete snapshots', async () => {
+    vi.useFakeTimers();
+    const current = await store();
+    current.add(video);
+    await current.flush();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const save = vi.mocked(window.filmLibrary.resonance.save);
+    save.mockClear();
+    save.mockImplementationOnce(async (snapshot) => {
+      await gate;
+      databaseState = structuredClone(snapshot);
+      return { ok: true, data: null };
+    });
+    current.updateProgress(current.videos[0].id, 20);
+    await nextTick();
+    await vi.advanceTimersByTimeAsync(1000);
+    for (let i = 0; i < 30; i++) {
+      current.updateProgress(current.videos[0].id, 30 + i);
+      await nextTick();
+      await vi.advanceTimersByTimeAsync(100);
+    }
+    expect(save).toHaveBeenCalledTimes(1);
+    release();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(databaseState?.draft[0].currentSeconds).toBe(59);
+    await current.flush();
+    expect(databaseState?.draft[0].currentSeconds).toBe(59);
+  });
+
   it('records and explicitly updates independent highlight points across scenes and reloads', async () => {
     const current = await store();
     current.add(video);

@@ -46,6 +46,7 @@ import { FilmRepository } from '../database/repositories/FilmRepository';
 import { SettingsRepository } from '../database/repositories/SettingsRepository';
 import { SourceRepository } from '../database/repositories/SourceRepository';
 import { ResonanceRepository } from '../database/repositories/ResonanceRepository';
+import { DesktopPlaybackService } from '../services/DesktopPlaybackService';
 import { flushResonance } from './flushResonance';
 import { ScanCoordinator } from '../scanner/ScanCoordinator';
 import { FileOpenService } from '../system/FileOpenService';
@@ -85,6 +86,14 @@ interface IpcContext {
 
 export function registerIpcHandlers(context: IpcContext): () => void {
   const registered: string[] = [];
+  const readDuringScan = new Set<string>([
+    IPC_CHANNELS.scanCancel, IPC_CHANNELS.scanStatus, IPC_CHANNELS.filmsPage, IPC_CHANNELS.filmsRecordsPageAll,
+    IPC_CHANNELS.filmsDetail, IPC_CHANNELS.filmsNavigationCounts, IPC_CHANNELS.filmsPartsList,
+    IPC_CHANNELS.sourcesList, IPC_CHANNELS.nfoTagsList, IPC_CHANNELS.actorsList, IPC_CHANNELS.categoriesList,
+    IPC_CHANNELS.appHealth, IPC_CHANNELS.appInfo, IPC_CHANNELS.appReadLogs, IPC_CHANNELS.scanIssues, IPC_CHANNELS.scanIssueOpen,
+    // Backup requests flush the renderer via nested IPC; its actual saves use the write gate.
+    IPC_CHANNELS.cloudBackupRun,
+  ]);
   context.window.once('closed', () => context.filmMedia.cancelAll());
   const handle = <T>(channel: string, callback: (event: IpcMainInvokeEvent, payload: unknown) => Promise<T> | T): void => {
     ipcMain.handle(channel, async (event, payload) => {
@@ -98,7 +107,8 @@ export function registerIpcHandlers(context: IpcContext): () => void {
           const configured = context.accountCredentials.status(event.sender.id).configured;
           throw new Error(configured ? 'DESKTOP_AUTH_REQUIRED' : 'ACCOUNT_SETUP_REQUIRED');
         }
-        return success(await callback(event, payload));
+        return success(await (readDuringScan.has(channel) ? callback(event, payload)
+          : context.database.operations.runDatabaseAction(() => callback(event, payload))));
       } catch (error) {
         const code = error instanceof Error ? (filesystemErrorCode(error) ?? error.message) : 'IPC_FAILED';
         context.logger.error('IPC handler failed', { channel, error: code });
@@ -273,6 +283,8 @@ export function registerIpcHandlers(context: IpcContext): () => void {
     });
     return context.sourceTransfer.correctTransfer(input);
   });
+  const desktopPlayback = new DesktopPlaybackService(context.films);
+  handle(IPC_CHANNELS.desktopPlaybackProgress, (_event, payload) => desktopPlayback.saveProgress(payload));
   handle(IPC_CHANNELS.playbackSubtitleTracks, (_event, payload) => {
     if (!isUuid(payload)) throw new Error('INVALID_PART_ID');
     return context.playback.desktopSubtitleTracks(payload);
@@ -339,6 +351,23 @@ export function registerIpcHandlers(context: IpcContext): () => void {
   handle(IPC_CHANNELS.scanCancel, () => {
     context.scan.cancel();
     return null;
+  });
+  handle(IPC_CHANNELS.scanIssues, (_event, payload) => context.scan.issues(payload));
+  handle(IPC_CHANNELS.scanIssueOpen, async (_event, payload) => {
+    const location = context.scan.issueLocation(payload);
+    let relativePath = location.relativePath;
+    while (true) {
+      try {
+        const filePath = await resolveExistingSafeMediaPath(location.rootPath, relativePath);
+        if ((await fs.promises.stat(filePath)).isFile()) shell.showItemInFolder(filePath);
+        else { const error = await shell.openPath(filePath); if (error) throw new Error('FILE_OPEN_FAILED'); }
+        return null;
+      } catch (error) {
+        if (error instanceof Error && ['MEDIA_PATH_OUTSIDE_SOURCE', 'FILE_OPEN_FAILED'].includes(error.message)) throw error;
+        if (relativePath === '.') throw new Error('SOURCE_OFFLINE', { cause: error });
+        relativePath = path.dirname(relativePath.replaceAll('\\', '/'));
+      }
+    }
   });
   handle(IPC_CHANNELS.scanStatus, () => context.scan.status());
 
@@ -520,6 +549,7 @@ function publicMessage(code: string): string {
     INVALID_CATEGORY_ORDER: '分类排序数据无效',
     CSV_EXPORT_FAILED: 'CSV 导出失败，请检查保存位置后重试',
     INVALID_PART_ID: '影片分段不存在',
+    INVALID_SCAN_ISSUES_QUERY: '扫描问题查询参数无效',
     INVALID_SUBTITLE_TRACK: '字幕轨道无效',
     SUBTITLE_UNSUPPORTED: '当前字幕格式暂不支持',
     INVALID_LAN_SERVER_PORT: '端口必须是 1024 到 65535 之间的整数',

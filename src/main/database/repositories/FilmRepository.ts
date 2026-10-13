@@ -180,17 +180,113 @@ export interface FilmPlaybackState {
 
 export type NfoForceImportMode = 'merge' | 'replace';
 
+// SQL callbacks and repositories sharing a connection use the same query snapshot.
+const pageSourceStatuses = new WeakMap<Database.Database, Map<string, boolean>>();
+
+interface ScanPathLookup {
+  sourceId: string;
+  files: Map<string, FilmFileRow[]>;
+  legacy: Map<string, Set<string>>;
+  keysByFilm: Map<string, Set<string>>;
+}
+
 export class FilmRepository {
-  public constructor(private readonly db: Database.Database) {}
+  private scanPaths: ScanPathLookup | null = null;
+
+  public withScanPathLookup<T>(sourceId: string, operation: () => T): T {
+    this.scanPaths = { sourceId, files: new Map(), legacy: new Map(), keysByFilm: new Map() };
+    const ids = (this.db.prepare('SELECT id FROM film WHERE source_id = ? UNION SELECT film_id AS id FROM film_file WHERE source_id = ?').all(sourceId, sourceId) as Array<{ id: string }>).map((row) => row.id);
+    try { this.refreshScanPaths(ids); return operation(); } finally { this.scanPaths = null; }
+  }
+
+  private refreshScanPaths(filmIds: string[]): void {
+    const lookup = this.scanPaths;
+    if (!lookup) return;
+    for (const id of filmIds) {
+      for (const key of lookup.keysByFilm.get(id) ?? []) {
+        const files = (lookup.files.get(key) ?? []).filter((row) => row.film_id !== id);
+        if (files.length) lookup.files.set(key, files); else lookup.files.delete(key);
+        lookup.legacy.get(key)?.delete(id);
+      }
+      lookup.keysByFilm.delete(id);
+    }
+    // Keep parameter counts bounded even when initially indexing a large source.
+    for (let offset = 0; offset < filmIds.length; offset += 200) {
+      const ids = filmIds.slice(offset, offset + 200);
+      const placeholders = ids.map(() => '?').join(',');
+      const addKey = (id: string, key: string) => {
+        const keys = lookup.keysByFilm.get(id) ?? new Set<string>(); keys.add(key); lookup.keysByFilm.set(id, keys);
+      };
+      const files = this.db.prepare(`SELECT * FROM film_file WHERE film_id IN (${placeholders}) ORDER BY created_at, id`).all(...ids) as FilmFileRow[];
+      for (const row of files) {
+        const key = physicalFileKey(row.source_id, row.relative_path);
+        const rows = lookup.files.get(key) ?? []; rows.push(row); rows.sort((left, right) => left.created_at.localeCompare(right.created_at) || left.id.localeCompare(right.id)); lookup.files.set(key, rows); addKey(row.film_id, key);
+      }
+      const films = this.db.prepare(`SELECT id, source_id, relative_path FROM film WHERE id IN (${placeholders})`).all(...ids) as Array<{ id: string; source_id: string; relative_path: string }>;
+      for (const row of films) {
+        const key = physicalFileKey(row.source_id, row.relative_path);
+        const owners = lookup.legacy.get(key) ?? new Set<string>(); owners.add(row.id); lookup.legacy.set(key, owners); addKey(row.id, key);
+      }
+    }
+  }
+
+  public constructor(private readonly db: Database.Database) {
+    this.db.function('browser_playback_mode', { deterministic: true }, (filename: string, video: string | null, audio: string | null) => (
+      planBrowserPlaybackFromMetadata(filename, video, audio).mode
+    ));
+    this.db.function('source_online', (rootPath: string) => Number(this.sourceOnline(rootPath)));
+  }
+
+  private sourceOnline(rootPath: string): boolean {
+    const snapshot = pageSourceStatuses.get(this.db);
+    if (!snapshot) return isDirectory(rootPath);
+    if (!snapshot.has(rootPath)) snapshot.set(rootPath, isDirectory(rootPath));
+    return snapshot.get(rootPath)!;
+  }
 
   public page(query: FilmPageQuery): FilmPageDto {
+    // Count, filtering and summaries share a fresh source snapshot per request.
+    // Reconnected drives are observed immediately by the next request.
+    pageSourceStatuses.set(this.db, new Map());
+    try { return this.pageWithSourceSnapshot(query); }
+    finally { pageSourceStatuses.delete(this.db); }
+  }
+
+  private pageWithSourceSnapshot(query: FilmPageQuery): FilmPageDto {
     const page = Math.max(1, Math.floor(query.page));
     const pageSize = Math.min(200, Math.max(1, Math.floor(query.pageSize)));
-    const { where, params } = this.buildWhere(query);
+    const base = this.buildWhere(query);
+    const clauses: string[] = [];
+    const params = [...base.params];
+    if (!query.allData && !query.missingOnly) {
+      clauses.push('EXISTS (SELECT 1 FROM film_file visible_file WHERE visible_file.film_id = f.id AND visible_file.missing = 0)');
+    }
+    if (query.playbackCompatibility === 'non-native') {
+      clauses.push("browser_playback_mode(f.filename, f.video_codec, f.audio_codec) <> 'direct'");
+    }
+    const availability = `CASE
+      WHEN s.deleted_at IS NOT NULL THEN 'source_removed'
+      WHEN f.archived <> 0 THEN 'archived'
+      WHEN source_online(s.root_path) = 0 THEN 'source_offline'
+      WHEN NOT EXISTS (SELECT 1 FROM film_file available_file WHERE available_file.film_id = f.id AND available_file.missing = 0) THEN 'missing'
+      WHEN EXISTS (SELECT 1 FROM film_file missing_file WHERE missing_file.film_id = f.id AND missing_file.missing = 1) THEN 'partial_missing'
+      ELSE 'available' END`;
+    if (query.availability && query.availability !== 'all') {
+      clauses.push(`(${availability}) = ?`);
+      params.push(query.availability);
+    }
+    if (query.missingOnly) clauses.push(`(${availability}) IN ('missing', 'partial_missing')`);
+    const where = base.where + clauses.map((clause) => ` AND (${clause})`).join('');
+    const total = (this.db.prepare(`SELECT COUNT(*) AS total FROM film f JOIN media_source s ON s.id = f.source_id ${where}`)
+      .get(...params) as { total: number }).total;
     const orderBy = this.orderBy(query.sort);
     const rows = this.db
       .prepare(
-        `SELECT f.id, f.source_id, s.name AS source_name, f.relative_path, f.filename,
+        `WITH paged_films AS MATERIALIZED (
+           SELECT f.id FROM film f JOIN media_source s ON s.id = f.source_id
+           ${where} ORDER BY ${orderBy} LIMIT ? OFFSET ?
+         )
+         SELECT f.id, f.source_id, s.name AS source_name, f.relative_path, f.filename,
                 f.title, f.original_title, f.year, f.favorite, f.rating,
                 f.video_codec, f.audio_codec,
                 f.missing, f.archived, f.updated_at, s.root_path AS source_root_path,
@@ -201,27 +297,20 @@ export class FilmRepository {
                 COUNT(ff.id) AS total_file_count,
                 COALESCE(SUM(CASE WHEN ff.missing = 0 THEN 1 ELSE 0 END), 0) AS existing_file_count,
                 COALESCE(SUM(CASE WHEN ff.missing = 1 THEN 1 ELSE 0 END), 0) AS missing_file_count
-         FROM film f
+         FROM paged_films paged
+         JOIN film f ON f.id = paged.id
          JOIN media_source s ON s.id = f.source_id
          LEFT JOIN film_file ff ON ff.film_id = f.id
-         ${where}
          GROUP BY f.id
          ORDER BY ${orderBy}
          `,
       )
-      .all(...params) as FilmSummaryRow[];
-    const playbackFilteredRows = rows.filter((row) => (
-      query.playbackCompatibility !== 'non-native'
-      || planBrowserPlaybackFromMetadata(row.filename, row.video_codec, row.audio_codec).mode !== 'direct'
-    ));
-    const assetMap = this.assetsForFilms(playbackFilteredRows.map((row) => row.id));
-    const categoryMap = this.categoriesForFilms(playbackFilteredRows.map((row) => row.id));
-    const summaries = playbackFilteredRows
-      .map((row) => this.toSummary(row, assetMap.get(row.id) ?? [], categoryMap.get(row.id) ?? []))
-      .filter((summary) => this.matchesAvailability(summary, query));
-    const total = summaries.length;
+      .all(...params, pageSize, (page - 1) * pageSize) as FilmSummaryRow[];
+    const assetMap = this.assetsForFilms(rows.map((row) => row.id));
+    const categoryMap = this.categoriesForFilms(rows.map((row) => row.id));
+    const summaries = rows.map((row) => this.toSummary(row, assetMap.get(row.id) ?? [], categoryMap.get(row.id) ?? []));
     return {
-      items: summaries.slice((page - 1) * pageSize, page * pageSize),
+      items: summaries,
       page,
       pageSize,
       total,
@@ -360,6 +449,7 @@ export class FilmRepository {
       .filter((asset, index, all) => all.findIndex((candidate) => candidate.relativePath.toLowerCase() === asset.relativePath.toLowerCase()) === index);
     return {
       ...summary,
+      playbackState: this.playbackState(id),
       sortTitle: row.sort_title,
       releaseDate: row.release_date,
       runtimeSeconds: row.runtime_seconds,
@@ -677,6 +767,10 @@ export class FilmRepository {
   }
 
   public findByPath(sourceId: string, relativePath: string): ExistingFilmRow | null {
+    if (this.scanPaths?.sourceId === sourceId) {
+      const row = this.scanPaths.files.get(physicalFileKey(sourceId, relativePath))?.[0];
+      return row ? { id: row.film_id, relative_path: row.relative_path, fingerprint: row.fingerprint } : null;
+    }
     const normalized = normalizeRelativePath(relativePath);
     const rows = this.db
       .prepare('SELECT film_id AS id, relative_path, fingerprint FROM film_file WHERE source_id = ? ORDER BY created_at, id')
@@ -783,7 +877,7 @@ export class FilmRepository {
     return row ? { rootPath: row.root_path, relativePath: row.relative_path } : null;
   }
 
-  public playbackState(filmId: string, partId: string | null = null): FilmPlaybackState | null {
+  public playbackState(filmId: string, partId?: string | null): FilmPlaybackState | null {
     const row = this.db
       .prepare(
         `SELECT film_id, last_part_id, position_seconds, duration_seconds, last_played_at
@@ -798,7 +892,7 @@ export class FilmRepository {
         last_played_at: string;
       } | undefined;
     if (!row) return null;
-    const sameSource = row.last_part_id === partId;
+    const sameSource = partId === undefined || row.last_part_id === partId;
     return {
       filmId: row.film_id,
       lastPartId: row.last_part_id,
@@ -853,23 +947,27 @@ export class FilmRepository {
     const newFilmId = randomUUID();
     if (!existingIds.length) {
       try {
-        return { id: this.insertCandidate(candidate, now, newFilmId), created: true, moved: false, merged: 0 };
+        const id = this.insertCandidate(candidate, now, newFilmId);
+        this.refreshScanPaths([id]);
+        return { id, created: true, moved: false, merged: 0 };
       } catch (error) {
         throw this.asOwnershipConflict(error, candidate, newFilmId, 'film_file.insert');
       }
     }
 
     const existingPrimaryPath = this.findByPath(candidate.sourceId, candidate.relativePath);
-    const repair = new FilmFileOwnershipRepairService(this.db);
-    const survivor = repair.chooseSurvivor(existingIds);
+    const repair = existingIds.length > 1 ? new FilmFileOwnershipRepairService(this.db) : null;
+    const survivor = repair?.chooseSurvivor(existingIds) ?? existingIds[0]!;
     let merged = 0;
     try {
       for (const filmId of existingIds) {
         if (filmId === survivor) continue;
-        repair.mergeFilms(survivor, filmId, now, candidate.logicalKey);
+        repair!.mergeFilms(survivor, filmId, now, candidate.logicalKey);
         merged += 1;
       }
+      if (merged) this.refreshScanPaths(existingIds);
       this.updateFromCandidate(survivor, candidate, now);
+      this.refreshScanPaths([...existingIds, survivor]);
     } catch (error) {
       throw this.asOwnershipConflict(error, candidate, survivor, 'film_file.upsert');
     }
@@ -981,6 +1079,15 @@ export class FilmRepository {
   }
 
   private findCandidateFilmIds(candidate: FilmCandidate): string[] {
+    if (this.scanPaths?.sourceId === candidate.sourceId) {
+      const ids = new Set<string>();
+      for (const file of candidate.files) {
+        const key = physicalFileKey(candidate.sourceId, file.relativePath);
+        for (const row of this.scanPaths.files.get(key) ?? []) ids.add(row.film_id);
+        for (const id of this.scanPaths.legacy.get(key) ?? []) ids.add(id);
+      }
+      return [...ids].sort();
+    }
     const pathKeys = new Set(candidate.files.map((file) => physicalFileKey(candidate.sourceId, file.relativePath)));
     const rows = this.db.prepare('SELECT film_id, source_id, relative_path FROM film_file WHERE source_id = ?').all(candidate.sourceId) as Array<{ film_id: string; source_id: string; relative_path: string }>;
     const ids = new Set<string>();
@@ -1276,7 +1383,6 @@ export class FilmRepository {
     const existing = this.db.prepare('SELECT * FROM film_file WHERE film_id = ? ORDER BY created_at, id').all(filmId) as FilmFileRow[];
     const touched = new Set<string>();
     const candidateKeys = new Set(candidates.map((candidate) => physicalFileKey(sourceId, candidate.relativePath)));
-    const repair = new FilmFileOwnershipRepairService(this.db);
     const insert = this.db.prepare(
       `INSERT INTO film_file
        (id, film_id, source_id, relative_path, filename, part_type, part_number, is_primary,
@@ -1290,8 +1396,9 @@ export class FilmRepository {
     );
     const sourceRows = (): FilmFileRow[] => this.db.prepare('SELECT * FROM film_file WHERE source_id = ? ORDER BY created_at, id').all(sourceId) as FilmFileRow[];
     const findCurrentRow = (file: FilmFileCandidate): FilmFileRow | undefined => {
-      const rows = sourceRows();
       const key = physicalFileKey(sourceId, file.relativePath);
+      if (this.scanPaths?.sourceId === sourceId) return this.scanPaths.files.get(key)?.[0];
+      const rows = sourceRows();
       const byPath = rows.find((row) => physicalFileKey(row.source_id, row.relative_path) === key);
       if (byPath) return byPath;
       return undefined;
@@ -1301,7 +1408,9 @@ export class FilmRepository {
       if (candidate.isPrimary) this.db.prepare('UPDATE film_file SET is_primary = 0 WHERE film_id = ?').run(filmId);
       let row = findCurrentRow(candidate);
       if (row && row.film_id !== filmId) {
-        repair.mergeFilms(filmId, row.film_id, now, `scan:${physicalFileKey(sourceId, candidate.relativePath)}`);
+        const previousOwner = row.film_id;
+        new FilmFileOwnershipRepairService(this.db).mergeFilms(filmId, previousOwner, now, `scan:${physicalFileKey(sourceId, candidate.relativePath)}`);
+        this.refreshScanPaths([filmId, previousOwner]);
         row = findCurrentRow(candidate);
       }
       if (row) {
@@ -1473,7 +1582,7 @@ export class FilmRepository {
     const existingFileCount = Number(row.existing_file_count);
     const missingFileCount = Math.max(0, totalFileCount - existingFileCount);
     const sourceDeleted = Boolean(row.source_deleted_at);
-    const sourceOffline = !sourceDeleted && !isDirectory(row.source_root_path);
+    const sourceOffline = !sourceDeleted && !this.sourceOnline(row.source_root_path);
     const availability = sourceDeleted
       ? 'source_removed'
       : row.archived
@@ -1629,14 +1738,6 @@ export class FilmRepository {
         )`);
     }
     return { where: `WHERE ${clauses.join(' AND ')}`, params };
-  }
-
-  private matchesAvailability(summary: FilmSummaryDto, query: FilmPageQuery): boolean {
-    const allData = Boolean(query.allData || query.missingOnly);
-    if (!allData && summary.existingFileCount === 0) return false;
-    if (query.availability && query.availability !== 'all' && summary.availability !== query.availability) return false;
-    if (query.missingOnly && !['missing', 'partial_missing'].includes(summary.availability)) return false;
-    return true;
   }
 
   private orderBy(sort: FilmPageQuery['sort']): string {

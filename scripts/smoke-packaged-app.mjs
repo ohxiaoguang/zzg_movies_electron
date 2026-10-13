@@ -5,6 +5,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { verifyScanReport } from './smoke-scan-report.mjs';
 import { verifyResonanceScenes } from './smoke-resonance-scenes.mjs';
 import { verifyDesktopLibraryFilters, verifyWebLibraryFilters } from './smoke-library-filters.mjs';
 
@@ -375,6 +376,7 @@ try {
         fs.writeFileSync(path.join(projectRoot, 'out/filter-web-mobile.png'), Buffer.from(mobileScreenshot.data, 'base64'));
       } finally { browserSocket.close(); }
     }
+    await verifyScanReport((expression, awaitPromise) => cdpEvaluate(socket, expression, awaitPromise), mediaRoot);
     console.log(`SMOKE_OK health=ok database=ready ipc=ready sourceCount=${result.after.data.length} categories=${result.patchedDetail.data.customCategories.length}`);
     if (browserHoldMs > 0) {
       console.log(`SMOKE_BROWSER_URL=${result.localWeb.data.baseUrl}`);

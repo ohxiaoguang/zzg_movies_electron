@@ -13,6 +13,7 @@ import { MediaProtocol } from './media/MediaProtocol';
 import { MediaCapabilityService } from './media/MediaCapabilityService';
 import { PreviewTranscoder } from './media/PreviewTranscoder';
 import { PosterThumbnailer } from './media/PosterThumbnailer';
+import { ScanWorkerClient } from './scanner/ScanWorkerClient';
 import { ScanCoordinator } from './scanner/ScanCoordinator';
 import { AppLogger } from './system/AppLogger';
 import { DesktopIntegrationService } from './system/DesktopIntegrationService';
@@ -97,7 +98,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
   const films = new FilmRepository(database.db);
   const settings = new SettingsRepository(database.db);
   const lanDevices = new LanDeviceRepository(database.db);
-  const scan = new ScanCoordinator(database, sources, films, settings, logger);
+  const scan = new ScanCoordinator(database, sources, films, settings, logger, new ScanWorkerClient(path.join(__dirname, 'scan-worker.js'), database.databasePath, database.operations, logger));
   activeScan = scan;
   const sourceTransfer = new SourceTransferService(database, sources, logger);
   try {
@@ -163,6 +164,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
   });
   const lanSettings = settings.get();
   lanServer = new LanServer(libraryRead, mediaAssets, logger, {
+    runDatabaseAction: (action) => database!.operations.runDatabaseAction(action),
     version: app.getVersion(),
     databaseReady: () => Boolean(database?.db.open),
     hoverCloseDelayMs: () => settings.get().hoverCloseDelayMs,

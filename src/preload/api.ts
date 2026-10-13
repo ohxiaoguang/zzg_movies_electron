@@ -33,10 +33,11 @@ import type {
 } from '../shared/contracts';
 import type { FilmLibraryApi } from './types';
 
+let desktopPlaybackFlushListener: (() => Promise<void>) | null = null;
 let resonanceFlushListener: (() => Promise<void>) | null = null;
 ipcRenderer.on(IPC_CHANNELS.resonanceFlush, async (_event, requestId: string) => {
   let ok = false;
-  try { await resonanceFlushListener?.(); ok = true; } catch { /* Report the failure to the main process. */ }
+  try { await Promise.all([resonanceFlushListener?.(), desktopPlaybackFlushListener?.()]); ok = true; } catch { /* Report the failure to the main process. */ }
   ipcRenderer.send(IPC_CHANNELS.resonanceFlushed, { requestId, ok });
 });
 
@@ -93,6 +94,11 @@ export const filmLibraryApi: FilmLibraryApi = {
     partsOpen: (partId: string) => invoke(IPC_CHANNELS.filmsPartsOpen, partId),
     partsShowInFolder: (partId: string) => invoke(IPC_CHANNELS.filmsPartsShowInFolder, partId),
     updatePartVr: (partId: string, isVr: boolean) => invoke(IPC_CHANNELS.filmsPartsUpdateVr, { partId, isVr }),
+    savePlaybackProgress: (input) => invoke(IPC_CHANNELS.desktopPlaybackProgress, input),
+    onPlaybackFlush: (listener) => {
+      desktopPlaybackFlushListener = listener;
+      return () => { if (desktopPlaybackFlushListener === listener) desktopPlaybackFlushListener = null; };
+    },
     subtitleTracks: (partId: string) => invoke(IPC_CHANNELS.playbackSubtitleTracks, partId),
     subtitleContent: (partId: string, index: number) => invoke(IPC_CHANNELS.playbackSubtitleContent, { partId, index }),
     cancelPreview: (partId: string) => invoke(IPC_CHANNELS.playbackPreviewCancel, partId),
@@ -117,6 +123,8 @@ export const filmLibraryApi: FilmLibraryApi = {
     reorder: (input: CustomCategoryReorderInput) => invoke(IPC_CHANNELS.categoriesReorder, input),
   },
   scan: {
+    issues: (query) => invoke(IPC_CHANNELS.scanIssues, query),
+    openIssue: (id) => invoke(IPC_CHANNELS.scanIssueOpen, id),
     start: (input: ScanStartInput) => invoke(IPC_CHANNELS.scanStart, input),
     cancel: () => invoke(IPC_CHANNELS.scanCancel),
     status: () => invoke(IPC_CHANNELS.scanStatus),

@@ -2,6 +2,36 @@
 export class LibraryOperationCoordinator {
   private active: 'scan' | 'transfer' | 'media' | null = null;
   private stopping = false;
+  private scanWriting = false;
+  private scanWriteToken = 0;
+  private databaseActions = 0;
+  private databaseIdleWaiters: Array<() => void> = [];
+  private scanWriteWaiters: Array<() => void> = [];
+
+  public waitForScanWrite(): Promise<void> {
+    return this.scanWriting ? new Promise((resolve) => this.scanWriteWaiters.push(resolve)) : Promise.resolve();
+  }
+
+  public async runDatabaseAction<T>(action: () => Promise<T> | T): Promise<T> {
+    while (this.scanWriting) await this.waitForScanWrite();
+    this.databaseActions++;
+    try { return await action(); }
+    finally {
+      this.databaseActions--;
+      if (!this.databaseActions) for (const resolve of this.databaseIdleWaiters.splice(0)) resolve();
+    }
+  }
+
+  public async beginScanWrite(): Promise<() => void> {
+    const token = ++this.scanWriteToken;
+    this.scanWriting = true;
+    if (this.databaseActions) await new Promise<void>((resolve) => this.databaseIdleWaiters.push(resolve));
+    return () => {
+      if (token !== this.scanWriteToken) return;
+      this.scanWriting = false;
+      for (const resolve of this.scanWriteWaiters.splice(0)) resolve();
+    };
+  }
   private waiters: Array<() => void> = [];
 
   public acquire(kind: 'scan' | 'transfer' | 'media'): () => void {

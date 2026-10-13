@@ -1,4 +1,4 @@
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, nextTick, onScopeDispose, ref, watch } from 'vue';
 import { defineStore } from 'pinia';
 import type { VrViewDto } from '../../shared/contracts';
 import { emptyResonanceState, type ResonanceState as SceneState, type ResonanceVideo, type ResonanceVideoInput, type ResonanceScene } from '../../shared/resonance';
@@ -16,6 +16,31 @@ export const useResonanceStore = defineStore('resonance', () => {
   let writes: Promise<void> = Promise.resolve();
   let committing: Promise<void> | null = null;
   let replacing = false;
+  let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
+  let autosaveRunning = false;
+  let autosaveDirty = false;
+  let disposed = false;
+
+  function scheduleAutosave(): void {
+    if (disposed || autosaveTimer || autosaveRunning || restoring.value) return;
+    autosaveTimer = setTimeout(() => {
+      autosaveTimer = null;
+      if (!autosaveDirty || restoring.value || disposed) return;
+      autosaveRunning = true;
+      void persist(sceneState.value).catch(() => undefined).finally(() => {
+        autosaveRunning = false;
+        if (autosaveDirty) scheduleAutosave();
+      });
+    }, 1000);
+  }
+
+  onScopeDispose(() => { disposed = true; if (autosaveTimer) clearTimeout(autosaveTimer); });
+  watch(restoring, (value) => {
+    if (!value) return;
+    if (autosaveTimer) clearTimeout(autosaveTimer);
+    autosaveTimer = null;
+    autosaveDirty = false;
+  }, { flush: 'sync' });
 
   async function initialize(): Promise<void> {
     if (ready.value) return;
@@ -38,7 +63,7 @@ export const useResonanceStore = defineStore('resonance', () => {
   }
 
   async function reload(): Promise<void> {
-    await writes;
+    if (restoring.value) await writes; else await flush();
     ready.value = false;
     await initialize();
   }
@@ -120,6 +145,9 @@ export const useResonanceStore = defineStore('resonance', () => {
   }
 
   function persist(state: SceneState): Promise<void> {
+    if (autosaveTimer) clearTimeout(autosaveTimer);
+    autosaveTimer = null;
+    autosaveDirty = false;
     const snapshot = JSON.parse(JSON.stringify(state)) as SceneState;
     const operation = writes.catch(() => undefined).then(async () => {
       try {
@@ -210,7 +238,7 @@ export const useResonanceStore = defineStore('resonance', () => {
   }
 
   watch(sceneState, () => {
-    if (ready.value && !replacing && !restoring.value) void persist(sceneState.value).catch(() => undefined);
+    if (ready.value && !replacing && !restoring.value) { autosaveDirty = true; scheduleAutosave(); }
   }, { deep: true });
 
   return {

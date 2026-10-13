@@ -1,11 +1,12 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DatabaseManager } from '../src/main/database/DatabaseManager';
 import { FilmRepository } from '../src/main/database/repositories/FilmRepository';
 import { SettingsRepository } from '../src/main/database/repositories/SettingsRepository';
 import { SourceRepository } from '../src/main/database/repositories/SourceRepository';
+import { SourceScanner } from '../src/main/scanner/SourceScanner';
 import { ScanCoordinator } from '../src/main/scanner/ScanCoordinator';
 import { AppLogger } from '../src/main/system/AppLogger';
 
@@ -13,6 +14,7 @@ const tempRoots: string[] = [];
 const databases: DatabaseManager[] = [];
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const database of databases.splice(0)) database.close();
   for (const root of tempRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
@@ -59,6 +61,36 @@ function createContext(root: string) {
 }
 
 describe('SQLite migrations and scanning', () => {
+  it('reports live source counters without double counting and publishes final progress immediately', async () => {
+    const context = createContext(fixtureRoot());
+    const statuses: Array<NonNullable<ReturnType<ScanCoordinator['status']>>> = [];
+    context.scan.onProgress((progress) => { statuses.push({ ...progress }); });
+    vi.spyOn(SourceScanner.prototype, 'scan').mockImplementation(async function (this: SourceScanner) {
+      const options = (this as unknown as { options: { onProgress: (progress: { currentDirectory: string; currentFilm: string; phase: 'parsing'; discovered: number; processed: number }) => void } }).options;
+      options.onProgress({ phase: 'parsing', currentDirectory: '.', currentFilm: 'one', discovered: 3, processed: 1 });
+      expect(context.scan.status()).toMatchObject({ discovered: 3, processed: 1 });
+      await new Promise((resolve) => setTimeout(resolve, 110));
+      options.onProgress({ phase: 'parsing', currentDirectory: '.', currentFilm: 'two', discovered: 3, processed: 2 });
+      expect(context.scan.status()).toMatchObject({ discovered: 3, processed: 2 });
+      return { complete: true, cancelled: false, offline: false, candidates: [], stats: { discovered: 3, processed: 3, nfoErrors: 0, ambiguousAssets: 0, otherErrors: 0 } };
+    });
+    context.scan.start({});
+    const final = await waitForScan(context.scan);
+    expect(final).toMatchObject({ status: 'completed', discovered: 3, processed: 3 });
+    expect(statuses.some((status) => status.status === 'running' && status.processed === 1)).toBe(true);
+    expect(statuses.at(-1)).toMatchObject({ status: 'completed', processed: 3 });
+  });
+
+  it('counts multipart original files consistently and excludes preview sidecars', async () => {
+    const root = fixtureRoot();
+    fs.writeFileSync(path.join(root, 'Parts-cd1.mp4'), 'one');
+    fs.writeFileSync(path.join(root, 'Parts-cd2.mp4'), 'two');
+    const context = createContext(root);
+    context.scan.start({});
+    const final = await waitForScan(context.scan);
+    expect(final).toMatchObject({ discovered: 3, processed: 3, created: 2, status: 'completed' });
+  });
+
   it('persists media scale and subtitle size, rejects invalid updates, and recovers corrupted settings', () => {
     const context = createContext(fixtureRoot());
     expect(context.settings.get()).toMatchObject({ slackingScalePercent: 40, subtitleFontSizePx: 24 });

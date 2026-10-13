@@ -166,7 +166,7 @@ async function scanSource(source: MediaSourceDto): Promise<void> {
 
 <template>
   <div class="page-wrap">
-    <div class="page-heading"><div><div class="eyebrow">MEDIA SOURCES</div><h1 class="page-title">来源管理</h1><p class="page-caption">管理外部影片目录。除主动使用转移功能外，应用不会复制、改写或删除来源中的任何文件。</p></div><div class="heading-actions"><el-button @click="refreshSources"><Refresh />刷新</el-button><el-button type="primary" @click="openCreate"><Plus />添加目录</el-button></div></div>
+    <div class="page-heading"><div><div class="eyebrow">MEDIA SOURCES</div><h1 class="page-title">来源管理</h1><p class="page-caption">管理外部影片目录。除主动使用转移功能外，应用不会复制、改写或删除来源中的任何文件。</p></div><div class="heading-actions"><el-button v-if="scan.progress && scan.progress.status !== 'running'" @click="scan.dialogVisible = true">上次扫描结果</el-button><el-button @click="refreshSources"><Refresh />刷新</el-button><el-button type="primary" @click="openCreate"><Plus />添加目录</el-button></div></div>
     <div class="source-safety"><span class="safety-icon">✓</span><div><strong>安全边界</strong><p>扫描只读取文件；删除来源不会操作外部媒体文件。只有“转移”会在确认后移动已扫描影片及其旁路资源，并始终保留原来源文件夹本身。</p></div></div>
     <el-alert v-if="sourceStore.error" :title="sourceStore.error" type="error" show-icon :closable="false" class="source-error" />
     <div v-if="transferHistory.length" class="transfer-history">

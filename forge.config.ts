@@ -61,6 +61,7 @@ const config: ForgeConfig = {
   plugins: [
     new VitePlugin({
       build: [
+        { entry: 'src/main/scanner/scan-worker.ts', config: 'vite.main.config.ts' },
         {
           entry: 'src/main/main.ts',
           config: 'vite.main.config.ts',

@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus';
 import type { DesktopSubtitleTrackDto, FilmDetailDto, FilmSegmentDto, VrViewDto } from '../../../shared/contracts';
 import { mediaUrl } from '../../api';
 import { useResonanceStore } from '../../stores/resonance';
+import { DesktopPlaybackTracker, resumablePlayback } from '../../media/DesktopPlaybackTracker';
 import { SphericalVideoRenderer } from '../../media/SphericalVideoRenderer';
 
 const props = defineProps<{
@@ -92,6 +93,58 @@ let playbackGeneration = 0;
 let subtitleGeneration = 0;
 let resumeAfterFallbackSeconds: number | null = null;
 let resumeAfterFallbackPlayback = false;
+let pendingResumeSeconds: number | null = null;
+let openingResume: { partId: string; seconds: number } | null = null;
+let trackedSource: { filmId: string; partId: string; started: boolean } | null = null;
+let stopPlaybackFlush: (() => void) | null = null;
+let playbackSaveErrorReported = false;
+const playbackTracker = new DesktopPlaybackTracker(async (input) => {
+  const result = await window.filmLibrary.films.savePlaybackProgress(input);
+  if (!result.ok) throw new Error(result.error.message);
+  playbackSaveErrorReported = false;
+});
+
+function reportPlaybackSaveError(): void {
+  if (!playbackSaveErrorReported) ElMessage.warning('播放进度保存失败，将在下次保存时重试');
+  playbackSaveErrorReported = true;
+}
+
+function savePlaybackPosition(force = false): Promise<void> {
+  const element = video.value;
+  if (!trackedSource?.started || !element || element.readyState < 1 || !Number.isFinite(element.currentTime)) return playbackTracker.flush();
+  return playbackTracker.record({
+    filmId: trackedSource.filmId, partId: trackedSource.partId,
+    positionSeconds: element.currentTime,
+    ...(Number.isFinite(element.duration) ? { durationSeconds: element.duration } : {}),
+  }, force);
+}
+
+function onPlaying(): void {
+  syncPlaybackState();
+  if (trackedSource) trackedSource.started = true;
+  void savePlaybackPosition(true).catch(reportPlaybackSaveError);
+}
+
+function onPaused(): void {
+  syncPlaybackState();
+  void savePlaybackPosition(true).catch(reportPlaybackSaveError);
+}
+
+async function flushPlaybackPosition(): Promise<void> {
+  await savePlaybackPosition(true);
+}
+
+function restartPlayback(): void {
+  pendingResumeSeconds = null;
+  resumeAfterFallbackSeconds = null;
+  activeSegment.value = null;
+  const element = video.value;
+  if (!element || element.readyState < 1) return;
+  element.currentTime = 0;
+  currentSeconds.value = 0;
+  void savePlaybackPosition(true).catch(reportPlaybackSaveError);
+  void element.play().catch(() => undefined);
+}
 
 const availableParts = computed(() => props.film.parts.filter((part) => !part.missing));
 const selectedPart = computed(() => availableParts.value.find((part) => part.id === selectedPartId.value) ?? null);
@@ -112,7 +165,8 @@ watch(() => props.film.id, () => {
   playbackSourceMode.value = 'direct';
   compatibilityReady.value = false;
   playbackError.value = '';
-  selectedPartId.value = availableParts.value[0]?.id ?? '';
+  openingResume = resumablePlayback(props.film.playbackState, props.film.parts);
+  selectedPartId.value = openingResume?.partId ?? availableParts.value[0]?.id ?? '';
   currentSeconds.value = 0;
   durationSeconds.value = 0;
   activeSegment.value = null;
@@ -122,6 +176,10 @@ watch(() => props.film.id, () => {
 }, { immediate: true });
 
 watch(selectedPartId, (partId, previousPartId) => {
+  void savePlaybackPosition(true).catch(reportPlaybackSaveError);
+  trackedSource = { filmId: props.film.id, partId, started: false };
+  pendingResumeSeconds = openingResume?.partId === partId ? openingResume.seconds : null;
+  openingResume = null;
   if (previousPartId) void window.filmLibrary.films.cancelPreview(previousPartId);
   mediaActive.value = true;
   playbackSourceMode.value = 'direct';
@@ -172,6 +230,12 @@ function onLoadedMetadata(): void {
   };
   fitVideoToStage();
   if (playbackSourceMode.value === 'compatibility') compatibilityReady.value = true;
+  if (element && pendingResumeSeconds !== null && resumeAfterFallbackSeconds === null && !activeSegment.value) {
+    const target = pendingResumeSeconds;
+    pendingResumeSeconds = null;
+    element.currentTime = target < element.duration - 1 ? target : 0;
+    currentSeconds.value = element.currentTime;
+  }
   if (element && resumeAfterFallbackSeconds !== null) {
     element.currentTime = Math.max(0, Math.min(element.duration || Number.POSITIVE_INFINITY, resumeAfterFallbackSeconds));
     const shouldResume = resumeAfterFallbackPlayback;
@@ -189,7 +253,8 @@ function onPlaybackError(event: Event): void {
   if (playbackSourceMode.value === 'direct') {
     const expectedSource = mediaUrl('original-part', selectedPartId.value);
     if (element.currentSrc && element.currentSrc !== expectedSource && element.getAttribute('src') !== expectedSource) return;
-    resumeAfterFallbackSeconds = Number.isFinite(element.currentTime) ? element.currentTime : currentSeconds.value;
+    resumeAfterFallbackSeconds = pendingResumeSeconds ?? (Number.isFinite(element.currentTime) ? element.currentTime : currentSeconds.value);
+    pendingResumeSeconds = null;
     resumeAfterFallbackPlayback = !element.paused || activeSegment.value !== null;
     compatibilityReady.value = false;
     playbackError.value = '';
@@ -234,6 +299,7 @@ function onTimeUpdate(): void {
   if (!element) return;
   currentSeconds.value = element.currentTime;
   emitPosition();
+  if (trackedSource?.started) void savePlaybackPosition().catch(reportPlaybackSaveError);
   if (activeSegment.value && element.currentTime >= activeSegment.value.endSeconds) activeSegment.value = null;
 }
 
@@ -256,6 +322,7 @@ function seekTimeline(event: MouseEvent): void {
   const rect = target.getBoundingClientRect();
   if (!rect.width) return;
   playbackGeneration += 1;
+  pendingResumeSeconds = null;
   activeSegment.value = null;
   element.currentTime = Math.max(0, Math.min(Math.max(0, durationSeconds.value - .25), ((event.clientX - rect.left) / rect.width) * durationSeconds.value));
   currentSeconds.value = element.currentTime;
@@ -284,6 +351,7 @@ async function seekAndPlay(segment: FilmSegmentDto): Promise<void> {
   activeSegment.value = segment;
   await nextTick();
   if (generation !== playbackGeneration) return;
+  pendingResumeSeconds = null;
   applyVrView(segment.vrView);
   const element = video.value;
   if (!element) return;
@@ -296,6 +364,7 @@ async function seekAndPlay(segment: FilmSegmentDto): Promise<void> {
 }
 
 function selectPart(partId: string): void {
+  pendingResumeSeconds = null;
   if (!availableParts.value.some((part) => part.id === partId)) return;
   activeSegment.value = null;
   mediaActive.value = true;
@@ -303,6 +372,7 @@ function selectPart(partId: string): void {
 }
 
 function seekRelative(deltaSeconds: number): void {
+  pendingResumeSeconds = null;
   const element = video.value;
   if (!element) return;
   activeSegment.value = null;
@@ -375,6 +445,7 @@ function stopPlayback(): void {
 }
 
 function releasePlayback(): void {
+  void savePlaybackPosition(true).catch(reportPlaybackSaveError);
   exitAppFullscreen();
   stopPlayback();
   if (!mediaActive.value) return;
@@ -529,8 +600,15 @@ function destroySphericalRenderer(): void {
 }
 
 defineExpose({ playSegment, playOriginal, selectPart, seekRelative, togglePlayback, stopPlayback, releasePlayback, getPlaybackSnapshot, getCurrentVrView, exitAppFullscreen });
-onMounted(() => document.addEventListener('fullscreenchange', onFullscreenChange));
+onMounted(() => {
+  document.addEventListener('fullscreenchange', onFullscreenChange);
+  window.addEventListener('pagehide', persistPlaybackOnHide);
+  stopPlaybackFlush = window.filmLibrary.films.onPlaybackFlush(flushPlaybackPosition);
+});
+function persistPlaybackOnHide(): void { void flushPlaybackPosition().catch(reportPlaybackSaveError); }
 onBeforeUnmount(() => {
+  stopPlaybackFlush?.();
+  window.removeEventListener('pagehide', persistPlaybackOnHide);
   document.removeEventListener('fullscreenchange', onFullscreenChange);
   stageObserver?.disconnect();
   destroySphericalRenderer();
@@ -585,6 +663,7 @@ onBeforeUnmount(() => {
           <el-option v-for="part in availableParts" :key="part.id" :label="`${part.partType.toUpperCase()} ${part.partNumber} · ${part.filename}`" :value="part.id" />
         </el-select>
         <el-button class="resonance-add-button" size="small" :disabled="!source" @click="emit('addToResonance')">添加进共鸣球</el-button>
+        <el-button v-if="currentSeconds > 0" size="small" :disabled="!durationSeconds" @click="restartPlayback">从头播放</el-button>
         <el-button size="small" @click="playOriginal">继续播放原片</el-button>
       </div>
     </div>
@@ -608,7 +687,9 @@ onBeforeUnmount(() => {
           @error="onPlaybackError"
           @timeupdate="onTimeUpdate"
           @play="syncPlaybackState"
-          @pause="syncPlaybackState"
+          @pause="onPaused"
+          @playing="onPlaying"
+          @ended="onPaused"
           @volumechange="syncPlaybackState"
         >
           <track

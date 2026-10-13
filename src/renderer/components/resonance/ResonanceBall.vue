@@ -31,6 +31,7 @@ const vrActiveIds = ref(new Set<string>());
 let stageObserver: ResizeObserver | null = null;
 let clearTimer: ReturnType<typeof setTimeout> | null = null;
 let vrHydrationGeneration = 0;
+let pauseSave: Promise<void> | null = null;
 
 const layout = computed(() => computeResonanceLayout(
   resonance.videos.map((item) => ({ id: item.id, aspectRatio: item.aspectRatio })),
@@ -143,6 +144,11 @@ function markPlaying(id: string, playing: boolean, event?: Event): void {
   if (playing) next.add(id);
   else next.delete(id);
   playingIds.value = next;
+  if (event && !playing && !sceneBusy.value && !resonance.restoring && !pauseSave) {
+    captureSceneState();
+    // Several simultaneous pause events share one final save.
+    pauseSave = Promise.resolve().then(() => resonance.flush()).catch(() => undefined).finally(() => { pauseSave = null; });
+  }
 }
 
 function toggleOne(id: string): void {

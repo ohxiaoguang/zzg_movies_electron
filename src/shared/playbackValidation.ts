@@ -1,4 +1,4 @@
-import type { WebPlaybackProgressInput, WebPlaybackSessionCreateInput } from './contracts';
+import type { DesktopPlaybackProgressInput, WebPlaybackProgressInput, WebPlaybackSessionCreateInput } from './contracts';
 import { isRecord, isUuid } from './validation';
 
 export function validatePlaybackSessionCreate(payload: unknown): WebPlaybackSessionCreateInput {
@@ -38,4 +38,9 @@ function finiteSeconds(value: unknown): number {
     throw new Error('INVALID_PLAYBACK_PROGRESS');
   }
   return Math.round(value * 1000) / 1000;
+}
+
+export function validateDesktopPlaybackProgress(payload: unknown): DesktopPlaybackProgressInput {
+  if (!isRecord(payload) || !isUuid(payload.filmId) || !isUuid(payload.partId)) throw new Error('INVALID_PLAYBACK_PROGRESS');
+  return { filmId: payload.filmId, partId: payload.partId, ...validatePlaybackProgress(payload) };
 }

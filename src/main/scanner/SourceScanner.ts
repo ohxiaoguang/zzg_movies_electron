@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { MediaSourceDto, SettingsDto } from '../../shared/contracts';
+import type { MediaSourceDto, SettingsDto, ScanIssueDto } from '../../shared/contracts';
 import { DEFAULT_IGNORED_DIRECTORIES, DEFAULT_IMAGE_EXTENSIONS, DEFAULT_VIDEO_EXTENSIONS } from '../../shared/enums';
 import { mapNfoMetadata } from '../metadata/NfoMapper';
 import { parseNfo } from '../metadata/NfoParser';
@@ -25,9 +25,11 @@ export interface SourceScanResult {
   offline: boolean;
   candidates: FilmCandidate[];
   stats: SourceScanStats;
+  issues?: ScanIssueDto[];
 }
 
 export interface SourceScannerProgress {
+  phase: 'discovering' | 'parsing';
   currentDirectory: string;
   currentFilm: string | null;
   discovered: number;
@@ -41,7 +43,11 @@ interface ScannerOptions {
   onProgress?: (progress: SourceScannerProgress) => void;
 }
 
+const fileCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
 export class SourceScanner {
+  private videoExtensionCache: Set<string> | null = null;
+  private imageExtensionCache: Set<string> | null = null;
   public constructor(private readonly source: MediaSourceDto, private readonly options: ScannerOptions) {}
 
   public async scan(): Promise<SourceScanResult> {
@@ -52,6 +58,10 @@ export class SourceScanner {
       ambiguousAssets: 0,
       otherErrors: 0,
     };
+    const issues: ScanIssueDto[] = [];
+    const issue = (type: ScanIssueDto['type'], relativePath: string, filmTitle: string, message: string, relatedPaths: string[] = []) => {
+      issues.push({ id: crypto.randomUUID(), type, sourceId: this.source.id, sourceName: this.source.name, relativePath, filmTitle, message: message.slice(0, 2000), relatedPaths });
+    };
     const rootPath = path.resolve(this.source.rootPath);
     const scanRootPath = this.options.relativeDirectory
       ? resolveSafeMediaPath(rootPath, this.options.relativeDirectory)
@@ -61,7 +71,8 @@ export class SourceScanner {
       rootStat = await fs.promises.stat(scanRootPath);
       if (!rootStat.isDirectory()) throw new Error('SOURCE_NOT_DIRECTORY');
     } catch {
-      return { complete: false, cancelled: false, offline: true, candidates: [], stats };
+      issue('source_offline', this.options.relativeDirectory ?? '.', '', '来源或扫描目录不可访问，已保留原有记录');
+      return { complete: false, cancelled: false, offline: true, candidates: [], stats, issues };
     }
 
     const directories = new Map<string, ScanFileEntry[]>();
@@ -74,12 +85,13 @@ export class SourceScanner {
       let entries: fs.Dirent[];
       try {
         entries = await fs.promises.readdir(directory, { withFileTypes: true });
-      } catch {
+      } catch (error) {
+        issue('filesystem', path.relative(rootPath, directory) || '.', '', `目录读取失败：${error instanceof Error ? error.message : '未知错误'}`);
         complete = false;
         stats.otherErrors += 1;
         return;
       }
-      entries.sort((left, right) => left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: 'base' }));
+      entries.sort((left, right) => fileCollator.compare(left.name, right.name));
       const localFiles: ScanFileEntry[] = [];
       directories.set(directory, localFiles);
       for (const entry of entries) {
@@ -115,6 +127,7 @@ export class SourceScanner {
       this.options.onProgress?.({
         currentDirectory: path.relative(rootPath, directory) || '.',
         currentFilm: null,
+        phase: 'discovering',
         discovered: stats.discovered,
         processed: stats.processed,
       });
@@ -122,23 +135,31 @@ export class SourceScanner {
 
     await visit(scanRootPath);
     if (this.options.cancellation.cancelled) {
-      return { complete: false, cancelled: true, offline: false, candidates: [], stats };
+      return { complete: false, cancelled: true, offline: false, candidates: [], stats, issues };
     }
 
+    // Both counters use original video files, excluding preview sidecars.
+    const directoryGroups = new Map([...directories].map(([directory, files]) => {
+      const videos = files.filter((file) => this.videoExtensions.has(extensionOf(file.name)));
+      return [directory, groupVideoFiles(videos.filter((file) => !isPreviewSidecar(file, videos)))];
+    }));
+    stats.discovered = [...directoryGroups.values()].reduce((total, groups) => (
+      total + groups.reduce((count, group) => count + group.files.length, 0)
+    ), 0);
     const candidates: FilmCandidate[] = [];
     for (const [directory, files] of directories) {
       if (this.options.cancellation.cancelled) {
-        return { complete: false, cancelled: true, offline: false, candidates: [], stats };
+        return { complete: false, cancelled: true, offline: false, candidates: [], stats, issues };
       }
-      const videoFiles = files.filter((file) => this.videoExtensions.has(extensionOf(file.name)));
-      const groups = groupVideoFiles(videoFiles.filter((file) => !isPreviewSidecar(file, videoFiles)));
+      const groups = directoryGroups.get(directory)!;
       for (const group of groups) {
         if (this.options.cancellation.cancelled) {
-          return { complete: false, cancelled: true, offline: false, candidates: [], stats };
+          return { complete: false, cancelled: true, offline: false, candidates: [], stats, issues };
         }
         this.options.onProgress?.({
           currentDirectory: path.relative(rootPath, directory) || '.',
           currentFilm: group.files[0]?.name ?? null,
+          phase: 'parsing',
           discovered: stats.discovered,
           processed: stats.processed,
         });
@@ -184,17 +205,19 @@ export class SourceScanner {
               nfoStatus = 'error';
               nfoError = error instanceof Error ? error.message : 'NFO_PARSE_FAILED';
               stats.nfoErrors += 1;
+              issue('nfo', match.nfo.relativePath, group.baseName, `NFO 解析失败：${nfoError}`, [primary.relativePath]);
             }
           } else if (match.nfo) {
             nfoStatus = 'error';
             nfoError = 'NFO_UNREADABLE';
             stats.nfoErrors += 1;
+            issue('nfo', match.nfo.relativePath, group.baseName, 'NFO 无法读取，请检查文件权限或磁盘连接', [primary.relativePath]);
           }
           const fallbackTitle = group.baseName;
           const mapped = mapNfoMetadata(nfoMetadata, fallbackTitle);
           const assetStats = new Map<string, fs.Stats>();
-          await Promise.all(
-            match.assets.map(async (asset) => {
+          for (let offset = 0; offset < match.assets.length; offset += 16) await Promise.all(
+            match.assets.slice(offset, offset + 16).map(async (asset) => {
               const assetStat = await statOrNull(asset.entry.absolutePath);
               if (assetStat) assetStats.set(asset.entry.absolutePath, assetStat);
             }),
@@ -222,14 +245,17 @@ export class SourceScanner {
             files: fileEntries,
           });
           stats.ambiguousAssets += match.ambiguousAssets;
-        } catch {
+          for (const ambiguity of match.ambiguities) issue('asset', primary.relativePath, mapped.title, `同目录有多部影片，通用 ${ambiguity.assetType} 资源无法确定归属；可改为与影片同名的资源文件`, ambiguity.paths);
+        } catch (error) {
+          issue('filesystem', group.files[0]!.relativePath, group.baseName, `影片处理失败：${error instanceof Error ? error.message : '未知错误'}`);
           complete = false;
           stats.otherErrors += 1;
         }
-        stats.processed += 1;
+        stats.processed += group.files.length;
         this.options.onProgress?.({
           currentDirectory: path.relative(rootPath, directory) || '.',
           currentFilm: group.files[0]?.name ?? null,
+          phase: 'parsing',
           discovered: stats.discovered,
           processed: stats.processed,
         });
@@ -242,15 +268,16 @@ export class SourceScanner {
       offline: false,
       candidates,
       stats,
+      issues,
     };
   }
 
   private get videoExtensions(): Set<string> {
-    return new Set((this.options.settings.videoExtensions.length ? this.options.settings.videoExtensions : DEFAULT_VIDEO_EXTENSIONS).map(normalizeExtension));
+    return this.videoExtensionCache ??= new Set((this.options.settings.videoExtensions.length ? this.options.settings.videoExtensions : DEFAULT_VIDEO_EXTENSIONS).map(normalizeExtension));
   }
 
   private get imageExtensions(): Set<string> {
-    return new Set((this.options.settings.imageExtensions.length ? this.options.settings.imageExtensions : DEFAULT_IMAGE_EXTENSIONS).map(normalizeExtension));
+    return this.imageExtensionCache ??= new Set((this.options.settings.imageExtensions.length ? this.options.settings.imageExtensions : DEFAULT_IMAGE_EXTENSIONS).map(normalizeExtension));
   }
 
   private shouldIgnoreDirectory(name: string): boolean {
@@ -309,7 +336,7 @@ export function groupVideoFiles(videoFiles: ScanFileEntry[]): VideoFileGroup[] {
       const leftPart = parseFilmPartName(left.name);
       const rightPart = parseFilmPartName(right.name);
       return (leftPart?.partNumber ?? 1) - (rightPart?.partNumber ?? 1)
-        || left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: 'base' });
+        || fileCollator.compare(left.name, right.name);
     }),
   }));
 }

@@ -8,6 +8,7 @@ export interface SidecarMatch {
   nfo: ScanFileEntry | null;
   assets: Array<{ assetType: AssetType; entry: ScanFileEntry; sortOrder: number }>;
   ambiguousAssets: number;
+  ambiguities: Array<{ assetType: AssetType; paths: string[] }>;
 }
 
 const assetSuffixes: Record<AssetType, string[]> = {
@@ -51,6 +52,7 @@ export function matchSidecars(
   const nfo = exactNfo ?? genericNfo;
   const assets: Array<{ assetType: AssetType; entry: ScanFileEntry; sortOrder: number }> = [];
   let ambiguousAssets = 0;
+  const ambiguities: SidecarMatch['ambiguities'] = [];
 
   for (const [assetType, suffixes] of Object.entries(assetSuffixes) as Array<[AssetType, string[]]>) {
     if (assetType === 'extra_fanart' || assetType === 'comment') continue;
@@ -85,7 +87,10 @@ export function matchSidecars(
 
     if (exactMatches.length === 0 && mainFilmCount > 1) {
       const hasGeneric = sidecarFiles.some((entry) => genericNames[assetType as Exclude<AssetType, 'extra_fanart' | 'comment'>].includes(path.parse(entry.name).name.toLowerCase()));
-      if (hasGeneric) ambiguousAssets += 1;
+      if (hasGeneric) {
+        ambiguousAssets += 1;
+        ambiguities.push({ assetType, paths: sidecarFiles.filter((entry) => genericNames[assetType as Exclude<AssetType, 'extra_fanart' | 'comment'>].includes(path.parse(entry.name).name.toLowerCase())).map((entry) => entry.relativePath) });
+      }
     }
     matches.sort((left, right) => naturalCompare(left.name, right.name));
     matches.forEach((entry, index) => assets.push({ assetType, entry, sortOrder: index }));
@@ -98,6 +103,7 @@ export function matchSidecars(
     images.forEach((entry, index) => assets.push({ assetType: 'extra_fanart', entry, sortOrder: index }));
   } else if (extraFanartFiles.length > 0) {
     ambiguousAssets += 1;
+    ambiguities.push({ assetType: 'extra_fanart', paths: extraFanartFiles.map((entry) => entry.relativePath) });
   }
 
   if (mainFilmCount === 1) {
@@ -107,9 +113,10 @@ export function matchSidecars(
     images.forEach((entry, index) => assets.push({ assetType: 'comment', entry, sortOrder: index }));
   } else if (commentFiles.length > 0) {
     ambiguousAssets += 1;
+    ambiguities.push({ assetType: 'comment', paths: commentFiles.map((entry) => entry.relativePath) });
   }
 
-  return { nfo, assets, ambiguousAssets };
+  return { nfo, assets, ambiguousAssets, ambiguities };
 }
 
 export function enrichMatchedAssets(assets: SidecarMatch['assets'], stats: Map<string, fs.Stats>): MatchedAsset[] {
@@ -145,6 +152,8 @@ function extensionOf(name: string): string {
   return path.extname(name).slice(1).toLowerCase();
 }
 
+const fileCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
 function naturalCompare(left: string, right: string): number {
-  return left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' });
+  return fileCollator.compare(left, right);
 }

@@ -17,6 +17,8 @@ import type {
   CloudBackupVersionDto,
   CreateSourceInput,
   DesktopSubtitleTrackDto,
+  DesktopPlaybackProgressInput,
+  DesktopPlaybackStateDto,
   FilmPartDto,
   FilmGifInput,
   FilmGifProgressDto,
@@ -47,6 +49,8 @@ import type {
   FilmRecordDeleteInput,
   FilmRecordDeleteBatchInput,
   ScanProgressDto,
+  ScanIssuesQuery,
+  ScanIssuesPageDto,
   ScanStartDto,
   ScanStartInput,
   ScanStatusDto,
@@ -107,6 +111,8 @@ export interface FilmLibraryApi {
     partsOpen(partId: string): Promise<ApiResult<null>>;
     partsShowInFolder(partId: string): Promise<ApiResult<null>>;
     updatePartVr(partId: string, isVr: boolean): Promise<ApiResult<FilmPartDto>>;
+    savePlaybackProgress(input: DesktopPlaybackProgressInput): Promise<ApiResult<DesktopPlaybackStateDto>>;
+    onPlaybackFlush(listener: () => Promise<void>): () => void;
     subtitleTracks(partId: string): Promise<ApiResult<DesktopSubtitleTrackDto[]>>;
     subtitleContent(partId: string, index: number): Promise<ApiResult<string>>;
     cancelPreview(partId: string): Promise<ApiResult<boolean>>;
@@ -131,6 +137,8 @@ export interface FilmLibraryApi {
     reorder(input: CustomCategoryReorderInput): Promise<ApiResult<CustomCategoryDto[]>>;
   };
   scan: {
+    issues(query: ScanIssuesQuery): Promise<ApiResult<ScanIssuesPageDto>>;
+    openIssue(id: string): Promise<ApiResult<null>>;
     start(input: ScanStartInput): Promise<ApiResult<ScanStartDto>>;
     cancel(): Promise<ApiResult<null>>;
     status(): Promise<ApiResult<ScanStatusDto | null>>;

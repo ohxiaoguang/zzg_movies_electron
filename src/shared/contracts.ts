@@ -213,7 +213,21 @@ export interface FilmSummaryDto {
   sourceDeleted: boolean;
 }
 
+export interface DesktopPlaybackStateDto {
+  filmId: string;
+  lastPartId: string | null;
+  positionSeconds: number;
+  durationSeconds: number | null;
+  lastPlayedAt: string;
+}
+
+export interface DesktopPlaybackProgressInput extends WebPlaybackProgressInput {
+  filmId: string;
+  partId: string;
+}
+
 export interface FilmDetailDto extends FilmSummaryDto {
+  playbackState?: DesktopPlaybackStateDto | null;
   sortTitle: string | null;
   releaseDate: string | null;
   runtimeSeconds: number | null;
@@ -386,7 +400,23 @@ export interface ScanStartDto {
   jobId: string;
 }
 
+export type ScanIssueType = 'nfo' | 'asset' | 'filesystem' | 'missing' | 'database' | 'source_offline';
+export interface ScanIssueDto {
+  id: string;
+  type: ScanIssueType;
+  sourceId: string | null;
+  sourceName: string;
+  filmTitle: string;
+  relativePath: string;
+  message: string;
+  relatedPaths: string[];
+}
+export interface ScanIssuesQuery { jobId: string; type?: ScanIssueType; search?: string; page: number; pageSize: number; }
+export interface ScanIssuesPageDto { items: ScanIssueDto[]; total: number; page: number; pageSize: number; }
+
 export interface ScanProgressDto {
+  issueCount?: number;
+  phase?: 'discovering' | 'parsing' | 'merging';
   jobId: string;
   status: ScanStatus;
   currentSource: string | null;

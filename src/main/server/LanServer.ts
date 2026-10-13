@@ -76,6 +76,7 @@ export function lanServerConfigurationFromSettings(settings: SettingsDto): LanSe
 }
 
 interface LanServerOptions {
+  runDatabaseAction?: (action: () => Promise<void>) => Promise<void>;
   port?: number;
   version: string;
   databaseReady: () => boolean;
@@ -274,6 +275,12 @@ export class LanServer {
   }
 
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const action = () => this.handleUnlocked(request, response);
+    if (this.options.runDatabaseAction) return this.options.runDatabaseAction(action);
+    return action();
+  }
+
+  private async handleUnlocked(request: IncomingMessage, response: ServerResponse): Promise<void> {
     this.applySecurityHeaders(response);
     if (!this.isAllowedRemote(request.socket.remoteAddress)) {
       this.sendJson(response, 403, failure('NETWORK_SCOPE_DENIED', '请求不在允许的网络范围内'));
