@@ -213,6 +213,9 @@ try {
       document.querySelector('.film-card')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       await new Promise((resolve) => setTimeout(resolve, 500));
       const detailVideo = document.querySelector('.detail-player-video');
+      if (${ffmpegAvailable}) {
+        for (let attempt = 0; attempt < 100 && !(Number.isFinite(detailVideo?.duration) && detailVideo.duration > 0); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 100));
+      }
       if (detailVideo) {
         detailVideo.currentTime = Math.min(0.6, Number.isFinite(detailVideo.duration) ? detailVideo.duration : 0.6);
         detailVideo.dispatchEvent(new Event('timeupdate'));
@@ -220,9 +223,33 @@ try {
         window.dispatchEvent(new KeyboardEvent('keydown', { key: 'i', code: 'KeyI', bubbles: true }));
         await new Promise((resolve) => setTimeout(resolve, 30));
       }
-      const shortcutStartText = document.querySelector('.mark-controls > span')?.textContent || '';
+      const shortcutStartText = document.querySelector('.mark-controls .mark-button strong')?.textContent || '';
       const detailHeader = document.querySelector('.detail-sticky-header');
       const detailHeaderText = detailHeader?.textContent || '';
+      const coverEntry = document.querySelector('.header-poster[aria-label="设置封面 / GIF"]');
+      const gifEntry = document.querySelector('.timeline-icon-button[aria-label="截取 GIF"]');
+      const rescanMenuEntry = detailHeader?.querySelector('[aria-label="更多影片操作"]');
+      let rescanMenuAvailable = false;
+      rescanMenuEntry?.click();
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      rescanMenuAvailable = [...document.querySelectorAll('.el-dropdown-menu__item')].some((item) => item.textContent.includes('重新扫描目录') && item.getClientRects().length);
+      rescanMenuEntry?.click();
+      coverEntry?.click();
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      const coverDialog = document.querySelector('.cover-grid')?.closest('.el-dialog');
+      const coverDialogOpen = Boolean(coverDialog?.getClientRects().length);
+      coverDialog?.querySelector('.el-dialog__headerbtn')?.click();
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      let gifDialogOpen = false;
+      if (${ffmpegAvailable}) {
+        gifEntry?.click();
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        const gifDialog = document.querySelector('.gif-capture')?.closest('.el-dialog');
+        gifDialogOpen = Boolean(gifDialog?.getClientRects().length);
+        gifDialog?.querySelector('.el-dialog__headerbtn')?.click();
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+      const mediaEntryPoints = { cover: Boolean(coverEntry), gif: Boolean(gifEntry), coverDialogOpen, gifDialogOpen, playableFixture: ${ffmpegAvailable}, rescanMenuAvailable };
       const drawerText = document.querySelector('.el-drawer')?.textContent || '';
       const detailVideoCount = document.querySelectorAll('.el-drawer video').length;
       const detailPlayerHeight = document.querySelector('.detail-player-video')?.getBoundingClientRect().height || 0;
@@ -249,7 +276,7 @@ try {
       document.querySelector('.actor-links button')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       await new Promise((resolve) => setTimeout(resolve, 300));
       const detailSelectedActor = new URLSearchParams(location.hash.split('?')[1] || '').get('actor');
-      const ui = { cardRatio, cardImageFit, usesFanart, sidebarText, sourcesPageText, actorsPageText, selectedActor, categoriesPageText, organizedActionsText, detailHeaderText, drawerText, shortcutStartText, detailVideoCount, detailPlayerHeight, detailStageRatio, detailDrawerHeaderHeight, detailTabsText, detailColumnRatio, detailBodyOverflow, detailDrawerWidthRatio, hasImageThumbnail: Boolean(imageThumbnail), imageViewerOpen, detailActorText, detailSelectedActor, detailHeader: Boolean(detailHeader) };
+      const ui = { cardRatio, cardImageFit, usesFanart, sidebarText, sourcesPageText, actorsPageText, selectedActor, categoriesPageText, organizedActionsText, detailHeaderText, mediaEntryPoints, drawerText, shortcutStartText, detailVideoCount, detailPlayerHeight, detailStageRatio, detailDrawerHeaderHeight, detailTabsText, detailColumnRatio, detailBodyOverflow, detailDrawerWidthRatio, hasImageThumbnail: Boolean(imageThumbnail), imageViewerOpen, detailActorText, detailSelectedActor, detailHeader: Boolean(detailHeader) };
       const setting = await window.filmLibrary.settings.update({ cardSize: 280, minimizeToTray: true });
       const removed = created.ok ? await window.filmLibrary.sources.remove({ id: created.data.id, mode: 'keep-records' }) : { ok: false };
       const allData = await window.filmLibrary.films.recordsPageAll({ page: 1, pageSize: 20 });
@@ -288,15 +315,17 @@ try {
       || result.ui?.cardImageFit !== 'contain' || !result.ui?.usesFanart) {
       throw new Error(`Landscape cover verification failed: ${JSON.stringify(result.ui)}`);
     }
-    if (!result.ui?.drawerText.includes('设置封面 / GIF') || !result.ui.drawerText.includes('截取 GIF')) {
-      throw new Error('GIF/cover entry points missing');
+    const mediaEntryPoints = result.ui?.mediaEntryPoints;
+    if (!mediaEntryPoints?.cover || !mediaEntryPoints.gif || !mediaEntryPoints.coverDialogOpen
+      || (mediaEntryPoints.playableFixture && !mediaEntryPoints.gifDialogOpen)) {
+      throw new Error(`GIF/cover entry point verification failed: ${JSON.stringify(mediaEntryPoints)}`);
     }
     if (!result.directoryRescan?.ok || result.directoryRescanStatus?.data?.status !== 'completed') throw new Error(`Directory rescan failed: ${JSON.stringify({ directoryRescan: result.directoryRescan, status: result.directoryRescanStatus })}`);
     if (!result.actorList?.ok || result.actorList.data[0]?.name !== 'Smoke Actor' || result.actorList.data[0]?.filmCount !== 1 || !result.actorFiltered?.ok || result.actorFiltered.data.total !== 1) throw new Error(`Actor index failed: ${JSON.stringify({ actorList: result.actorList, actorFiltered: result.actorFiltered })}`);
     if (!result.parts?.ok || result.parts.data.length !== 3) throw new Error(`Part API failed: ${JSON.stringify(result.parts)}`);
     if (!result.unorganizedBefore?.ok || result.unorganizedBefore.data.total !== 1 || !result.classic?.ok || result.classic.data.name !== 'Smoke Classic' || !result.categorized?.ok || result.categorized.data.customCategories.length !== 2 || !result.organizedAfter?.ok || result.organizedAfter.data.total !== 1) throw new Error(`Category update failed: ${JSON.stringify({ classic: result.classic, categorized: result.categorized, organizedAfter: result.organizedAfter })}`);
     if (!result.favorited?.ok || !result.patched?.ok || !result.patchedDetail?.ok || result.patchedDetail.data.title !== 'Smoke Auto Saved Title' || result.patchedDetail.data.originalTitle !== 'Smoke Original Title' || !result.patchedDetail.data.favorite || result.patchedDetail.data.rating !== 9.5 || result.patchedDetail.data.notes !== 'Smoke auto-saved notes' || result.patchedDetail.data.nfoTags[0]?.name !== 'Smoke Tag') throw new Error(`Patch update failed: ${JSON.stringify({ favorited: result.favorited, patched: result.patched, patchedDetail: result.patchedDetail })}`);
-    if (!result.ui?.sidebarText.includes('未整理') || !result.ui.sidebarText.includes('已整理') || !result.ui.sidebarText.includes('我的分类') || !result.ui.sidebarText.includes('演员') || result.ui.sidebarText.includes('想看') || result.ui.sidebarText.includes('正在观看') || result.ui.sidebarText.includes('标签管理') || !result.ui.sourcesPageText.includes('重新扫描') || !result.ui.actorsPageText.includes('Smoke Actor') || result.ui.selectedActor !== 'Smoke Actor' || !result.ui.categoriesPageText.includes('Smoke Classic') || !result.ui.organizedActionsText.includes('导出 CSV') || !result.ui.detailHeader || !result.ui.detailHeaderText.includes('收藏') || !result.ui.detailHeaderText.includes('重新扫描目录') || result.ui.shortcutStartText !== '00:00:01' || result.ui.detailVideoCount !== 1 || result.ui.detailPlayerHeight < minimumDetailPlayerHeight || result.ui.detailStageRatio < 1.75 || result.ui.detailStageRatio > 1.79 || result.ui.detailDrawerHeaderHeight > 40 || result.ui.detailColumnRatio < 2.8 || result.ui.detailColumnRatio > 3.2 || result.ui.detailBodyOverflow !== 'hidden' || result.ui.detailDrawerWidthRatio < 0.98 || !result.ui.hasImageThumbnail || !result.ui.imageViewerOpen || !result.ui.detailTabsText.includes('片段标注') || !result.ui.detailTabsText.includes('图片') || result.ui.detailTabsText.includes('基本信息') || result.ui.detailTabsText.includes('详细信息') || !result.ui.drawerText.includes('我的分类') || !result.ui.drawerText.includes('基本信息') || !result.ui.drawerText.includes('详细信息') || !result.ui.drawerText.includes('NFO 标签') || result.ui.drawerText.includes('类型') || !result.ui.detailActorText.includes('Smoke Actor') || !result.ui.detailActorText.includes('1 部') || result.ui.detailSelectedActor !== 'Smoke Actor') throw new Error(`UI verification failed: ${JSON.stringify(result.ui)}`);
+    if (!result.ui?.sidebarText.includes('未整理') || !result.ui.sidebarText.includes('已整理') || !result.ui.sidebarText.includes('我的分类') || !result.ui.sidebarText.includes('演员') || result.ui.sidebarText.includes('想看') || result.ui.sidebarText.includes('正在观看') || result.ui.sidebarText.includes('标签管理') || !result.ui.sourcesPageText.includes('重新扫描') || !result.ui.actorsPageText.includes('Smoke Actor') || result.ui.selectedActor !== 'Smoke Actor' || !result.ui.categoriesPageText.includes('Smoke Classic') || !result.ui.organizedActionsText.includes('导出 CSV') || !result.ui.detailHeader || !result.ui.detailHeaderText.includes('收藏') || !result.ui.mediaEntryPoints?.rescanMenuAvailable || result.ui.shortcutStartText !== '00:00:01' || result.ui.detailVideoCount !== 1 || result.ui.detailPlayerHeight < minimumDetailPlayerHeight || result.ui.detailStageRatio < 1.75 || result.ui.detailStageRatio > 1.79 || result.ui.detailDrawerHeaderHeight > 40 || result.ui.detailColumnRatio < 2.8 || result.ui.detailColumnRatio > 3.2 || result.ui.detailBodyOverflow !== 'hidden' || result.ui.detailDrawerWidthRatio < 0.98 || !result.ui.hasImageThumbnail || !result.ui.imageViewerOpen || !result.ui.detailTabsText.includes('片段标注') || !result.ui.detailTabsText.includes('图片') || result.ui.detailTabsText.includes('基本信息') || result.ui.detailTabsText.includes('详细信息') || !result.ui.drawerText.includes('我的分类') || !result.ui.drawerText.includes('基本信息') || !result.ui.drawerText.includes('详细信息') || !result.ui.drawerText.includes('NFO 标签') || result.ui.drawerText.includes('类型') || !result.ui.detailActorText.includes('Smoke Actor') || !result.ui.detailActorText.includes('1 部') || result.ui.detailSelectedActor !== 'Smoke Actor') throw new Error(`UI verification failed: ${JSON.stringify(result.ui)}`);
     if (!result.setting?.ok || result.setting.data.cardSize !== 280 || !result.setting.data.minimizeToTray) throw new Error(`Settings update failed: ${JSON.stringify(result.setting)}`);
     if (!result.removed?.ok || !result.allData?.ok || result.allData.data.items[0]?.availability !== 'source_removed') throw new Error(`Source removal failed: ${JSON.stringify({ removed: result.removed, allData: result.allData })}`);
     if (!result.restored?.ok) throw new Error(`Source restore failed: ${JSON.stringify(result.restored)}`);

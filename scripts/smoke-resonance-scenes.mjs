@@ -71,7 +71,7 @@ async function sceneFlow(expectedRoute) {
   location.hash = '#/library?resonance-smoke=1';
   const card = await waitFor(() => document.querySelector('.film-card'));
   card.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-  const add = await waitFor(() => button(document, '添加进共鸣球'));
+  const add = await waitFor(() => button(document, '加入共鸣球'));
   add.click();
   await delay();
   document.querySelector('.resonance-ball').click();
