@@ -160,11 +160,7 @@ const playbackModeLabel = computed(() => {
   return compatibilityReady.value ? '兼容版本' : '正在准备兼容版本…';
 });
 const selectedPartSegments = computed(() => props.segments.filter((segment) => segment.filmFileId === selectedPartId.value));
-const currentSegment = computed(() => {
-  const matches = selectedPartSegments.value.filter((segment) => currentSeconds.value >= segment.startSeconds && currentSeconds.value < segment.endSeconds);
-  // Preserve an explicitly selected segment while inside it when annotations overlap.
-  return matches.find((segment) => segment.id === activeSegment.value?.id) ?? matches[0] ?? null;
-});
+const currentSegments = computed(() => selectedPartSegments.value.filter((segment) => currentSeconds.value >= segment.startSeconds && currentSeconds.value < segment.endSeconds));
 const supportedSubtitleTracks = computed(() => subtitleTracks.value.filter((track) => track.supported));
 
 watch(() => props.film.id, () => {
@@ -742,9 +738,11 @@ onBeforeUnmount(() => {
         <p v-if="activeSubtitleText && !nativeVideoFullscreen" class="player-subtitle-overlay"><span>{{ activeSubtitleText }}</span></p>
         <div v-if="vrEnabled && vrRenderError" class="vr-render-error">{{ vrRenderError }}</div>
         <div v-if="playbackError" class="playback-error">{{ playbackError }}</div>
-        <div v-if="currentSegment" class="active-segment-label">
-          <strong>{{ currentSegment.title || '未命名片段' }}</strong>
-          <span>{{ formatTime(currentSegment.startSeconds) }} → {{ formatTime(currentSegment.endSeconds) }}</span>
+        <div v-if="currentSegments.length" class="active-segment-labels">
+          <div v-for="segment in currentSegments" :key="segment.id" class="active-segment-label">
+            <strong>{{ segment.title || '未命名片段' }}</strong>
+            <span>{{ formatTime(segment.startSeconds) }} → {{ formatTime(segment.endSeconds) }}</span>
+          </div>
         </div>
       </div>
     </div>
@@ -762,7 +760,7 @@ onBeforeUnmount(() => {
         >
           <span
             class="timeline-segment"
-            :class="{ disabled: !segment.includeInPreview, active: currentSegment?.id === segment.id }"
+            :class="{ disabled: !segment.includeInPreview, active: currentSegments.some((current) => current.id === segment.id) }"
             :style="timelineStyle(segment)"
             :aria-label="segment.title || '未命名片段'"
           />
@@ -823,8 +821,10 @@ onBeforeUnmount(() => {
 .player-subtitle-overlay span { padding: 2px 6px; border-radius: 4px; background: rgba(0,0,0,.72); box-decoration-break: clone; }
 .vr-render-error { position: absolute; z-index: 5; inset: 0; display: grid; padding: 20px; place-items: center; color: #ffb4b4; background: rgba(0,0,0,.82); font-size: 12px; text-align: center; }
 .playback-error { position: absolute; z-index: 6; inset: 0; display: grid; padding: 20px; place-items: center; color: #ffb4b4; background: rgba(0,0,0,.86); font-size: 12px; text-align: center; }
-.active-segment-label { position: absolute; z-index: 2; top: 12px; left: 50%; display: flex; max-width: calc(100% - 32px); padding: 6px 11px; border-radius: 7px; color: rgba(255,255,255,.94); background: rgba(0,0,0,.48); font-size: 11px; transform: translateX(-50%); backdrop-filter: blur(4px); gap: 9px; pointer-events: none; }
-.active-segment-label strong, .active-segment-label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.active-segment-labels { position: absolute; z-index: 2; top: 12px; left: 16px; right: 16px; display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-start; gap: 6px; pointer-events: none; }
+.active-segment-label { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; box-sizing: border-box; max-width: 100%; padding: 6px 11px; border-radius: 7px; color: rgba(255,255,255,.94); background: rgba(0,0,0,.48); font-size: 11px; backdrop-filter: blur(4px); gap: 3px 9px; }
+.active-segment-label strong { min-width: 0; overflow-wrap: anywhere; }
+.active-segment-label span { white-space: nowrap; }
 .active-segment-label span { color: rgba(255,255,255,.72); font-variant-numeric: tabular-nums; }
 .player-unavailable { display: grid; min-height: 320px; place-items: center; border-radius: 11px; color: var(--muted); background: #050609; }
 .player-timeline-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 7px; }

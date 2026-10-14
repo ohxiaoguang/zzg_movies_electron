@@ -243,9 +243,11 @@ dialog::backdrop { background: rgba(4,6,10,.78); backdrop-filter: blur(7px); }
 .web-vr-controls { position: absolute; z-index: 4; right: 10px; bottom: 10px; display: flex; padding: 5px; border-radius: 8px; background: rgba(0,0,0,.58); gap: 5px; }
 .web-vr-controls[hidden] { display: none; }
 .web-vr-controls button { padding: 5px 8px; border-color: rgba(255,255,255,.2); color: #fff; background: rgba(28,34,44,.85); font-size: 9px; }
-.segment-current-label { position: absolute; z-index: 2; top: 10px; left: 50%; display: flex; max-width: calc(100% - 28px); padding: 5px 10px; border-radius: 6px; color: rgba(255,255,255,.9); background: rgba(0,0,0,.48); font-size: 10px; transform: translateX(-50%); backdrop-filter: blur(3px); gap: 8px; pointer-events: none; }
+.segment-current-label { position: absolute; z-index: 2; top: 10px; left: 14px; right: 14px; display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-start; gap: 6px; pointer-events: none; }
+.segment-current-item { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; box-sizing: border-box; max-width: 100%; padding: 5px 10px; border-radius: 6px; color: rgba(255,255,255,.9); background: rgba(0,0,0,.48); font-size: 10px; backdrop-filter: blur(3px); gap: 3px 8px; }
 .segment-current-label:empty { display: none; }
-.segment-current-label strong, .segment-current-label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.segment-current-label strong { min-width: 0; overflow-wrap: anywhere; }
+.segment-current-label span { white-space: nowrap; }
 .segment-current-label span { color: rgba(255,255,255,.72); font-variant-numeric: tabular-nums; }
 .web-segments-panel { min-height: 100%; padding: 8px 0; }
 .web-segment-timelines { display: grid; gap: 8px; margin-top: 0; }

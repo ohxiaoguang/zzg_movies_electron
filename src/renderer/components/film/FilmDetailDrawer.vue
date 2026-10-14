@@ -420,6 +420,7 @@ async function addToResonance(): Promise<void> {
   ElMessage.success(result === 'added' ? '已添加进共鸣球并记录精彩时刻，当前视频已暂停' : '已更新共鸣球中的播放进度和精彩时刻，当前视频已暂停');
 }
 function handleKeydown(event: KeyboardEvent): void {
+  if (gifVisible.value) return;
   if (props.modelValue && event.key === 'Escape' && detailPlayer.value?.exitAppFullscreen()) {
     event.preventDefault();
     event.stopImmediatePropagation();

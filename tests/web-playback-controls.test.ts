@@ -42,7 +42,7 @@ class Node {
   }
 }
 
-function setup(options: { runtimeSeconds?: number | null; multipart?: boolean; metadata?: () => Promise<{ durationSeconds: number | null }> } = {}) {
+function setup(options: { runtimeSeconds?: number | null; multipart?: boolean; metadata?: () => Promise<{ durationSeconds: number | null }>; overlapping?: boolean } = {}) {
   const state: any = { playback: null };
   const inputs: any[] = [];
   const video = new Node('video');
@@ -70,34 +70,49 @@ function setup(options: { runtimeSeconds?: number | null; multipart?: boolean; m
   const film = { id: 'film', runtimeSeconds: options.runtimeSeconds === undefined ? 100 : options.runtimeSeconds, parts: [{ id: 'part', filename: 'film.mkv', partType: 'single' }],
     segments: [{ id: 'segment', filmFileId: 'part', title: '片段', startSeconds: 20, endSeconds: 40, includeInPreview: true }] };
   if (options.multipart) film.parts.push({ id: 'part-two', filename: 'two.mkv', partType: 'cd' });
+  if (options.overlapping) film.segments.push({ ...film.segments[0], id: 'overlap', title: '重叠片段', startSeconds: 30, endSeconds: 50 });
   const player = context.createUnifiedPlayback(film);
   return { context, state, inputs, video, player };
 }
 
 describe('web detail playback interactions', () => {
+  it('shows every overlapping annotation and removes them independently', async () => {
+    const { player, video } = setup({ overlapping: true });
+    const label = player.section.querySelectorAll('.segment-current-label')[0];
+    const track = player.section.querySelectorAll('.web-segment-timeline')[0];
+    await track.fire('click', { clientX: 35 });
+    expect(label.children.map((node: Node) => node.children[0].textContent)).toEqual(['片段', '重叠片段']);
+    video.currentTime = 5;
+    await video.fire('timeupdate');
+    expect(label.children.map((node: Node) => node.children[0].textContent)).toEqual(['重叠片段']);
+    video.currentTime = 15;
+    await video.fire('timeupdate');
+    expect(label.children).toHaveLength(0);
+  });
+
   it('identifies annotations after timeline clicks, keyboard seeks and native seeks using original-file time', async () => {
     const { player, video } = setup();
     const label = player.section.querySelectorAll('.segment-current-label')[0];
     const track = player.section.querySelectorAll('.web-segment-timeline')[0];
     await track.fire('click', { clientX: 30 });
-    expect(label.children.map((node: Node) => node.textContent)).toEqual(['片段', '0:20 → 0:40']);
+    expect(label.children[0].children.map((node: Node) => node.textContent)).toEqual(['片段', '0:20 → 0:40']);
     player.seek(5);
     await new Promise(resolve => setImmediate(resolve));
-    expect(label.children).toHaveLength(2);
+    expect(label.children).toHaveLength(1);
     player.seek(5);
     await new Promise(resolve => setImmediate(resolve));
     expect(label.children).toHaveLength(0);
     await track.fire('click', { clientX: 20 });
-    expect(label.children).toHaveLength(2);
+    expect(label.children).toHaveLength(1);
     video.currentTime = 15;
     await video.fire('seeked');
-    expect(label.children).toHaveLength(2);
+    expect(label.children).toHaveLength(1);
     video.currentTime = 20;
     await video.fire('timeupdate');
     expect(label.children).toHaveLength(0);
     video.currentTime = 5;
     await video.fire('seeking');
-    expect(label.children).toHaveLength(2);
+    expect(label.children).toHaveLength(1);
   });
 
   it('does not show annotations from another file in a multipart film', async () => {
@@ -106,7 +121,7 @@ describe('web detail playback interactions', () => {
     const label = player.section.querySelectorAll('.segment-current-label')[0];
     const tracks = player.section.querySelectorAll('.web-segment-timeline');
     await tracks[0].fire('click', { clientX: 30 });
-    expect(label.children).toHaveLength(2);
+    expect(label.children).toHaveLength(1);
     await tracks[1].fire('click', { clientX: 30 });
     expect(label.children).toHaveLength(0);
   });

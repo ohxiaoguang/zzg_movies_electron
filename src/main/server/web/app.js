@@ -1521,8 +1521,7 @@ function createUnifiedPlayback(film) {
   partSelect.value = parts[0]?.id || '';
   const allSegments = film.segments || [];
   const segmentsPanel = createElement('div', 'web-segments-panel');
-  let activeSegment = null;
-  let displayedSegment = null;
+  let displayedSegments = [];
   let playbackGeneration = 0;
 
   const applyVrMode = (part, view = null) => {
@@ -1577,18 +1576,20 @@ function createUnifiedPlayback(film) {
       ? allSegments.filter((segment) => segment.filmFileId === active.partId
         && position >= segment.startSeconds && position < segment.endSeconds)
       : [];
-    const segment = matches.find((item) => item.id === activeSegment?.id) ?? matches[0] ?? null;
-    if (displayedSegment === segment) return;
-    displayedSegment = segment;
+    if (matches.length === displayedSegments.length && matches.every((segment, index) => segment === displayedSegments[index])) return;
+    displayedSegments = matches;
     segmentLabel.replaceChildren();
-    if (segment) segmentLabel.append(
-      createElement('strong', '', segment.title || '未命名片段'),
-      createElement('span', '', `${formatPlaybackTime(segment.startSeconds)} → ${formatPlaybackTime(segment.endSeconds)}`),
-    );
+    for (const segment of matches) {
+      const label = createElement('div', 'segment-current-item');
+      label.append(
+        createElement('strong', '', segment.title || '未命名片段'),
+        createElement('span', '', `${formatPlaybackTime(segment.startSeconds)} → ${formatPlaybackTime(segment.endSeconds)}`),
+      );
+      segmentLabel.append(label);
+    }
   };
   const clearSegmentMode = () => {
-    activeSegment = null;
-    displayedSegment = null;
+    displayedSegments = [];
     segmentLabel.replaceChildren();
   };
   const playOriginal = async (partId = null, startSeconds = undefined) => {
@@ -1614,7 +1615,6 @@ function createUnifiedPlayback(film) {
   const playSegment = async (segment) => {
     const session = await playOriginal(segment.filmFileId, segment.startSeconds);
     if (!session || state.playback?.sessionId !== session.id) return;
-    activeSegment = segment;
     syncSegmentLabel();
     if (state.playback?.video === video) applyVrMode(parts.find((part) => part.id === segment.filmFileId), segment.vrView);
   };

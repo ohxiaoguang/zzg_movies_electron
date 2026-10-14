@@ -17,7 +17,7 @@ interface PlayerBindings {
   selectedPartId: string;
   playbackSourceMode: string;
   activeSegment: FilmSegmentDto | null;
-  currentSegment: FilmSegmentDto | null;
+  currentSegments: FilmSegmentDto[];
   seekTimeline(event: unknown): void;
   seekRelative(seconds: number): void;
   onLoadedMetadata(): void;
@@ -98,40 +98,40 @@ describe('desktop resume and progress', () => {
     setup.selectPart(partTwo);
     setup.onLoadedMetadata();
     setup.seekTimeline({ currentTarget: { getBoundingClientRect: () => ({ left: 0, width: 100 }) }, clientX: 12 });
-    expect(setup.currentSegment?.id).toBe(segment.id);
+    expect(setup.currentSegments[0]?.id).toBe(segment.id);
     setup.seekRelative(8);
     expect(video.currentTime).toBe(20);
-    expect(setup.currentSegment).toBeNull();
+    expect(setup.currentSegments).toEqual([]);
     setup.seekRelative(-10);
-    expect(setup.currentSegment?.id).toBe(segment.id);
+    expect(setup.currentSegments[0]?.id).toBe(segment.id);
     setup.seekRelative(-1);
-    expect(setup.currentSegment).toBeNull();
+    expect(setup.currentSegments).toEqual([]);
     video.currentTime = 15;
     setup.onTimeUpdate();
-    expect(setup.currentSegment?.id).toBe(segment.id);
+    expect(setup.currentSegments[0]?.id).toBe(segment.id);
     video.currentTime = 35;
     setup.onTimeUpdate();
-    expect(setup.currentSegment).toBeNull();
+    expect(setup.currentSegments).toEqual([]);
   });
 
-  it('keeps an explicitly selected overlapping segment and follows the next range after leaving it', async () => {
+  it('shows all overlapping segments and removes each at its end boundary', async () => {
     const first = { id: 'first', filmFileId: partTwo, startSeconds: 10, endSeconds: 20, vrView: null } as FilmSegmentDto;
     const second = { ...first, id: 'second', startSeconds: 15, endSeconds: 25 };
     const { setup, video } = player(null, [first, second]);
     setup.selectPart(partTwo);
     setup.onLoadedMetadata();
     await setup.playSegment(second);
-    expect(setup.currentSegment?.id).toBe('second');
+    expect(setup.currentSegments.map((segment) => segment.id)).toEqual(['first', 'second']);
     await setup.playSegment(first);
     video.currentTime = 16;
     setup.onTimeUpdate();
-    expect(setup.currentSegment?.id).toBe('first');
+    expect(setup.currentSegments.map((segment) => segment.id)).toEqual(['first', 'second']);
     video.currentTime = 20;
     setup.onTimeUpdate();
-    expect(setup.currentSegment?.id).toBe('second');
+    expect(setup.currentSegments[0]?.id).toBe('second');
     video.currentTime = 25;
     setup.onTimeUpdate();
-    expect(setup.currentSegment).toBeNull();
+    expect(setup.currentSegments).toEqual([]);
   });
 
   it('selects the saved part and position without marking a details visit as watched', async () => {
