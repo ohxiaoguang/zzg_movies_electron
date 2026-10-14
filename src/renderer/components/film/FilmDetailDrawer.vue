@@ -44,6 +44,12 @@ const hydrated = ref(false);
 const saveState = ref<SaveState>('idle');
 const saveError = ref('');
 const rescanStarting = ref(false);
+const pathEditorVisible = ref(false);
+const pathSaving = ref(false);
+const pathError = ref('');
+const editingPartId = ref('');
+const editedPath = ref('');
+const playerRevision = ref(0);
 const form = reactive({ title: '', originalTitle: '', favorite: false, rating: 0, notes: '', categoryIds: [] as string[], newCategoryNames: [] as string[] });
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -54,6 +60,7 @@ let pendingSave: PendingSave = {};
 let lastSavedPatch: FilmUpdatePatch = {};
 let rescanJobId: string | null = null;
 
+const primaryPart = computed(() => detail.value?.parts.find((part) => part.relativePath === detail.value?.relativePath) ?? detail.value?.parts[0]);
 const poster = computed(() => (detail.value?.posterAssetId ? mediaUrl('asset', detail.value.posterAssetId) : null) ?? assetOf('fanart') ?? assetOf('thumb') ?? assetOf('poster') ?? (detail.value ? mediaUrl('poster', detail.value.id) : null));
 const commentImages = computed(() => (detail.value?.images ?? []).filter((image) => image.assetType === 'comment' && !image.missing && !brokenImageIds.value.has(image.id)));
 const stillImages = computed(() => (detail.value?.images ?? []).filter((image) => image.assetType !== 'comment' && !image.missing && !brokenImageIds.value.has(image.id)));
@@ -93,6 +100,7 @@ watch(() => [props.modelValue, props.filmId], () => {
   else {
     gifVisible.value = false;
     coverVisible.value = false;
+    pathEditorVisible.value = false;
     detailPlayer.value?.releasePlayback();
     cleanupGallery();
   }
@@ -116,6 +124,7 @@ async function load(): Promise<void> {
   const filmId = props.filmId;
   if (!filmId) return;
   activeFilmId = filmId;
+  pathEditorVisible.value = false;
   gifVisible.value = false;
   coverVisible.value = false;
   hydrated.value = false;
@@ -287,6 +296,37 @@ async function flushBeforeClose(): Promise<boolean> {
 }
 function timeout(milliseconds: number): Promise<false> { return new Promise((resolve) => setTimeout(() => resolve(false), milliseconds)); }
 
+function editPartPath(part: FilmPartDto): void {
+  editingPartId.value = part.id;
+  editedPath.value = part.relativePath;
+  pathError.value = '';
+  pathEditorVisible.value = true;
+}
+async function savePartPath(): Promise<void> {
+  if (!detail.value || pathSaving.value) return;
+  const filmId = detail.value.id;
+  const filePath = editedPath.value.trim();
+  if (!filePath) { pathError.value = '请输入视频文件地址'; return; }
+  pathSaving.value = true;
+  pathError.value = '';
+  try {
+    await flushPending();
+    if (saveState.value === 'error') throw new Error('请先解决当前详情保存失败问题');
+    const result = await window.filmLibrary.films.updatePartPath(editingPartId.value, filePath);
+    if (!result.ok) throw new Error(result.error.message);
+    if (detail.value?.id === filmId && activeFilmId === filmId) {
+      detailPlayer.value?.releasePlayback();
+      detail.value = applyCurrentForm(result.data);
+      playerRevision.value += 1;
+      pathEditorVisible.value = false;
+    }
+    emit('updated');
+    ElMessage.success('视频地址已更新，已有标注已保留');
+  } catch (error) {
+    pathError.value = error instanceof Error ? error.message : '地址保存失败';
+  } finally { pathSaving.value = false; }
+}
+
 async function showPart(part: FilmPartDto): Promise<void> { const result = await window.filmLibrary.films.partsShowInFolder(part.id); if (!result.ok) ElMessage.error(result.error.message); }
 async function showPrimaryFolder(): Promise<void> { if (detail.value?.parts[0]) await showPart(detail.value.parts[0]); }
 
@@ -446,8 +486,8 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', handleKeydown, tru
             </el-collapse-item>
 
             <el-collapse-item title="详细信息" name="details">
-              <section v-if="detail.parts.length" class="sidebar-section"><div class="section-heading"><span>影片文件</span><span class="muted">{{ detail.parts.length }} 个</span></div><div class="parts-list"><div v-for="part in detail.parts" :key="part.id" class="part-row"><div><strong>{{ part.partType === 'single' ? '单文件' : `${part.partType.toUpperCase()} ${part.partNumber}` }}</strong><span class="text-mono">{{ part.filename }}</span></div><div><el-tag v-if="part.missing" type="danger" size="small">缺失</el-tag><el-button text size="small" :disabled="part.missing" @click="detailPlayer?.selectPart(part.id)">播放</el-button><el-button text size="small" :disabled="part.missing" @click="showPart(part)">定位</el-button></div></div></div></section>
-              <section class="sidebar-section info-section"><div class="section-heading"><span>NFO 与文件信息</span><div><el-button text size="small" @click="importNfo('supplement')">补充空字段</el-button><el-button text size="small" @click="chooseForceImport">重新导入</el-button></div></div><div class="fact-grid"><span>来源</span><strong>{{ detail.sourceName }}</strong><span>主文件</span><strong class="text-mono">{{ detail.relativePath }}</strong><span>容器</span><strong>{{ detail.containerFormat || '—' }}</strong><span>视频</span><strong>{{ detail.videoCodec || '—' }} {{ detail.width && detail.height ? `${detail.width}×${detail.height}` : '' }}</strong><span>NFO</span><strong>{{ detail.nfoStatus === 'ok' ? '已读取' : detail.nfoStatus === 'error' ? '读取失败' : '未找到' }}</strong></div><p v-if="detail.nfoError" class="error-text">{{ detail.nfoError }}</p></section>
+              <section v-if="detail.parts.length" class="sidebar-section"><div class="section-heading"><span>影片文件</span><span class="muted">{{ detail.parts.length }} 个</span></div><div class="parts-list"><div v-for="part in detail.parts" :key="part.id" class="part-row"><div><strong>{{ part.partType === 'single' ? '单文件' : `${part.partType.toUpperCase()} ${part.partNumber}` }}</strong><span class="text-mono">{{ part.filename }}</span></div><div><el-tag v-if="part.missing" type="danger" size="small">缺失</el-tag><el-button text size="small" :disabled="part.missing" @click="detailPlayer?.selectPart(part.id)">播放</el-button><el-button text size="small" :disabled="part.missing" @click="showPart(part)">定位</el-button><el-button text size="small" @click="editPartPath(part)">修改地址</el-button></div></div></div></section>
+              <section class="sidebar-section info-section"><div class="section-heading"><span>NFO 与文件信息</span><div><el-button text size="small" @click="importNfo('supplement')">补充空字段</el-button><el-button text size="small" @click="chooseForceImport">重新导入</el-button></div></div><div class="fact-grid"><span>来源</span><strong>{{ detail.sourceName }}</strong><span>主文件</span><div class="primary-path"><strong class="text-mono">{{ detail.relativePath }}</strong><el-button v-if="primaryPart" text size="small" @click="editPartPath(primaryPart)">修改地址</el-button></div><span>容器</span><strong>{{ detail.containerFormat || '—' }}</strong><span>视频</span><strong>{{ detail.videoCodec || '—' }} {{ detail.width && detail.height ? `${detail.width}×${detail.height}` : '' }}</strong><span>NFO</span><strong>{{ detail.nfoStatus === 'ok' ? '已读取' : detail.nfoStatus === 'error' ? '读取失败' : '未找到' }}</strong></div><p v-if="detail.nfoError" class="error-text">{{ detail.nfoError }}</p></section>
             </el-collapse-item>
           </el-collapse>
         </aside>
@@ -455,6 +495,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', handleKeydown, tru
         <main class="detail-main-column">
           <FilmDetailPlayer
             v-if="modelValue"
+            :key="`${detail.id}:${playerRevision}`"
             ref="detailPlayer"
             :film="detail"
             :segments="detail.segments"
@@ -491,6 +532,12 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', handleKeydown, tru
     </template>
     <FilmGifCapture v-if="detail && modelValue" v-model="gifVisible" :film="detail" :snapshot="gifSnapshot" @change="updateMedia" />
     <FilmCoverPicker v-if="detail && modelValue" v-model="coverVisible" :film="detail" @change="updateMedia" />
+    <el-dialog v-model="pathEditorVisible" append-to-body title="修改视频地址" width="min(640px, 90vw)" :close-on-click-modal="!pathSaving" :close-on-press-escape="!pathSaving" :show-close="!pathSaving">
+      <p class="muted">填写当前媒体来源目录内的相对路径或完整路径。保存后保留已有标注、分类和收藏。</p>
+      <el-input v-model="editedPath" aria-label="视频文件地址" placeholder="请输入移动后的视频文件路径" :disabled="pathSaving" @keyup.enter="savePartPath" />
+      <p v-if="pathError" class="error-text" role="alert">{{ pathError }}</p>
+      <template #footer><el-button :disabled="pathSaving" @click="pathEditorVisible = false">取消</el-button><el-button type="primary" :loading="pathSaving" @click="savePartPath">保存地址</el-button></template>
+    </el-dialog>
     <el-dialog v-model="imageViewerVisible" append-to-body class="image-viewer-dialog" width="96vw" top="2vh" :show-close="true">
       <div class="image-viewer-stage">
         <img v-if="currentImageUrl" :src="currentImageUrl" :alt="detail?.title || '影片图片'" @error="markImageMissing" />
@@ -557,6 +604,8 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', handleKeydown, tru
 .viewer-arrow.right { right: 14px; }
 .viewer-count { position: absolute; right: 16px; bottom: 14px; padding: 5px 9px; border-radius: 6px; color: #fff; background: rgba(0,0,0,.58); font-size: 11px; }
 .media-empty { padding: 42px 0; color: var(--muted); text-align: center; }
+.primary-path { min-width: 0; }
+.primary-path .text-mono { overflow-wrap: anywhere; }
 .parts-list { display: grid; gap: 8px; }
 .part-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: rgba(21,24,33,.65); }
 .part-row > div:first-child { display: grid; min-width: 0; gap: 4px; }

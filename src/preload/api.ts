@@ -93,6 +93,7 @@ export const filmLibraryApi: FilmLibraryApi = {
     partsList: (filmId: string) => invoke(IPC_CHANNELS.filmsPartsList, filmId),
     partsOpen: (partId: string) => invoke(IPC_CHANNELS.filmsPartsOpen, partId),
     partsShowInFolder: (partId: string) => invoke(IPC_CHANNELS.filmsPartsShowInFolder, partId),
+    updatePartPath: (partId: string, filePath: string) => invoke(IPC_CHANNELS.filmsPartsUpdatePath, { partId, filePath }),
     updatePartVr: (partId: string, isVr: boolean) => invoke(IPC_CHANNELS.filmsPartsUpdateVr, { partId, isVr }),
     savePlaybackProgress: (input) => invoke(IPC_CHANNELS.desktopPlaybackProgress, input),
     onPlaybackFlush: (listener) => {

@@ -260,6 +260,13 @@ export function registerIpcHandlers(context: IpcContext): () => void {
     await context.fileOpen.showPartInFolder(payload);
     return null;
   });
+  handle(IPC_CHANNELS.filmsPartsUpdatePath, (_event, payload) => {
+    if (!isRecord(payload) || !isUuid(payload.partId) || typeof payload.filePath !== 'string'
+      || !payload.filePath.trim() || payload.filePath.length > 32767 || payload.filePath.includes('\0')) {
+      throw new Error('INVALID_PART_PATH');
+    }
+    return context.management.updatePartPath(payload.partId, payload.filePath);
+  });
   handle(IPC_CHANNELS.filmsPartsUpdateVr, (_event, payload) => {
     if (!isRecord(payload) || !isUuid(payload.partId) || typeof payload.isVr !== 'boolean') {
       throw new Error('INVALID_PART_VR_MODE');
@@ -540,6 +547,11 @@ function publicMessage(code: string): string {
     SOURCE_TRANSFER_DESTINATION_EXISTS: '目标位置已有文件，已停止转移以避免覆盖',
     SOURCE_TRANSFER_FILE_MISSING: '部分已扫描影片文件不存在，请先重新扫描来源',
     SOURCE_TRANSFER_ASSET_MISSING: '部分已扫描旁路资源不存在，请先重新扫描来源',
+    INVALID_PART_PATH: '请输入有效的视频文件路径',
+    PART_PATH_SCAN_RUNNING: '请等待当前扫描完成后再修改视频地址',
+    PART_PATH_NOT_FILE: '新地址必须指向一个文件',
+    PART_PATH_EXISTS: '该地址已被其他影片文件占用，请勿重复绑定',
+    MEDIA_PATH_OUTSIDE_SOURCE: '新地址必须在当前媒体来源目录内',
     SOURCE_TRANSFER_INVALID_PATH: '来源中存在不安全的文件路径，已停止转移',
     SOURCE_TRANSFER_ROLLBACK_FAILED: '转移失败且部分文件无法还原，请查看日志',
     SOURCE_TRANSFER_RECORD_NOT_FOUND: '找不到这次转移的完整记录，未进行任何修改',

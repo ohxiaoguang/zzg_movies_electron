@@ -15,6 +15,7 @@ const emit = defineEmits<{
 }>();
 
 const saving = ref(false);
+const confirmingSourceId = ref<string | null>(null);
 const segments = ref<FilmSegmentDto[]>([]);
 const draft = reactive({
   startSeconds: 0,
@@ -91,6 +92,23 @@ async function togglePreview(segment: FilmSegmentDto, value: boolean): Promise<v
   const index = segments.value.findIndex((item) => item.id === segment.id);
   if (index >= 0) segments.value.splice(index, 1, result.data);
   emit('change', [...segments.value]);
+}
+
+async function confirmSource(segment: FilmSegmentDto): Promise<void> {
+  if (confirmingSourceId.value) return;
+  const filmId = props.film.id;
+  confirmingSourceId.value = segment.id;
+  try {
+    const result = await window.filmLibrary.films.updateSegment({ id: segment.id, confirmSource: true });
+    if (!result.ok) { ElMessage.error(result.error.message); return; }
+    if (props.film.id !== filmId) return;
+    const index = segments.value.findIndex((item) => item.id === segment.id);
+    if (index >= 0) segments.value.splice(index, 1, result.data);
+    emit('change', [...segments.value]);
+    ElMessage.success('已确认时间点，提示已清除');
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '确认失败，请重试');
+  } finally { confirmingSourceId.value = null; }
 }
 
 async function remove(segment: FilmSegmentDto): Promise<void> {
@@ -187,6 +205,7 @@ defineExpose({ markStart, markEnd });
             <em v-if="segment.sourceChanged">源文件已变化，请检查时间点</em>
           </button>
           <div class="segment-actions">
+            <el-button v-if="segment.sourceChanged" text size="small" type="warning" :loading="confirmingSourceId === segment.id" :disabled="Boolean(confirmingSourceId) || !availableParts.some((part) => part.id === segment.filmFileId)" title="播放检查片段后，确认起止时间正确并清除提示" @click="confirmSource(segment)">时间点无误</el-button>
             <el-checkbox :model-value="segment.includeInPreview" @change="togglePreview(segment, Boolean($event))">预览</el-checkbox>
             <el-button text size="small" type="danger" @click="remove(segment)">删除</el-button>
           </div>

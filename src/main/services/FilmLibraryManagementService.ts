@@ -26,7 +26,7 @@ import type { DatabaseManager } from '../database/DatabaseManager';
 import type { FilmRepository } from '../database/repositories/FilmRepository';
 import type { SourceRepository } from '../database/repositories/SourceRepository';
 import { buildFilmCsv, buildFilmCsvFilename } from '../export/FilmCsvExporter';
-import { resolveExistingSafeMediaPath } from '../media/MediaPathResolver';
+import { resolveExistingSafeMediaPath, resolveSafeMediaPath } from '../media/MediaPathResolver';
 import { mapNfoMetadata } from '../metadata/NfoMapper';
 import { parseNfo } from '../metadata/NfoParser';
 import type { ScanCoordinator } from '../scanner/ScanCoordinator';
@@ -45,6 +45,25 @@ export class FilmLibraryManagementService {
 
   public updateFilm(input: FilmUpdateInput): FilmDetailDto {
     return this.films.update(input);
+  }
+
+  public async updatePartPath(partId: string, filePath: string): Promise<FilmDetailDto> {
+    if (this.scan.status()?.status === 'running') throw new Error('PART_PATH_SCAN_RUNNING');
+    const filmId = this.films.filmIdForPart(partId, true);
+    if (!filmId) throw new Error('PART_NOT_FOUND');
+    const detail = this.read.detail(filmId);
+    const source = this.sources.findById(detail.sourceId);
+    if (!source || source.deletedAt) throw new Error('SOURCE_NOT_FOUND');
+    const input = filePath.trim().replace(/^"(.*)"$/, '$1');
+    const relativePath = path.isAbsolute(input) ? path.relative(source.rootPath, input) : input;
+    const target = resolveSafeMediaPath(source.rootPath, relativePath);
+    const normalizedPath = path.relative(source.rootPath, target);
+    const resolved = await resolveExistingSafeMediaPath(source.rootPath, normalizedPath);
+    const stat = await fs.promises.stat(resolved);
+    if (!stat.isFile()) throw new Error('PART_PATH_NOT_FILE');
+    // A scan can start while filesystem checks are pending.
+    if (this.scan.status()?.status === 'running') throw new Error('PART_PATH_SCAN_RUNNING');
+    return this.films.updatePartPath(partId, normalizedPath, stat);
   }
 
   public updateFavorite(input: FilmFavoriteUpdateInput): FilmDetailDto {

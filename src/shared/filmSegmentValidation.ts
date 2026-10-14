@@ -30,6 +30,7 @@ export function validateFilmSegmentCreate(payload: unknown): FilmSegmentCreateIn
 export function validateFilmSegmentUpdate(payload: unknown): FilmSegmentUpdateInput {
   if (!isRecord(payload) || !isUuid(payload.id)) throw new Error('INVALID_FILM_SEGMENT');
   const input: FilmSegmentUpdateInput = { id: payload.id };
+  if (payload.confirmSource !== undefined) input.confirmSource = segmentBoolean(payload.confirmSource);
   if (payload.startSeconds !== undefined) input.startSeconds = segmentSeconds(payload.startSeconds);
   if (payload.endSeconds !== undefined) input.endSeconds = segmentSeconds(payload.endSeconds);
   if (payload.title !== undefined) input.title = segmentText(payload.title, 500);

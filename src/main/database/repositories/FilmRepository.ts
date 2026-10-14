@@ -534,6 +534,11 @@ export class FilmRepository {
   public updateSegment(input: FilmSegmentUpdateInput): FilmSegmentDto {
     const existing = this.segmentById(input.id);
     if (!existing) throw new Error('FILM_SEGMENT_NOT_FOUND');
+    const part = input.confirmSource
+      ? this.db.prepare('SELECT file_size, file_modified_at FROM film_file WHERE id = ? AND missing = 0')
+        .get(existing.filmFileId) as { file_size: number; file_modified_at: string | null } | undefined
+      : undefined;
+    if (input.confirmSource && !part) throw new Error('PART_NOT_FOUND');
     const startSeconds = input.startSeconds ?? existing.startSeconds;
     const endSeconds = input.endSeconds ?? existing.endSeconds;
     if (endSeconds <= startSeconds) throw new Error('INVALID_FILM_SEGMENT_RANGE');
@@ -542,7 +547,10 @@ export class FilmRepository {
         `UPDATE film_segment SET
            start_seconds = ?, end_seconds = ?, title = ?, comment = ?,
            include_in_preview = ?, vr_yaw_degrees = ?, vr_pitch_degrees = ?,
-           vr_fov_degrees = ?, updated_at = ?
+           vr_fov_degrees = ?,
+           source_file_size = CASE WHEN ? THEN ? ELSE source_file_size END,
+           source_file_modified_at = CASE WHEN ? THEN ? ELSE source_file_modified_at END,
+           updated_at = ?
          WHERE id = ?`,
       )
       .run(
@@ -554,6 +562,10 @@ export class FilmRepository {
         input.vrView === undefined ? existing.vrView?.yawDegrees ?? null : input.vrView?.yawDegrees ?? null,
         input.vrView === undefined ? existing.vrView?.pitchDegrees ?? null : input.vrView?.pitchDegrees ?? null,
         input.vrView === undefined ? existing.vrView?.fovDegrees ?? null : input.vrView?.fovDegrees ?? null,
+        input.confirmSource ? 1 : 0,
+        part?.file_size ?? null,
+        input.confirmSource ? 1 : 0,
+        part?.file_modified_at ?? null,
         new Date().toISOString(),
         input.id,
       );
@@ -780,6 +792,37 @@ export class FilmRepository {
 
   public parts(filmId: string): FilmPartDto[] { return this.partsForFilm(filmId); }
 
+  public updatePartPath(partId: string, relativePath: string, stat: { size: number; mtime: Date }): FilmDetailDto {
+    return this.db.transaction(() => {
+      const part = this.db.prepare('SELECT * FROM film_file WHERE id = ?').get(partId) as FilmFileRow | undefined;
+      if (!part) throw new Error('PART_NOT_FOUND');
+      const key = physicalFileKey(part.source_id, relativePath);
+      const files = this.db.prepare('SELECT * FROM film_file WHERE source_id = ?').all(part.source_id) as FilmFileRow[];
+      if (files.some((file) => file.id !== partId && physicalFileKey(file.source_id, file.relative_path) === key)) {
+        throw new Error('PART_PATH_EXISTS');
+      }
+      const legacy = this.db.prepare('SELECT id, relative_path FROM film WHERE source_id = ?').all(part.source_id) as Array<{ id: string; relative_path: string }>;
+      if (legacy.some((film) => film.id !== part.film_id && physicalFileKey(part.source_id, film.relative_path) === key)) {
+        throw new Error('PART_PATH_EXISTS');
+      }
+      const now = new Date().toISOString();
+      const filename = path.basename(relativePath);
+      const modifiedAt = stat.mtime.toISOString();
+      this.db.prepare(`UPDATE film_file SET relative_path = ?, filename = ?, file_size = ?, file_modified_at = ?,
+        fingerprint = NULL, missing = 0, updated_at = ? WHERE id = ?`)
+        .run(relativePath, filename, stat.size, modifiedAt, now, partId);
+      if (part.is_primary) {
+        this.db.prepare(`UPDATE film SET relative_path = ?, filename = ?, file_size = ?, file_modified_at = ?,
+          fingerprint = NULL, updated_at = ?, last_seen_at = ? WHERE id = ?`)
+          .run(relativePath, filename, stat.size, modifiedAt, now, now, part.film_id);
+      }
+      this.db.prepare(`UPDATE film SET missing = CASE WHEN EXISTS (
+        SELECT 1 FROM film_file WHERE film_id = ? AND missing = 0) THEN 0 ELSE 1 END, updated_at = ? WHERE id = ?`)
+        .run(part.film_id, now, part.film_id);
+      return this.detail(part.film_id)!;
+    })();
+  }
+
   public updatePartVr(partId: string, isVr: boolean): FilmPartDto {
     const result = this.db
       .prepare('UPDATE film_file SET is_vr = ?, updated_at = ? WHERE id = ? AND missing = 0')
@@ -986,15 +1029,15 @@ export class FilmRepository {
     return row ? { rootPath: row.root_path, relativePath: row.relative_path } : null;
   }
 
-  public filmIdForPart(partId: string): string | null {
+  public filmIdForPart(partId: string, includeMissing = false): string | null {
     const row = this.db
       .prepare(
         `SELECT ff.film_id
          FROM film_file ff
          JOIN film f ON f.id = ff.film_id
-         WHERE ff.id = ? AND ff.missing = 0 AND f.archived = 0`,
+         WHERE ff.id = ? AND (? = 1 OR ff.missing = 0) AND f.archived = 0`,
       )
-      .get(partId) as { film_id: string } | undefined;
+      .get(partId, includeMissing ? 1 : 0) as { film_id: string } | undefined;
     return row?.film_id ?? null;
   }
 

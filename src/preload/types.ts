@@ -110,6 +110,7 @@ export interface FilmLibraryApi {
     partsList(filmId: string): Promise<ApiResult<FilmPartDto[]>>;
     partsOpen(partId: string): Promise<ApiResult<null>>;
     partsShowInFolder(partId: string): Promise<ApiResult<null>>;
+    updatePartPath(partId: string, filePath: string): Promise<ApiResult<FilmDetailDto>>;
     updatePartVr(partId: string, isVr: boolean): Promise<ApiResult<FilmPartDto>>;
     savePlaybackProgress(input: DesktopPlaybackProgressInput): Promise<ApiResult<DesktopPlaybackStateDto>>;
     onPlaybackFlush(listener: () => Promise<void>): () => void;

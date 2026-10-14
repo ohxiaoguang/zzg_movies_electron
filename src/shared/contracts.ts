@@ -145,6 +145,7 @@ export interface FilmSegmentCreateInput {
 
 export interface FilmSegmentUpdateInput {
   id: string;
+  confirmSource?: boolean;
   startSeconds?: number;
   endSeconds?: number;
   title?: string;

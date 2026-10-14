@@ -8,6 +8,7 @@ import { SettingsRepository } from '../src/main/database/repositories/SettingsRe
 import { SourceRepository } from '../src/main/database/repositories/SourceRepository';
 import { ScanCoordinator } from '../src/main/scanner/ScanCoordinator';
 import { AppLogger } from '../src/main/system/AppLogger';
+import { FilmLibraryManagementService } from '../src/main/services/FilmLibraryManagementService';
 import { FilmLibraryReadService } from '../src/main/services/FilmLibraryReadService';
 import { groupVideoFiles } from '../src/main/scanner/SourceScanner';
 
@@ -54,6 +55,73 @@ async function waitForScan(scan: ScanCoordinator): Promise<void> {
 }
 
 describe('multi-part films and availability', () => {
+  it('relinks a missing video without losing its identity, annotations, or playback state across scans', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'film-library-relink-'));
+    roots.push(root);
+    fs.writeFileSync(path.join(root, 'Original.mp4'), 'video');
+    const context = createContext(root);
+    context.scan.start({});
+    await waitForScan(context.scan);
+    const id = context.films.page({ page: 1, pageSize: 20 }).items[0]!.id;
+    const partId = context.films.detail(id)!.parts[0]!.id;
+    context.films.update({ id, title: '手动标题', notes: '原有备注', rating: 8 });
+    context.films.updateFavorite(id, true);
+    context.films.updateCategories(id, [], ['已标注']);
+    context.films.updatePartVr(partId, true);
+    context.films.updatePlaybackProgress(id, partId, 2, 10);
+    const segment = context.films.createSegment({ filmId: id, filmFileId: partId, startSeconds: 1, endSeconds: 3, title: '片段', comment: '标注' });
+    const before = context.films.detail(id)!;
+    fs.mkdirSync(path.join(root, 'moved'));
+    const newPath = path.join(root, 'moved', 'Renamed.mp4');
+    fs.renameSync(path.join(root, 'Original.mp4'), newPath);
+    context.scan.start({});
+    await waitForScan(context.scan);
+    expect(context.films.detail(id)!.parts[0]!.missing).toBe(true);
+    // Remove the new scan record so the moved file can be bound to the annotated original.
+    const duplicate = context.films.findByPath(context.source.id, path.join('moved', 'Renamed.mp4'))!;
+    context.films.deleteRecords([duplicate.id]);
+    const read = new FilmLibraryReadService(context.films, context.sources, context.settings);
+    const management = new FilmLibraryManagementService(context.database, context.films, context.sources, read, context.scan, new AppLogger(path.join(root, 'logs')));
+    const updated = await management.updatePartPath(partId, `"${newPath}"`);
+    expect(updated.id).toBe(id);
+    expect(updated.relativePath).toBe(path.join('moved', 'Renamed.mp4'));
+    expect(updated.parts[0]).toMatchObject({ id: partId, filename: 'Renamed.mp4', missing: false, isVr: true });
+    expect(updated).toMatchObject({ title: before.title, notes: before.notes, rating: 8, favorite: true });
+    expect(updated.customCategories).toEqual(before.customCategories);
+    expect(updated.playbackState).toEqual(before.playbackState);
+    expect(updated.segments[0]).toMatchObject({ id: segment.id, filmFileId: partId, title: '片段', comment: '标注' });
+    expect(context.films.partLocation(partId)?.relativePath).toBe(updated.relativePath);
+    context.scan.start({});
+    await waitForScan(context.scan);
+    expect(context.films.page({ page: 1, pageSize: 20 }).total).toBe(1);
+    expect(context.films.detail(id)!.parts[0]!.id).toBe(partId);
+    expect(context.films.detail(id)!.segments[0]!.id).toBe(segment.id);
+  });
+
+  it('rejects nonexistent, outside, directory, and occupied paths without changing the original', async () => {
+    const root = makeRoot();
+    fs.writeFileSync(path.join(root, 'Other.mp4'), 'other');
+    const context = createContext(root);
+    context.scan.start({});
+    await waitForScan(context.scan);
+    const detail = context.films.detail(context.films.page({ page: 1, pageSize: 20 }).items.find((film) => film.filename === 'Movie-cd1.mp4')!.id)!;
+    const partId = detail.parts[0]!.id;
+    const read = new FilmLibraryReadService(context.films, context.sources, context.settings);
+    const management = new FilmLibraryManagementService(context.database, context.films, context.sources, read, context.scan, new AppLogger(path.join(root, 'logs')));
+    await expect(management.updatePartPath(partId, 'missing.mp4')).rejects.toThrow();
+    await expect(management.updatePartPath(partId, 'Other.mp4')).rejects.toThrow('PART_PATH_EXISTS');
+    await expect(management.updatePartPath(partId, path.join('..', 'outside.mp4'))).rejects.toThrow('MEDIA_PATH_OUTSIDE_SOURCE');
+    await expect(management.updatePartPath(partId, 'extrafanart')).rejects.toThrow('PART_PATH_NOT_FILE');
+    await expect(management.updatePartPath(partId, detail.parts[1]!.relativePath.toUpperCase())).rejects.toThrow('PART_PATH_EXISTS');
+    expect(context.films.detail(detail.id)!.parts).toEqual(detail.parts);
+    fs.mkdirSync(path.join(root, 'relocated'));
+    const movedPath = path.join('relocated', detail.parts[1]!.filename);
+    fs.renameSync(path.join(root, detail.parts[1]!.relativePath), path.join(root, movedPath));
+    const updated = await management.updatePartPath(detail.parts[1]!.id, movedPath);
+    expect(updated.relativePath).toBe(detail.relativePath);
+    expect(updated.parts[1]).toMatchObject({ id: detail.parts[1]!.id, relativePath: movedPath, missing: false });
+  });
+
   it.each([false, true])('sorts by total video size through query validation (strict=%s)', async (strict) => {
     const root = makeRoot();
     for (const part of [1, 2, 3]) fs.writeFileSync(path.join(root, `Movie-cd${part}.mp4`), Buffer.alloc(40));

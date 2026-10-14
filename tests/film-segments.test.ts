@@ -127,6 +127,16 @@ describe('film segments', () => {
 
     database.db.prepare('UPDATE film_file SET file_size = 101 WHERE id = ?').run(partId);
     expect(films.segments(filmId)[0]?.sourceChanged).toBe(true);
+    // Toggling preview or editing text must not silently acknowledge a changed file.
+    expect(films.updateSegment({ id: created.id, includeInPreview: true }).sourceChanged).toBe(true);
+    const confirmed = films.updateSegment({ id: created.id, confirmSource: true });
+    expect(confirmed).toMatchObject({ id: created.id, startSeconds: 10, endSeconds: 14.5, title: '精彩片段', comment: '测试批注', sourceChanged: false, vrView: updated.vrView });
+    expect(films.segments(filmId)[0]?.sourceChanged).toBe(false);
+    database.db.prepare('UPDATE film_file SET file_modified_at = ? WHERE id = ?').run('2030-01-01T00:00:00.000Z', partId);
+    expect(films.segments(filmId)[0]?.sourceChanged).toBe(true);
+    expect(films.updateSegment({ id: created.id, confirmSource: true }).sourceChanged).toBe(false);
+    database.db.prepare('UPDATE film_file SET missing = 1 WHERE id = ?').run(partId);
+    expect(() => films.updateSegment({ id: created.id, confirmSource: true })).toThrow('PART_NOT_FOUND');
     films.deleteSegment(created.id);
     films.deleteSegment(finale.id);
     expect(films.segments(filmId)).toEqual([]);
@@ -152,6 +162,8 @@ describe('film segments', () => {
       startSeconds: 20,
       endSeconds: 10,
     })).toThrow('INVALID_FILM_SEGMENT_RANGE');
+    expect(validateFilmSegmentUpdate({ id: filmId, confirmSource: true })).toEqual({ id: filmId, confirmSource: true });
+    expect(() => validateFilmSegmentUpdate({ id: filmId, confirmSource: 'true' })).toThrow('INVALID_FILM_SEGMENT');
     expect(() => validateFilmSegmentUpdate({ id: 'not-a-uuid', title: 'x' }))
       .toThrow('INVALID_FILM_SEGMENT');
     expect(() => validateFilmSegmentUpdate({

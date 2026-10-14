@@ -34,6 +34,7 @@ export const IPC_CHANNELS = {
   filmsPartsOpen: 'films.parts.open',
   filmsPartsShowInFolder: 'films.parts.show-in-folder',
   filmsPartsUpdateVr: 'films.parts.update-vr',
+  filmsPartsUpdatePath: 'films.parts.update-path',
   desktopPlaybackProgress: 'desktop-playback:progress',
   playbackSubtitleTracks: 'playback-subtitles:tracks',
   playbackSubtitleContent: 'playback-subtitles:content',
