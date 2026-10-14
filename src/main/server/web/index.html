@@ -13,8 +13,8 @@
   <body>
     <div class="standalone-status-tint" aria-hidden="true"></div>
     <div class="mobile-topbar">
-      <button id="menu-toggle" class="icon-button" type="button" aria-label="打开菜单" aria-expanded="false">☰</button>
-      <div class="mobile-brand"><span class="brand-mark">▶</span><strong>LOCAL FILM</strong></div>
+      <button id="menu-toggle" class="icon-button" type="button" aria-label="打开菜单" aria-expanded="false" data-icon="menu"></button>
+      <div class="mobile-brand"><span class="brand-mark" data-icon="play"></span><strong>LOCAL FILM</strong></div>
       <span id="mobile-role-badge" class="role-badge">访客</span>
     </div>
     <div id="sidebar-backdrop" class="sidebar-backdrop" hidden></div>
@@ -22,7 +22,7 @@
     <div class="app-shell">
       <aside id="app-sidebar" class="app-sidebar" aria-label="主菜单">
         <div class="brand-block">
-          <div class="brand-mark">▶</div>
+          <div class="brand-mark" data-icon="play"></div>
           <div>
             <div class="brand-title">LOCAL FILM</div>
             <div class="brand-subtitle">Library / 本地影库</div>
@@ -32,35 +32,35 @@
         <div class="sidebar-label">LIBRARY</div>
         <nav class="side-menu">
           <button class="nav-item is-active" type="button" data-view="library" data-library-mode="all">
-            <span class="nav-icon">▦</span><span>全部影片</span><small id="count-all">0</small>
+            <span class="nav-icon" data-icon="grid"></span><span>全部影片</span><small id="count-all">0</small>
           </button>
           <button class="nav-item" type="button" data-view="library" data-library-mode="unorganized">
-            <span class="nav-icon">◷</span><span>未整理</span><small id="count-unorganized">0</small>
+            <span class="nav-icon" data-icon="clock"></span><span>未整理</span><small id="count-unorganized">0</small>
           </button>
           <button class="nav-item" type="button" data-view="library" data-library-mode="organized">
-            <span class="nav-icon">✓</span><span>已整理</span><small id="count-organized">0</small>
+            <span class="nav-icon" data-icon="check"></span><span>已整理</span><small id="count-organized">0</small>
           </button>
           <button class="nav-item" type="button" data-view="library" data-library-mode="favorite">
-            <span class="nav-icon">★</span><span>收藏</span><small id="count-favorite">0</small>
+            <span class="nav-icon" data-icon="star"></span><span>收藏</span><small id="count-favorite">0</small>
           </button>
           <button class="nav-item" type="button" data-view="library" data-library-mode="all-data">
-            <span class="nav-icon">▤</span><span>所有数据</span><small id="count-all-data">0</small>
+            <span class="nav-icon" data-icon="files"></span><span>所有数据</span><small id="count-all-data">0</small>
           </button>
         </nav>
 
         <div class="sidebar-label secondary">MANAGE</div>
         <nav class="side-menu">
           <button class="nav-item" type="button" data-view="sources">
-            <span class="nav-icon">▰</span><span>来源管理</span>
+            <span class="nav-icon" data-icon="folder"></span><span>来源管理</span>
           </button>
           <button class="nav-item" type="button" data-view="categories">
-            <span class="nav-icon">◇</span><span>我的分类</span>
+            <span class="nav-icon" data-icon="categories"></span><span>我的分类</span>
           </button>
           <button class="nav-item" type="button" data-view="actors">
-            <span class="nav-icon">♙</span><span>演员</span>
+            <span class="nav-icon" data-icon="user"></span><span>演员</span>
           </button>
           <button class="nav-item" type="button" data-view="settings">
-            <span class="nav-icon">⚙</span><span>设置</span>
+            <span class="nav-icon" data-icon="settings"></span><span>设置</span>
           </button>
         </nav>
 
@@ -92,7 +92,7 @@
             <div class="heading-actions">
               <span id="role-badge" class="role-badge">访客</span>
               <button id="device-revoke" type="button" hidden>退出登录</button>
-              <button id="refresh" class="primary-button" type="button">刷新</button>
+              <button id="refresh" type="button">刷新</button>
             </div>
           </header>
 
@@ -102,17 +102,15 @@
               <span>搜索</span>
               <input id="search" type="search" placeholder="搜索标题、文件名…" autocomplete="off" />
             </label>
+            <button id="page-filter-toggle" class="page-filter-toggle" type="button" aria-expanded="false" aria-label="展开当前页筛选">筛选</button>
             <label><span>NFO 标签</span><select id="tag"><option value="">NFO 标签：全部</option></select></label>
             <label><span>类型</span><select id="genre"><option value="">类型：全部</option></select></label>
             <label><span>演员</span><select id="actor"><option value="">演员：全部</option></select></label>
             <label><span>精彩评论截图</span><select id="comment-images"><option value="all">全部评论状态</option><option value="with">有精彩评论截图</option><option value="without">无精彩评论截图</option></select></label>
-            <label><span>排序</span><select id="sort"><option value="organized" hidden>整理顺序</option><option value="favorite" hidden>收藏顺序</option><option value="added">最近新增</option><option value="played">最近观看</option><option value="recent">最近更新</option><option value="title">标题</option><option value="year">年份</option><option value="rating">评分</option><option value="size">视频大小（大到小）</option></select></label>
+            <label><span>排序</span><select id="sort"><option value="organized" hidden>整理顺序</option><option value="favorite" hidden>收藏顺序</option><option value="added" selected>最近新增</option><option value="played">最近观看</option><option value="recent">最近更新</option><option value="title">标题</option><option value="year">年份</option><option value="rating">评分</option><option value="size">视频大小（大到小）</option></select></label>
           </section>
 
-          <div class="library-meta">
-            <p id="result-summary">正在读取影片…</p>
-            <p id="error" role="alert" hidden></p>
-          </div>
+          <div id="active-page-filters" class="active-page-filters" aria-label="已选当前页筛选" hidden></div>
           <section id="film-grid" class="film-grid" aria-live="polite"></section>
           <nav class="pagination" aria-label="影片分页">
             <button id="previous-page" type="button">上一页</button>
@@ -132,7 +130,7 @@
         <section id="categories-view" class="page-view" hidden>
           <header class="page-heading">
             <div><div class="eyebrow">YOUR COLLECTIONS</div><h1 class="page-title">我的分类</h1><p id="categories-caption" class="page-caption">使用与客户端相同的自定义分类整理影片。</p></div>
-            <button id="create-category" type="button" hidden>新建分类</button>
+            <button id="create-category" class="primary-button" type="button" hidden>新建分类</button>
           </header>
           <div id="category-grid" class="index-grid"></div>
         </section>
@@ -142,24 +140,29 @@
             <div><div class="eyebrow">NFO CAST INDEX</div><h1 class="page-title">演员</h1><p id="actors-caption" class="page-caption">来自 NFO；点击演员查看其全部影片。</p></div>
             <button id="actors-refresh" type="button">刷新</button>
           </header>
-          <div class="index-toolbar"><input id="actor-search" type="search" placeholder="搜索演员…" /><span id="actor-count" class="muted"></span></div>
+          <div class="index-toolbar"><input id="actor-search" aria-label="搜索演员" type="search" placeholder="搜索演员…" /><span id="actor-count" class="muted"></span></div>
           <div id="actor-grid" class="actor-grid"></div>
         </section>
 
         <section id="settings-view" class="page-view" hidden>
           <header class="page-heading">
-            <div><div class="eyebrow">WEB CONNECTION</div><h1 class="page-title">设置</h1><p class="page-caption">显示偏好保存在当前浏览器；监听设置请在 Electron 客户端修改。</p></div>
+            <div><div class="eyebrow">WEB CONNECTION</div><h1 class="page-title">设置</h1><p class="page-caption">查看当前显示设置、连接状态和账号信息。</p></div>
           </header>
           <div class="settings-grid">
-            <article class="settings-card"><h2>卡片显示</h2><p>卡片宽度：<output id="card-size-value">—</output></p><p>每页数量：<output id="page-size-value">—</output> 部</p><p>跟随客户端设置，请在客户端调整。刷新影片列表后同步生效。</p></article>
-            <article class="settings-card"><h2>服务状态</h2><dl id="server-facts" class="settings-facts"></dl></article>
-            <article class="settings-card"><h2>当前账号</h2><dl id="device-facts" class="settings-facts"></dl><button id="settings-device-revoke" class="danger" type="button">退出登录</button></article>
-            <article class="settings-card wide"><h2>安全边界</h2><p>仅限受信任私有局域网。管理员操作只修改服务器电脑上的 SQLite，不写回外部 NFO，也不会删除影片文件。不要将此端口转发到公网。</p></article>
+            <article class="settings-card"><h2><span data-icon="grid"></span>显示设置</h2><p>卡片宽度：<output id="card-size-value">—</output></p><p>每页数量：<output id="page-size-value">—</output> 部</p><p>桌面浏览器跟随客户端卡片宽度；手机使用自适应两列。每页数量跟随客户端设置，刷新后同步。</p></article>
+            <article class="settings-card"><h2><span data-icon="folder"></span>连接状态</h2><dl id="server-facts" class="settings-facts"></dl></article>
+            <article class="settings-card"><h2><span data-icon="user"></span>当前账号</h2><dl id="device-facts" class="settings-facts"></dl><button id="settings-device-revoke" class="danger" type="button">退出登录</button></article>
+            <article class="settings-card"><h2><span data-icon="check"></span>访问与数据</h2><p>仅在本机或受信任的私有局域网访问。整理与收藏等操作只更新服务器电脑上的影库资料，不会改写外部 NFO 或删除原片。</p></article>
           </div>
         </section>
 
         <footer>Local Film Library · 与 Electron 客户端共用同一数据库和业务规则</footer>
       </main>
+    </div>
+
+    <div id="feedback-region" class="feedback-region">
+      <p id="result-summary" role="status"></p>
+      <p id="error" role="alert" hidden></p>
     </div>
 
     <dialog id="film-detail">

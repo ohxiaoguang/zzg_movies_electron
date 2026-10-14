@@ -95,11 +95,12 @@ const state = {
   playbackCapabilities: null,
   playback: null,
   detailPlayback: null,
+  detailRequest: 0,
 };
 let activeCardPreviewClose = null;
 let activeVrRenderer = null;
 const elements = Object.fromEntries([
-  'menu-toggle', 'sidebar-backdrop', 'app-sidebar', 'mobile-role-badge', 'sidebar-status',
+  'feedback-region', 'active-page-filters', 'page-filter-toggle', 'menu-toggle', 'sidebar-backdrop', 'app-sidebar', 'mobile-role-badge', 'sidebar-status',
   'count-all', 'count-unorganized', 'count-organized', 'count-favorite', 'count-all-data',
   'library-view', 'library-title', 'library-caption', 'sources-view', 'sources-caption',
   'source-grid', 'sources-refresh', 'categories-view', 'categories-caption', 'category-grid',
@@ -148,6 +149,14 @@ async function initializeLibrary() {
 }
 
 function bindEvents() {
+  const filterToggle = document.querySelector('#page-filter-toggle');
+  filterToggle.addEventListener('click', () => {
+    const expanded = filterToggle.closest('.filters').classList.toggle('is-expanded');
+    filterToggle.setAttribute('aria-expanded', String(expanded));
+    filterToggle.setAttribute('aria-label', expanded ? '收起当前页筛选' : '展开当前页筛选');
+    renderPageFilterState();
+  });
+  document.querySelectorAll('[data-icon]').forEach((node) => node.replaceChildren(createIcon(node.dataset.icon)));
   for (const item of document.querySelectorAll('.nav-item')) {
     item.addEventListener('click', () => showView(item.dataset.view, item.dataset.libraryMode));
   }
@@ -198,6 +207,7 @@ function bindEvents() {
   window.addEventListener('keyup', handleDetailPlaybackKey, true);
   elements.closeDetail.addEventListener('click', closeFilmDetail);
   elements.filmDetail.addEventListener('close', stopDetailPlayback);
+  elements.filmDetail.addEventListener('close', () => { state.detailRequest += 1; placeFeedback(); });
   elements.filmDetail.addEventListener('cancel', (event) => {
     if (state.detailPlayback?.exitAppFullscreen()) event.preventDefault();
     else stopDetailPlayback();
@@ -367,6 +377,7 @@ async function reloadLibrary() {
 
 async function loadFilms() {
   const request = ++state.filmsRequest;
+  renderPageFilterState();
   setBusy(true);
   hideError();
   try {
@@ -380,7 +391,6 @@ async function loadFilms() {
     state.page = page.page;
     state.totalPages = page.totalPages;
     elements.pageSizeValue.textContent = String(page.pageSize);
-    elements.resultSummary.textContent = `${page.total} 部影片`;
     elements.libraryCaption.textContent = `${page.total} 条记录 · 所有资料只保存在服务端电脑`;
     elements.pageSummary.textContent = `第 ${page.page} / ${page.totalPages} 页`;
     elements.previousPage.disabled = page.page <= 1;
@@ -492,26 +502,32 @@ function renderSources() {
   elements.sourceGrid.replaceChildren();
   elements.sourcesCaption.textContent = `${sources.length} 个来源 · 网页端不会显示磁盘路径`;
   if (!sources.length) {
-    elements.sourceGrid.append(createElement('p', 'empty-state', '还没有影片来源'));
+    elements.sourceGrid.append(createEmptyState('folder', '还没有影片来源', '在客户端添加影片目录并扫描，随后即可在这里浏览。', { label: '刷新来源', run: () => void reloadLibrary() }));
     return;
   }
   for (const source of sources) {
-    const card = createElement('article', 'index-card');
-    const status = createElement('span', `source-state${source.online ? ' online' : ''}`);
+    const card = createElement('article', 'index-card source-card');
+    const icon = createElement('span', 'index-icon');
+    icon.append(createIcon('folder'));
+    const status = createElement('span', `source-badge${source.online ? ' online' : ''}`, source.online ? '在线' : '离线');
     const copy = createElement('div', 'index-copy');
     copy.append(
       createElement('strong', '', source.name),
-      createElement('small', '', `${source.online ? '在线' : '离线'} · ${source.enabled ? '已启用' : '已停用'} · ${formatScanTime(source.lastScanAt)}`),
+      createElement('small', '', `${source.enabled ? '已启用' : '已停用'} · ${formatScanTime(source.lastScanAt)}`),
     );
     const actions = createElement('div', 'index-actions');
     actions.append(actionButton('查看影片', () => openLibraryWithFilter({ sourceId: source.id })));
     if (state.auth?.canManage) {
-      actions.append(actionButton('扫描', () => runAdminAction(
-        () => client.rescanSource(source.id),
-        `“${source.name}”扫描已启动`,
-      )));
+      const scan = actionButton('扫描来源', async () => {
+        if (scan.disabled) return;
+        scan.disabled = true;
+        scan.textContent = '正在启动…';
+        try { await runAdminAction(() => client.rescanSource(source.id), `“${source.name}”扫描已启动`); }
+        finally { scan.disabled = false; scan.textContent = '扫描来源'; }
+      }, 'quiet-button');
+      actions.append(scan);
     }
-    card.append(status, copy, actions);
+    card.append(icon, copy, status, actions);
     elements.sourceGrid.append(card);
   }
 }
@@ -521,22 +537,24 @@ function renderCategories() {
   elements.categoryGrid.replaceChildren();
   elements.categoriesCaption.textContent = `${categories.length} 个分类 · 点击分类查看影片`;
   if (!categories.length) {
-    elements.categoryGrid.append(createElement('p', 'empty-state', '还没有自定义分类'));
+    elements.categoryGrid.append(createEmptyState('categories', '创建你的第一个分类', '把喜欢的影片整理成“值得重看”“经典收藏”等集合。', state.auth?.canManage ? { label: '新建分类', run: () => void createCategory() } : null));
     return;
   }
   for (const category of categories) {
-    const card = createElement('article', 'index-card');
-    const icon = createElement('span', 'index-icon', '◆');
-    const copy = createElement('div', 'index-copy');
+    const card = createElement('article', 'index-card category-card');
+    const icon = createElement('span', 'index-icon');
+    icon.append(createIcon('categories'));
+    const copy = actionButton('', () => openLibraryWithFilter({ categoryId: category.id }), 'index-card-link index-copy');
+    copy.setAttribute('aria-label', `查看分类 ${category.name} 的影片`);
     copy.append(
       createElement('strong', '', category.name),
       createElement('small', '', `${category.filmCount || 0} 部影片`),
     );
     const actions = createElement('div', 'index-actions');
-    actions.append(actionButton('查看', () => openLibraryWithFilter({ categoryId: category.id })));
+    actions.append(actionButton('查看影片', () => openLibraryWithFilter({ categoryId: category.id }), 'quiet-button'));
     if (state.auth?.canManage) {
       actions.append(
-        actionButton('重命名', () => void renameCategory(category.id)),
+        actionButton('重命名', () => void renameCategory(category.id), 'quiet-button'),
         actionButton('删除', () => void deleteCategory(category.id), 'danger'),
       );
     }
@@ -551,17 +569,18 @@ function renderActors() {
   elements.actorGrid.replaceChildren();
   elements.actorCount.textContent = `${actors.length} 位演员`;
   if (!actors.length) {
-    elements.actorGrid.append(createElement('p', 'empty-state', needle ? '没有匹配的演员' : '还没有演员数据'));
+    elements.actorGrid.append(createEmptyState('user', needle ? '没有匹配的演员' : '还没有演员资料', needle ? '试试更短的名字，或清除搜索查看全部演员。' : '扫描包含演员信息的 NFO 文件后，演员会自动出现在这里。', needle ? {
+      label: '清除搜索', run: () => { elements.actorSearch.value = ''; renderActors(); elements.actorSearch.focus(); },
+    } : null));
     return;
   }
   for (const actor of actors) {
     const card = createElement('button', 'actor-card');
     card.type = 'button';
-    card.append(
-      createElement('span', 'actor-avatar', actor.name.slice(0, 1).toUpperCase()),
-      createElement('span', 'index-copy', actor.name),
-      createElement('small', 'muted', `${actor.filmCount} 部`),
-    );
+    const copy = createElement('span', 'index-copy');
+    copy.append(createElement('strong', '', actor.name), createElement('small', '', `${actor.filmCount} 部影片`));
+    card.append(createElement('span', 'actor-avatar', actor.name.slice(0, 1).toUpperCase()), copy);
+    card.setAttribute('aria-label', `查看 ${actor.name} 的 ${actor.filmCount} 部影片`);
     card.addEventListener('click', () => openLibraryWithFilter({ actor: actor.name }));
     elements.actorGrid.append(card);
   }
@@ -588,6 +607,7 @@ function renderWebSettings() {
   addFact(elements.deviceFacts, '账号', state.auth.device?.name?.replace(/^账号\s+/, '') || '本机浏览器');
   addFact(elements.deviceFacts, '角色', state.auth.canManage ? '管理员' : '访客');
   addFact(elements.deviceFacts, '最近使用', formatDateTime(state.auth.device?.lastUsedAt));
+  elements.settingsDeviceRevoke.hidden = !state.server.authenticationRequired || !state.auth.authenticated;
 }
 
 function formatScanTime(value) {
@@ -630,34 +650,76 @@ function renderFilms(films) {
       ? client.media('assets', film.posterAssetId)
       : client.media('posters', film.id);
     poster.addEventListener('error', () => {
-      poster.removeAttribute('src');
-      poster.className = 'poster-placeholder';
+      poster.hidden = true;
+      placeholder.hidden = false;
     });
+    const placeholder = createElement('span', 'poster-placeholder');
+    placeholder.hidden = true;
+    placeholder.append(createIcon('film'), createElement('span', '', film.title.slice(0, 1)));
     const copy = createElement('span', 'film-copy');
     copy.append(
-      createElement('strong', '', `${film.favorite ? '★ ' : ''}${film.title}`),
-      createElement('small', '', [film.year, film.sourceName].filter(Boolean).join(' · ')),
-      createElement('small', 'film-flags', film.customCategories.map((item) => item.name).join(' · ') || '未分类'),
+      createElement('strong', '', film.title),
     );
+    copy.firstChild.title = film.title;
+    const meta = createElement('span', 'film-meta');
+    meta.append(createElement('small', '', film.year || '—'), createElement('small', '', film.sourceName));
+    copy.append(meta);
     const posterFrame = createElement('span', 'film-poster-frame');
+    const chips = createElement('span', 'film-category-chips');
+    if (film.organizationState === 'unorganized') chips.append(createElement('span', 'unorganized', '未整理'));
+    else {
+      film.customCategories.slice(0, 2).forEach((category) => chips.append(createElement('span', '', category.name)));
+      if (film.customCategories.length > 2) chips.append(createElement('span', '', `+${film.customCategories.length - 2}`));
+    }
+    chips.title = film.customCategories.map((category) => category.name).join(' · ');
+    const favorite = actionButton('', async (event) => {
+      event.stopPropagation();
+      favorite.disabled = true;
+      try {
+        await client.updateFavorite(film.id, !film.favorite);
+        film.favorite = !film.favorite;
+        syncFavorite();
+        if (state.filters?.navigation) {
+          state.filters.navigation.favorite += film.favorite ? 1 : -1;
+          elements.countFavorite.textContent = String(state.filters.navigation.favorite);
+        }
+        if (state.libraryMode === 'favorite') void loadFilms();
+      } catch (error) { showError(error); }
+      finally { favorite.disabled = false; }
+    }, 'card-favorite');
+    favorite.append(createIcon('star'));
+    const syncFavorite = () => {
+      favorite.classList.toggle('active', film.favorite);
+      favorite.setAttribute('aria-pressed', String(film.favorite));
+      favorite.setAttribute('aria-label', film.favorite ? '取消收藏' : '收藏');
+      favorite.title = film.favorite ? '取消收藏' : '收藏';
+    };
+    syncFavorite();
+    favorite.hidden = !state.auth?.canManage;
+    if (film.favorite && !state.auth?.canManage) {
+      const badge = createElement('span', 'card-favorite active favorite-indicator');
+      badge.setAttribute('aria-label', '已收藏');
+      badge.append(createIcon('star'));
+      posterFrame.append(badge);
+    }
     const previewTriggers = createElement('span', 'film-preview-triggers');
     for (const [channel, icon, label, count] of [
-      ['highlights', '▶', '精彩片段', film.highlightSegmentCount],
-      ['stills', '▧', '剧照', film.previewImageAssetIds.length],
-      ['comments', '💬', '评论图', film.commentImageCount],
+      ['highlights', 'film', '精彩片段', film.highlightSegmentCount],
+      ['stills', 'image', '剧照', film.previewImageAssetIds.length],
+      ['comments', 'comment', '评论图', film.commentImageCount],
     ]) {
       const trigger = document.createElement('button');
       trigger.type = 'button';
       trigger.className = 'film-preview-trigger';
       trigger.dataset.previewChannel = channel;
-      trigger.textContent = icon;
+      trigger.append(createIcon(icon));
       trigger.title = `${label} ${count}`;
       trigger.setAttribute('aria-label', `预览${label}`);
       trigger.disabled = !count;
       trigger.addEventListener('click', (event) => event.stopPropagation());
       previewTriggers.append(trigger);
     }
-    posterFrame.append(poster, previewTriggers);
+    posterFrame.append(poster, placeholder, chips, favorite, previewTriggers);
     open.append(posterFrame, copy);
     open.addEventListener('click', () => void showDetail(film.id));
     open.addEventListener('keydown', (event) => {
@@ -944,15 +1006,25 @@ function positionFilmCardPreview(popup, card, commentAspectRatio = null) {
 }
 
 async function showDetail(id) {
+  const request = ++state.detailRequest;
+  elements.detailContent.dataset.filmId = id;
   activeCardPreviewClose?.();
-  elements.detailContent.replaceChildren(createElement('p', 'muted', '正在读取详情…'));
-  elements.filmDetail.showModal();
+  const loading = createElement('div', 'detail-loading');
+  loading.setAttribute('role', 'status');
+  loading.append(createElement('p', 'muted', '正在读取详情…'), createElement('div', 'detail-skeleton'));
+  elements.detailContent.replaceChildren(loading);
+  if (!elements.filmDetail.open) elements.filmDetail.showModal();
+  placeFeedback();
   try {
     const [film, server] = await Promise.all([client.film(id), client.serverInfo()]);
+    if (request !== state.detailRequest || !elements.filmDetail.open) return;
     state.server = server;
     renderDetail(film);
   } catch (error) {
-    elements.detailContent.replaceChildren(createElement('p', 'error-panel', errorMessage(error)));
+    if (request !== state.detailRequest || !elements.filmDetail.open) return;
+    const failure = createElement('div', 'detail-load-error');
+    failure.append(createIcon('film'), createElement('h2', '', '暂时无法读取详情'), createElement('p', 'muted', errorMessage(error)), actionButton('重试', () => void showDetail(id), 'primary-button'));
+    elements.detailContent.replaceChildren(failure);
   }
 }
 
@@ -980,7 +1052,9 @@ function createDetailHeader(film, mediaNavigation, playback) {
     : client.media('posters', film.id);
   image.alt = `${film.title} 海报`;
   image.addEventListener('error', () => {
-    poster.replaceChildren(createElement('span', 'detail-poster-placeholder', '无海报'));
+    const placeholder = createElement('span', 'detail-poster-placeholder');
+    placeholder.append(createIcon('film'), createElement('span', '', film.title.slice(0, 1)));
+    poster.replaceChildren(placeholder);
   });
   poster.append(image);
   const main = createElement('div', 'detail-header-main');
@@ -993,11 +1067,13 @@ function createDetailHeader(film, mediaNavigation, playback) {
   );
   const controls = createElement('div', 'detail-header-controls');
   if (state.auth?.canManage) {
-    const favorite = actionButton(film.favorite ? '★ 已收藏' : '☆ 收藏', () => updateDetail(
+    const favorite = actionButton(film.favorite ? '已收藏' : '收藏', () => updateDetail(
       film.id,
       () => client.updateFavorite(film.id, !film.favorite),
       film.favorite ? '已取消收藏' : '已加入收藏',
     ), `favorite-button${film.favorite ? ' active' : ''}`);
+    favorite.prepend(createIcon('star'));
+    favorite.setAttribute('aria-pressed', String(film.favorite));
     controls.append(favorite);
   }
   controls.append(mediaNavigation);
@@ -1120,6 +1196,9 @@ function createCategoryEditor(film) {
 function createMediaSection(film, playback, navigation) {
   const section = createElement('section', 'detail-section media-section');
   const tabs = createElement('div', 'detail-tabs');
+  tabs.setAttribute('role', 'tablist');
+  tabs.setAttribute('aria-label', '影片媒体');
+  tabs.setAttribute('aria-orientation', window.matchMedia('(max-width: 760px)').matches ? 'horizontal' : 'vertical');
   const highlightsButton = actionButton('精彩片段', () => activate('highlights'), 'detail-tab active');
   const imageButton = actionButton('图片图库', () => activate('images'), 'detail-tab');
   tabs.append(highlightsButton, imageButton);
@@ -1132,7 +1211,29 @@ function createMediaSection(film, playback, navigation) {
   const gallery = film.images.length ? createGallery(film) : null;
   imagePanel.append(gallery?.section || createElement('p', 'media-empty', '暂无图片'));
   const panels = [highlightsPanel, imagePanel];
+  const buttons = [highlightsButton, imageButton];
+  buttons.forEach((button, index) => {
+    const name = panels[index].dataset.tab;
+    button.id = `media-tab-${name}`;
+    button.setAttribute('role', 'tab');
+    button.setAttribute('aria-controls', `media-panel-${name}`);
+    panels[index].id = `media-panel-${name}`;
+    panels[index].setAttribute('role', 'tabpanel');
+    panels[index].setAttribute('aria-labelledby', button.id);
+    button.addEventListener('keydown', (event) => {
+      if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? 1 : 1 - index;
+      buttons[next].focus();
+      activate(panels[next].dataset.tab);
+    });
+  });
   function activate(name) {
+    buttons.forEach((button, index) => {
+      const active = panels[index].dataset.tab === name;
+      button.setAttribute('aria-selected', String(active));
+      button.tabIndex = active ? 0 : -1;
+    });
     highlightsButton.classList.toggle('active', name === 'highlights');
     imageButton.classList.toggle('active', name === 'images');
     for (const panel of panels) panel.hidden = panel.dataset.tab !== name;
@@ -1145,7 +1246,8 @@ function createMediaSection(film, playback, navigation) {
         forwardTitle: `前进 ${seekStep} 秒`,
       } : {});
     } else {
-      releaseActivePlayback();
+      if (playback.stop) playback.stop();
+      else releaseActivePlayback();
       navigation.setMode(gallery?.canStep ? {
         backward: () => gallery.step(-1),
         forward: () => gallery.step(1),
@@ -1171,6 +1273,7 @@ function createGallery(film) {
   const image = document.createElement('img');
   const count = createElement('span', 'gallery-count');
   const close = actionButton('×', () => closeViewer(), 'gallery-close');
+  close.setAttribute('aria-label', '关闭图片查看器');
   lightbox.hidden = true;
   lightbox.tabIndex = -1;
   lightbox.setAttribute('role', 'dialog');
@@ -1178,16 +1281,19 @@ function createGallery(film) {
   lightbox.setAttribute('aria-label', `${film.title} 图片查看器`);
   image.alt = `${film.title} 图片`;
   let index = 0;
+  let previousThumbnail = null;
   const show = (next) => {
     index = (next + images.length) % images.length;
     image.src = client.media('assets', images[index].id);
     count.textContent = `${index + 1} / ${images.length}`;
     thumbnailButtons.forEach((item, itemIndex) => item.classList.toggle('active', itemIndex === index));
+    previousThumbnail = thumbnailButtons[index];
     lightbox.hidden = false;
     window.requestAnimationFrame(() => lightbox.focus());
   };
   function closeViewer() {
     lightbox.hidden = true;
+    previousThumbnail?.focus();
   }
   stage.append(image, close, count);
   if (images.length > 1) {
@@ -1219,7 +1325,9 @@ function createGallery(film) {
     items.forEach((item, itemIndex) => {
       const absoluteIndex = offset + itemIndex;
       const button = actionButton('', () => show(absoluteIndex));
+      button.setAttribute('aria-label', `查看${title} ${itemIndex + 1}`);
       const thumbnail = document.createElement('img');
+      thumbnail.loading = 'lazy';
       thumbnail.src = client.media('assets', item.id);
       thumbnail.alt = `${title}缩略图 ${itemIndex + 1}`;
       button.append(thumbnail);
@@ -1295,6 +1403,7 @@ function createLocalMetadataSection(film) {
   let saveTimer = null;
   const scheduleSave = () => {
     if (saveTimer) window.clearTimeout(saveTimer);
+    status.classList.remove('error-panel');
     status.textContent = '等待保存…';
     saveTimer = window.setTimeout(async () => {
       status.textContent = '正在保存…';
@@ -1382,6 +1491,7 @@ function createFileInfoSection(film) {
 function createUnifiedPlayback(film) {
   const section = createElement('section', 'web-playback unified-playback');
   const status = createElement('small', 'muted playback-status');
+  status.setAttribute('role', 'status');
   const video = document.createElement('video');
   video.crossOrigin = 'anonymous';
   video.controls = true;
@@ -1523,6 +1633,8 @@ function createUnifiedPlayback(film) {
   const segmentsPanel = createElement('div', 'web-segments-panel');
   let displayedSegments = [];
   let playbackGeneration = 0;
+  let preparing = false;
+  let prepareFailed = false;
 
   const applyVrMode = (part, view = null) => {
     activeVrRenderer?.dispose();
@@ -1594,23 +1706,33 @@ function createUnifiedPlayback(film) {
   };
   const playOriginal = async (partId = null, startSeconds = undefined) => {
     const generation = ++playbackGeneration;
+    preparing = true;
+    prepareFailed = false;
+    syncPlaybackActions();
     clearSegmentMode();
-    const session = await startAdaptivePlayback(
-      video,
-      status,
-      { ...(partId ? { partId } : { filmId: film.id }), ...(startSeconds === undefined ? {} : { startSeconds }) },
-      subtitleSelect,
-    );
-    if (generation !== playbackGeneration || !session) return null;
-    if (session) {
+    try {
+      const session = await startAdaptivePlayback(
+        video,
+        status,
+        { ...(partId ? { partId } : { filmId: film.id }), ...(startSeconds === undefined ? {} : { startSeconds }) },
+        subtitleSelect,
+      );
+      if (generation !== playbackGeneration) return null;
+      if (!session) { prepareFailed = true; return null; }
       const part = parts.find((part) => part.id === partId) ?? parts[0];
       state.playback.partId = part?.id || null;
       partSelect.value = part?.id || '';
+      idle.hidden = true;
       syncSegmentLabel();
       video.dispatchEvent(new Event('playback:session'));
       applyVrMode(part, null);
+      return session;
+    } finally {
+      if (generation === playbackGeneration) {
+        preparing = false;
+        syncPlaybackActions();
+      }
     }
-    return session;
   };
   const playSegment = async (segment) => {
     const session = await playOriginal(segment.filmFileId, segment.startSeconds);
@@ -1666,8 +1788,8 @@ function createUnifiedPlayback(film) {
     }).catch(() => undefined);
   });
   const togglePlayback = () => {
-    if (!parts.length) return;
-    if (state.playback?.video !== video) {
+    if (!parts.length || preparing) return;
+    if (prepareFailed || state.playback?.video !== video) {
       void playOriginal();
     } else if (state.playback.sessionId) {
       if (video.paused) void video.play().catch(() => undefined);
@@ -1676,13 +1798,37 @@ function createUnifiedPlayback(film) {
   };
   const appPlaybackButton = actionButton('播放', togglePlayback, 'app-playback-button');
   appPlaybackButton.disabled = !parts.length;
-  const syncAppPlaybackButton = () => { appPlaybackButton.textContent = video.paused ? '播放' : '暂停'; };
+  const syncAppPlaybackButton = () => syncPlaybackActions();
   video.addEventListener('play', syncAppPlaybackButton);
   video.addEventListener('pause', syncAppPlaybackButton);
   const playerActions = createElement('div', 'unified-player-actions');
-  const playOriginalButton = actionButton('播放 / 继续原片', () => void playOriginal(), 'primary-button');
+  const playOriginalButton = actionButton('播放 / 继续原片', togglePlayback, 'primary-button');
   playOriginalButton.disabled = !parts.length;
   playerActions.append(playOriginalButton, appPlaybackButton, fullscreenButton);
+  const idle = createElement('div', 'player-idle');
+  const idlePoster = document.createElement('img');
+  idlePoster.src = film.posterAssetId ? client.media('assets', film.posterAssetId) : client.media('posters', film.id);
+  idlePoster.alt = '';
+  idlePoster.addEventListener('error', () => { idlePoster.hidden = true; });
+  const idleCopy = createElement('div', 'player-idle-copy');
+  const idleTitle = createElement('strong', '', film.title);
+  const idleHint = createElement('span', '', parts.length ? '点击播放，继续你的观影' : '原片文件当前不可用');
+  const idlePlay = actionButton('播放影片', togglePlayback, 'player-idle-play');
+  idleCopy.append(idleTitle, idleHint, idlePlay);
+  idle.append(idlePoster, idleCopy);
+  videoFrame.append(idle);
+  function syncPlaybackActions() {
+    const active = state.playback?.video === video && state.playback?.sessionId && !prepareFailed;
+    const label = preparing ? '正在准备…' : prepareFailed ? '重试播放' : active ? (video.paused ? '继续播放' : '暂停') : '播放 / 继续原片';
+    playOriginalButton.textContent = label;
+    appPlaybackButton.textContent = preparing ? '准备中…' : active && !video.paused ? '暂停' : '播放';
+    for (const button of [playOriginalButton, appPlaybackButton, idlePlay]) button.disabled = !parts.length || preparing;
+    idlePlay.textContent = preparing ? '正在准备…' : prepareFailed ? '重试播放' : '播放影片';
+    idleHint.textContent = preparing ? '正在检测视频并准备播放，请稍候' : prepareFailed ? '播放未就绪，请重试或查看下方提示' : parts.length ? '点击播放，继续你的观影' : '原片文件当前不可用';
+    status.dataset.phase = preparing ? 'loading' : prepareFailed ? 'error' : parts.length ? 'ready' : 'unavailable';
+    status.setAttribute('aria-live', preparing ? 'off' : 'polite');
+  }
+  syncPlaybackActions();
   const playerControls = createElement('div', 'player-control-row');
   playerControls.append(subtitlePicker, playerActions);
   const extraControls = createElement('div', 'fullscreen-extra-controls');
@@ -1843,6 +1989,15 @@ function createUnifiedPlayback(film) {
     segmentsPanel,
     canSeek: parts.length > 0,
     exitAppFullscreen,
+    stop() {
+      playbackGeneration += 1;
+      preparing = false;
+      prepareFailed = false;
+      clearSegmentMode();
+      releaseActivePlayback();
+      idle.hidden = false;
+      syncPlaybackActions();
+    },
     activate() {
       if (!parts.length || state.playback?.video === video) return;
       resetSubtitlePicker(subtitleSelect);
@@ -2236,40 +2391,34 @@ async function updateDetail(id, operation, message, options = {}) {
 }
 
 async function importNfo(id, mode) {
-  if (mode === 'force-replace' && !window.confirm('强制替换会覆盖该影片在 SQLite 中的可替换元数据。外部 NFO 不会被修改。确认继续？')) return;
+  if (mode === 'force-replace' && !await categoryDialog('替换 NFO 资料', '将覆盖数据库中可替换的元数据。我的分类、收藏和外部 NFO 文件会保留。', undefined, '确认替换')) return;
   await updateDetail(id, () => client.importNfo(id, mode), 'NFO 已读取并导入 SQLite');
 }
 
 async function chooseNfoImport(id) {
-  if (window.confirm('确定后会合并导入 NFO；选择取消可继续决定是否替换导入。我的分类、收藏和外部 NFO 均不受影响。')) {
-    await importNfo(id, 'force-merge');
-    return;
-  }
-  if (window.confirm('是否改为替换导入 NFO 数据？这会覆盖 SQLite 中可替换的元数据，但不会写回外部 NFO。')) {
-    await importNfo(id, 'force-replace');
-  }
+  const mode = await chooseImportMode();
+  if (mode) await importNfo(id, mode);
 }
 
 async function createCategory() {
-  const name = window.prompt('新分类名称');
+  const name = await categoryDialog('新建分类', '为你的影片集合起一个名字。', '');
   if (!name?.trim()) return;
-  await runAdminAction(() => client.createCategory(name), '分类已创建');
-  await reloadLibrary();
+  if (await runAdminAction(() => client.createCategory(name), '分类已创建')) await reloadLibrary();
 }
 
 async function renameCategory(id) {
   const existing = state.filters.categories.find((item) => item.id === id);
-  const name = window.prompt('新的分类名称', existing?.name || '');
+  const name = await categoryDialog('重命名分类', '修改分类名称，影片关联会保留。', existing?.name || '');
   if (!name?.trim()) return;
-  await runAdminAction(() => client.renameCategory(id, name), '分类已重命名');
-  await reloadLibrary();
+  if (await runAdminAction(() => client.renameCategory(id, name), '分类已重命名')) await reloadLibrary();
 }
 
 async function deleteCategory(id) {
   const existing = state.filters.categories.find((item) => item.id === id);
-  if (!window.confirm(`删除分类“${existing?.name || ''}”？只删除分类关联，不删除影片。`)) return;
-  await runAdminAction(() => client.removeCategory(id), '分类已删除');
-  elements.category.value = '';
+  if (!await categoryDialog('删除分类', `删除“${existing?.name || ''}”及其分类关联，影片文件会保留。`)) return;
+  if (!await runAdminAction(() => client.removeCategory(id), '分类已删除')) return;
+  state.globalFilters.categoryIds = state.globalFilters.categoryIds.filter((categoryId) => categoryId !== id);
+  saveGlobalFilters();
   await reloadLibrary();
 }
 
@@ -2278,8 +2427,10 @@ async function runAdminAction(operation, message) {
   try {
     await operation();
     toast(message);
+    return true;
   } catch (error) {
     showError(error);
+    return false;
   }
 }
 
@@ -2365,8 +2516,12 @@ function setBusy(busy) {
   elements.filmGrid.setAttribute('aria-busy', String(busy));
 }
 
+let toastTimer;
 function toast(message) {
+  window.clearTimeout(toastTimer);
+  placeFeedback();
   elements.resultSummary.textContent = message;
+  toastTimer = window.setTimeout(() => { elements.resultSummary.textContent = ''; }, 4000);
 }
 
 function errorMessage(error) {
@@ -2374,11 +2529,162 @@ function errorMessage(error) {
 }
 
 function showError(error) {
+  placeFeedback();
   elements.error.hidden = false;
   elements.error.textContent = errorMessage(error);
+  const dismiss = actionButton('×', hideError, 'feedback-dismiss');
+  dismiss.setAttribute('aria-label', '关闭错误提示');
+  elements.error.append(dismiss);
 }
 
 function hideError() {
   elements.error.hidden = true;
   elements.error.textContent = '';
+}
+
+function createIcon(name) {
+  const paths = {
+    film: 'M4 3h16v18H4z M4 7h16 M4 17h16 M8 3v18 M16 3v18',
+    play: 'M8 5l11 7-11 7z',
+    grid: 'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',
+    clock: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 7v5l3 2',
+    check: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M8 12l3 3 5-6',
+    star: 'M12 3l2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z',
+    files: 'M7 3h13v15H7z M4 6v15h13',
+    folder: 'M3 6h7l2 2h9v12H3z',
+    categories: 'M3 3h9l9 9-9 9-9-9z M7 7h.01',
+    user: 'M12 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M4 21v-2a8 8 0 0 1 16 0v2',
+    settings: 'M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1z M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6',
+    image: 'M3 3h18v18H3z M3 17l6-6 4 4 3-3 5 5 M16 7h.01',
+    comment: 'M3 4h18v13H9l-6 4z M7 8h10 M7 12h6',
+    menu: 'M4 6h16 M4 12h16 M4 18h16',
+  };
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  for (const [attribute, value] of Object.entries({ viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': '1.7', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' })) svg.setAttribute(attribute, value);
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', paths[name] || paths.film);
+  svg.append(path);
+  return svg;
+}
+
+function categoryDialog(title, description, initialValue, confirmLabel = '删除分类') {
+  return new Promise((resolve) => {
+    const dialog = createElement('dialog', 'category-dialog');
+    const form = createElement('form', 'category-dialog-form');
+    const heading = createElement('h2', '', title);
+    heading.id = 'category-dialog-title';
+    dialog.setAttribute('aria-labelledby', heading.id);
+    form.append(heading, createElement('p', 'muted', description));
+    let input;
+    if (initialValue !== undefined) {
+      const entry = field('分类名称', 'text', initialValue);
+      input = entry.input;
+      input.required = true;
+      input.maxLength = 100;
+      form.append(entry.label);
+    }
+    const actions = createElement('div', 'category-dialog-actions');
+    actions.append(actionButton('取消', () => dialog.close()));
+    const submit = createElement('button', input ? 'primary-button' : 'danger', input ? '保存' : confirmLabel);
+    submit.type = 'submit';
+    actions.append(submit);
+    form.append(actions);
+    dialog.append(form);
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      if (input && !input.value.trim()) { input.focus(); return; }
+      dialog.close(input ? input.value.trim() : 'confirmed');
+    });
+    dialog.addEventListener('close', () => {
+      const result = dialog.returnValue;
+      dialog.remove();
+      placeFeedback();
+      resolve(result || null);
+    }, { once: true });
+    document.body.append(dialog);
+    dialog.showModal();
+    (input || submit).focus();
+    input?.select();
+  });
+}
+
+function renderPageFilterState() {
+  const defaultSort = state.libraryMode === 'organized' ? 'organized' : state.libraryMode === 'favorite' ? 'favorite' : 'added';
+  const fields = [
+    [elements.search, '搜索', ''], [elements.tag, '标签', ''],
+    [elements.genre, '类型', ''], [elements.actor, '演员', ''],
+    [elements.commentImages, '评论截图', 'all'], [elements.sort, '排序', defaultSort],
+  ];
+  const active = fields.filter(([input, , empty]) => input.value.trim() !== empty);
+  elements.activePageFilters.replaceChildren();
+  elements.activePageFilters.hidden = !active.length;
+  for (const [input, label, empty] of active) {
+    const value = input.selectedOptions?.[0]?.textContent || input.value.trim();
+    const chip = actionButton('', () => {
+      input.value = empty;
+      if (state.searchTimer) window.clearTimeout(state.searchTimer);
+      state.searchTimer = null;
+      state.page = 1;
+      void loadFilms();
+    }, 'active-filter-chip');
+    chip.append(createElement('span', '', `${label}：${value}`), createElement('span', 'filter-chip-remove', '×'));
+    chip.title = `${label}：${value} · 点击清除`;
+    chip.setAttribute('aria-label', `清除${label}筛选：${value}`);
+    elements.activePageFilters.append(chip);
+  }
+  if (active.length > 1) elements.activePageFilters.append(actionButton('清空当前页', () => {
+    resetLibraryFilters();
+    state.page = 1;
+    void loadFilms();
+  }, 'clear-page-filters'));
+  const expanded = elements.pageFilterToggle.getAttribute('aria-expanded') === 'true';
+  elements.pageFilterToggle.textContent = expanded ? '收起' : active.length ? `筛选 · ${active.length}` : '筛选';
+  elements.pageFilterToggle.classList.toggle('has-filters', active.length > 0);
+}
+
+function placeFeedback() {
+  const dialogs = [...document.querySelectorAll('dialog[open]')];
+  const host = dialogs.at(-1) || document.body;
+  if (elements.feedbackRegion.parentElement !== host) host.append(elements.feedbackRegion);
+}
+
+function chooseImportMode() {
+  return new Promise((resolve) => {
+    const dialog = createElement('dialog', 'category-dialog import-mode-dialog');
+    const content = createElement('div', 'category-dialog-form');
+    const title = createElement('h2', '', '重新读取 NFO');
+    title.id = 'import-mode-title';
+    dialog.setAttribute('aria-labelledby', title.id);
+    content.append(title, createElement('p', 'muted', '选择资料更新方式。我的分类、收藏和外部 NFO 文件会保留。'));
+    for (const [mode, label, description] of [
+      ['force-merge', '合并导入', '保留已有文字资料，合并标签、演员等信息，并更新 NFO 评分。'],
+      ['force-replace', '替换导入', '覆盖数据库中可替换的元数据，下一步需确认。'],
+    ]) {
+      const choice = actionButton('', () => dialog.close(mode), 'import-mode-choice');
+      choice.append(createElement('strong', '', label), createElement('span', '', description));
+      content.append(choice);
+    }
+    const actions = createElement('div', 'category-dialog-actions');
+    actions.append(actionButton('取消', () => dialog.close()));
+    content.append(actions);
+    dialog.append(content);
+    dialog.addEventListener('close', () => {
+      const mode = dialog.returnValue;
+      dialog.remove();
+      placeFeedback();
+      resolve(mode === 'force-merge' || mode === 'force-replace' ? mode : null);
+    }, { once: true });
+    document.body.append(dialog);
+    dialog.showModal();
+    content.querySelector('button').focus();
+  });
+}
+
+function createEmptyState(icon, title, description, action = null) {
+  const empty = createElement('section', 'empty-state rich-empty-state');
+  const mark = createElement('span', 'empty-state-icon');
+  mark.append(createIcon(icon));
+  empty.append(mark, createElement('h2', '', title), createElement('p', '', description));
+  if (action) empty.append(actionButton(action.label, action.run, 'primary-button'));
+  return empty;
 }

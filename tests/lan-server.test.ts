@@ -204,7 +204,7 @@ describe('localhost read-only web server', () => {
     expect(html).not.toContain('id="export-csv"');
     expect(html).not.toContain('id="scan-all"');
     expect(html).not.toContain('id="scan-source"');
-    expect(html).toContain('<option value="added">最近新增</option>');
+    expect(html).toContain('<option value="added" selected>最近新增</option>');
     expect(html).toContain('<option value="organized" hidden>整理顺序</option>');
     expect(html).toContain('<option value="favorite" hidden>收藏顺序</option>');
     expect(html).toContain('<option value="played">最近观看</option>');
@@ -249,7 +249,7 @@ describe('localhost read-only web server', () => {
     expect(script).not.toContain('film-comment-badge');
     expect(script).toContain('attachFilmCardPreview');
     expect(script).toContain('configuredHoverCloseDelayMs()');
-    expect(script).toMatch(/\['highlights', '▶', '精彩片段',[\s\S]*?\['stills', '▧', '剧照',[\s\S]*?\['comments', '💬', '评论图',/);
+    expect(script).toMatch(/\['highlights', 'film', '精彩片段',[\s\S]*?\['stills', 'image', '剧照',[\s\S]*?\['comments', 'comment', '评论图',/);
     expect(script).toContain("card.querySelectorAll('.film-preview-trigger:not(:disabled)')");
     expect(script).not.toContain('web-card-preview-channels');
     expect(script).toContain('popup.dataset.side');

@@ -55,8 +55,9 @@ function setup(options: { runtimeSeconds?: number | null; multipart?: boolean; m
       const button = new Node('button', cls, text); button.addEventListener('click', fn); return button;
     },
     resetSubtitlePicker: vi.fn(), selectSubtitleTrack: vi.fn(), activeVrRenderer: null,
+    releaseActivePlayback: vi.fn(() => { state.playback = null; video.pause(); }),
     configuredSeekStepSeconds: () => 5, configuredFineSeekStepSeconds: () => .1,
-    client: { updatePlaybackProgress: vi.fn(async () => {}), playbackMetadata: vi.fn(options.metadata || (async () => ({ durationSeconds: null }))) },
+    client: { media: () => '/poster', updatePlaybackProgress: vi.fn(async () => {}), playbackMetadata: vi.fn(options.metadata || (async () => ({ durationSeconds: null }))) },
     startAdaptivePlayback: vi.fn(async (_video: Node, _status: Node, input: any) => {
       inputs.push(input);
       video.currentTime = 0;
@@ -438,5 +439,253 @@ describe('web detail playback interactions', () => {
     context.elements.detailContent.dataset.filmId = 'other';
     await context.updateDetail('film', async () => {}, 'saved', { categoriesOnly: true });
     expect(old.replaceWith).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('web film card actions', () => {
+  function cards(failure = false) {
+    const film = { id: 'film-1', title: '测试影片', year: 2024, sourceName: '来源', posterAssetId: null, favorite: false, organizationState: 'unorganized', customCategories: [], highlightSegmentCount: 0, previewImageAssetIds: [], commentImageCount: 0 };
+    const make = (tag: string, cls = '', text = '') => {
+      const node = new Node(tag, cls, text);
+      Object.defineProperty(node, 'firstChild', { get: () => node.children[0] });
+      return node;
+    };
+    const grid = make('section');
+    const context = {
+      state: { auth: { canManage: true }, libraryMode: 'all', filters: { navigation: { favorite: 0 } } },
+      elements: { filmGrid: grid, countFavorite: make('small') },
+      activeCardPreviewClose: null,
+      document: { createElement: (tag: string) => make(tag) },
+      createElement: make, createIcon: () => make('svg'),
+      actionButton: (text: string, fn: (event: any) => any, cls: string) => {
+        const node = make('button', cls, text); node.addEventListener('click', fn); return node;
+      },
+      client: { media: () => '/poster', updateFavorite: vi.fn(async () => { if (failure) throw new Error('保存失败'); }) },
+      attachFilmCardPreview: vi.fn(), showDetail: vi.fn(), showError: vi.fn(), loadFilms: vi.fn(),
+    };
+    vm.runInNewContext(code('renderFilms') + '\nrenderFilms([film]);', { ...context, film });
+    return { ...context, film, favorite: grid.querySelectorAll('.card-favorite')[0], poster: grid.querySelectorAll('.film-poster-frame')[0] };
+  }
+
+  it('saves a card favorite without opening detail and updates the navigation count', async () => {
+    const ctx = cards();
+    const stopPropagation = vi.fn();
+    await ctx.favorite.fire('click', { stopPropagation });
+    expect(stopPropagation).toHaveBeenCalled();
+    expect(ctx.client.updateFavorite).toHaveBeenCalledWith('film-1', true);
+    expect(ctx.film.favorite).toBe(true);
+    expect(ctx.favorite.attributes['aria-pressed']).toBe('true');
+    expect(ctx.elements.countFavorite.textContent).toBe('1');
+    expect(ctx.showDetail).not.toHaveBeenCalled();
+  });
+
+  it('keeps the confirmed favorite state and re-enables the button after a failed save', async () => {
+    const ctx = cards(true);
+    await ctx.favorite.fire('click', { stopPropagation: vi.fn() });
+    expect(ctx.film.favorite).toBe(false);
+    expect(ctx.favorite.attributes['aria-pressed']).toBe('false');
+    expect((ctx.favorite as any).disabled).toBe(false);
+    expect(ctx.showError).toHaveBeenCalled();
+    expect(ctx.elements.countFavorite.textContent).toBe('');
+  });
+
+  it('shows a designed placeholder after the poster fails', async () => {
+    const ctx = cards();
+    const image = ctx.poster.children.find(node => node.tag === 'img')!;
+    const placeholder = ctx.poster.children.find(node => node.className === 'poster-placeholder')!;
+    expect(placeholder.hidden).toBe(true);
+    await image.fire('error');
+    expect(image.hidden).toBe(true);
+    expect(placeholder.hidden).toBe(false);
+    expect(placeholder.children[1].textContent).toBe('测');
+  });
+});
+
+describe('web filter context and detail feedback', () => {
+  it('clears only the selected page condition and preserves global filters', async () => {
+    const input = (value: string) => Object.assign(new Node('input'), { value });
+    const elements = {
+      search: input('山间'), tag: input(''), genre: input(''), actor: input(''), commentImages: input('all'), sort: input('added'),
+      activePageFilters: new Node('div'),
+      pageFilterToggle: Object.assign(new Node('button'), { getAttribute: () => 'false' }),
+    };
+    const state = { libraryMode: 'all', page: 3, searchTimer: 123, globalFilters: { sourceIds: ['source-1'], categoryIds: ['category-1'] } };
+    const loadFilms = vi.fn();
+    const context = {
+      elements, state, loadFilms, resetLibraryFilters: vi.fn(), window: { clearTimeout: vi.fn() },
+      createElement: (tag: string, cls: string, text: string) => new Node(tag, cls, text),
+      actionButton: (text: string, fn: () => any, cls: string) => { const node = new Node('button', cls, text); node.addEventListener('click', fn); return node; },
+    };
+    vm.runInNewContext(code('renderPageFilterState') + '\nrenderPageFilterState();', context);
+    expect(elements.pageFilterToggle.textContent).toBe('筛选 · 1');
+    expect(elements.activePageFilters.hidden).toBe(false);
+    await elements.activePageFilters.children[0].fire('click');
+    expect(elements.search.value).toBe('');
+    expect(state.page).toBe(1);
+    expect(state.searchTimer).toBeNull();
+    expect(state.globalFilters).toEqual({ sourceIds: ['source-1'], categoryIds: ['category-1'] });
+    expect(loadFilms).toHaveBeenCalledOnce();
+  });
+
+  it('puts feedback in the topmost open dialog and returns it to the page after closing', () => {
+    const body = new Node('body');
+    const detail = new Node('dialog');
+    const confirmation = new Node('dialog');
+    let dialogs = [detail, confirmation];
+    const region = new Node('div');
+    const context = { elements: { feedbackRegion: region }, document: { body, querySelectorAll: () => dialogs } };
+    vm.runInNewContext(code('placeFeedback') + '\nplaceFeedback();', context);
+    expect(confirmation.children).toContain(region);
+    dialogs = [];
+    vm.runInNewContext('placeFeedback();', context);
+    expect(body.children).toContain(region);
+  });
+
+  it('does not import NFO when the mode chooser is cancelled', async () => {
+    const context = { chooseImportMode: vi.fn(async () => null), importNfo: vi.fn(), id: 'film-1' };
+    await vm.runInNewContext(code('chooseNfoImport') + '\nchooseNfoImport(id);', context);
+    expect(context.importNfo).not.toHaveBeenCalled();
+  });
+
+  it('does not replace metadata when the replacement confirmation is cancelled', async () => {
+    const context = { categoryDialog: vi.fn(async () => null), updateDetail: vi.fn(), client: { importNfo: vi.fn() } };
+    await vm.runInNewContext(code('importNfo') + "\nimportNfo('film-1', 'force-replace');", context);
+    expect(context.updateDetail).not.toHaveBeenCalled();
+    expect(context.client.importNfo).not.toHaveBeenCalled();
+  });
+
+  it('switches media tabs with arrow keys and updates accessible selection', async () => {
+    const context = {
+      createElement: (tag: string, cls: string, text: string) => new Node(tag, cls, text),
+      actionButton: (text: string, fn: () => any, cls: string) => { const node = new Node('button', cls, text); node.addEventListener('click', fn); return node; },
+      window: { matchMedia: () => ({ matches: true }) }, configuredSeekStepSeconds: () => 5,
+      releaseActivePlayback: vi.fn(), film: { images: [] }, playback: { segmentsPanel: new Node('section'), canSeek: false }, navigation: { setMode: vi.fn() },
+    };
+    const section = vm.runInNewContext(code('createMediaSection') + '\ncreateMediaSection(film, playback, navigation);', context) as Node;
+    const tabs = section.children[0].children;
+    const preventDefault = vi.fn();
+    await tabs[0].fire('keydown', { key: 'ArrowRight', preventDefault });
+    expect(preventDefault).toHaveBeenCalled();
+    expect(tabs[1].focus).toHaveBeenCalled();
+    expect(tabs[1].attributes['aria-selected']).toBe('true');
+    expect(tabs[0].attributes['aria-selected']).toBe('false');
+    expect(section.children[1].hidden).toBe(true);
+    expect(section.children[2].hidden).toBe(false);
+  });
+});
+
+it('ignores a detail response after its dialog was closed', async () => {
+  let resolveFilm!: (film: object) => void;
+  const film = new Promise(resolve => { resolveFilm = resolve; });
+  const dialog = Object.assign(new Node('dialog'), { open: false, showModal() { this.open = true; } });
+  const context = {
+    state: { detailRequest: 0 }, elements: { filmDetail: dialog, detailContent: new Node('div') }, activeCardPreviewClose: null,
+    createElement: (tag: string, cls: string, text: string) => new Node(tag, cls, text),
+    client: { film: () => film, serverInfo: async () => ({}) }, placeFeedback: vi.fn(), renderDetail: vi.fn(),
+  };
+  const pending = vm.runInNewContext(code('showDetail') + "\nshowDetail('film-1');", context);
+  dialog.open = false;
+  context.state.detailRequest += 1;
+  resolveFilm({ id: 'film-1' });
+  await pending;
+  expect(context.renderDetail).not.toHaveBeenCalled();
+});
+
+describe('web primary playback action', () => {
+  it('pauses and resumes an existing session instead of recreating it', async () => {
+    const { player, video, inputs } = setup();
+    const main = player.section.querySelectorAll('.primary-button')[0];
+    await main.fire('click');
+    expect(inputs).toHaveLength(1);
+    expect(main.textContent).toBe('暂停');
+    await main.fire('click');
+    expect(video.pause).toHaveBeenCalledOnce();
+    await video.fire('pause');
+    expect(main.textContent).toBe('继续播放');
+    await main.fire('click');
+    await video.fire('play');
+    expect(main.textContent).toBe('暂停');
+    expect(inputs).toHaveLength(1);
+  });
+
+  it('prevents duplicate starts while preparing and allows retry after failure', async () => {
+    const { player, context, inputs } = setup();
+    const main = player.section.querySelectorAll('.primary-button')[0];
+    const start = context.startAdaptivePlayback;
+    let finish!: (value: null) => void;
+    context.startAdaptivePlayback = vi.fn(() => new Promise(resolve => { finish = resolve; }));
+    const pending = main.fire('click');
+    await main.fire('click');
+    expect(context.startAdaptivePlayback).toHaveBeenCalledOnce();
+    expect((main as any).disabled).toBe(true);
+    expect(main.textContent).toBe('正在准备…');
+    finish(null);
+    await pending;
+    await new Promise(resolve => setImmediate(resolve));
+    expect(main.textContent).toBe('重试播放');
+    expect((main as any).disabled).toBe(false);
+    context.startAdaptivePlayback = start;
+    await main.fire('click');
+    expect(inputs).toHaveLength(1);
+    expect(player.section.querySelectorAll('.player-idle')[0].hidden).toBe(true);
+  });
+
+  it('restores the cover and start action when playback is stopped for the gallery', async () => {
+    const { player, state } = setup();
+    const main = player.section.querySelectorAll('.primary-button')[0];
+    await main.fire('click');
+    player.stop();
+    expect(state.playback).toBeNull();
+    expect(player.section.querySelectorAll('.player-idle')[0].hidden).toBe(false);
+    expect(main.textContent).toBe('播放 / 继续原片');
+  });
+});
+
+describe('web secondary page actions', () => {
+  it('keeps a category failure visible without refreshing the page', async () => {
+    const context = {
+      categoryDialog: vi.fn(async () => '经典'), client: { createCategory: vi.fn(async () => { throw new Error('保存失败'); }) },
+      hideError: vi.fn(), toast: vi.fn(), showError: vi.fn(), reloadLibrary: vi.fn(),
+    };
+    await vm.runInNewContext(code('runAdminAction') + '\n' + code('createCategory') + '\ncreateCategory();', context);
+    expect(context.showError).toHaveBeenCalledOnce();
+    expect(context.toast).not.toHaveBeenCalled();
+    expect(context.reloadLibrary).not.toHaveBeenCalled();
+  });
+
+  it('removes a deleted category from saved filters while preserving the other selections', async () => {
+    const context = {
+      state: { filters: { categories: [{ id: 'c1', name: '经典' }] }, globalFilters: { sourceIds: ['s1'], categoryIds: ['c1', 'c2'] } },
+      categoryDialog: vi.fn(async () => 'confirmed'), runAdminAction: vi.fn(async (operation: () => Promise<void>) => { await operation(); return true; }),
+      client: { removeCategory: vi.fn(async () => {}) }, saveGlobalFilters: vi.fn(), reloadLibrary: vi.fn(),
+    };
+    await vm.runInNewContext(code('deleteCategory') + "\ndeleteCategory('c1');", context);
+    expect(context.state.globalFilters).toEqual({ sourceIds: ['s1'], categoryIds: ['c2'] });
+    expect(context.saveGlobalFilters).toHaveBeenCalledOnce();
+    expect(context.reloadLibrary).toHaveBeenCalledOnce();
+  });
+
+  it('prevents duplicate source scans and restores its button after starting', async () => {
+    let finish!: () => void;
+    const pending = new Promise<void>(resolve => { finish = resolve; });
+    const grid = new Node('div');
+    const context = {
+      state: { auth: { canManage: true }, filters: { sources: [{ id: 's1', name: '电影', online: true, enabled: true }] } },
+      elements: { sourceGrid: grid, sourcesCaption: new Node('p') }, formatScanTime: () => '尚未扫描',
+      createElement: (tag: string, cls: string, text: string) => new Node(tag, cls, text), createIcon: () => new Node('svg'),
+      actionButton: (text: string, fn: () => any, cls = '') => { const button = new Node('button', cls, text); button.addEventListener('click', fn); return button; },
+      client: { rescanSource: vi.fn(() => pending) },
+      runAdminAction: async (operation: () => Promise<void>) => { await operation(); return true; },
+    };
+    vm.runInNewContext(code('renderSources') + '\nrenderSources();', context);
+    const scan = grid.querySelectorAll('.index-actions')[0].children[1];
+    const first = scan.fire('click');
+    await scan.fire('click');
+    expect(context.client.rescanSource).toHaveBeenCalledOnce();
+    expect((scan as any).disabled).toBe(true);
+    finish();
+    await first;
+    expect((scan as any).disabled).toBe(false);
+    expect(scan.textContent).toBe('扫描来源');
   });
 });
