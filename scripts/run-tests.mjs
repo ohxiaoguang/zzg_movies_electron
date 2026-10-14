@@ -16,7 +16,13 @@ try {
 }
 const vitest = path.join(root, 'node_modules', 'vitest', 'vitest.mjs');
 console.log(`[test-runner] Running tests with ${electron}`);
-const result = spawnSync(electron, [vitest, 'run', ...process.argv.slice(2)], {
+// Windows hosted runners have slower filesystem/SQLite startup and worker
+// scheduling than a local desktop. Limit concurrent integration suites and
+// keep a bounded timeout longer than their 15-second scan completion deadline.
+const ciOptions = process.env.CI && process.env.CI !== 'false'
+  ? ['--maxWorkers=2', '--testTimeout=20000', '--hookTimeout=30000']
+  : [];
+const result = spawnSync(electron, [vitest, 'run', ...process.argv.slice(2), ...ciOptions], {
   cwd: root,
   env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
   stdio: 'inherit',

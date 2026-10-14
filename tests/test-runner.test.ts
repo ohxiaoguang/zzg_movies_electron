@@ -9,7 +9,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
-function fixture(electronEntry: string, testEntry = 'console.log("FIXTURE_TESTS_STARTED");') {
+function fixture(electronEntry: string, testEntry = 'console.log("FIXTURE_TESTS_STARTED");', ci = 'false') {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'film-test-runner-'));
   roots.push(root);
   fs.mkdirSync(path.join(root, 'scripts'));
@@ -19,7 +19,7 @@ function fixture(electronEntry: string, testEntry = 'console.log("FIXTURE_TESTS_
   fs.writeFileSync(path.join(root, 'node_modules/electron/index.js'), electronEntry);
   fs.writeFileSync(path.join(root, 'node_modules/vitest/vitest.mjs'), testEntry);
   return spawnSync(process.execPath, [path.join(root, 'scripts/run-tests.mjs'), '--reporter=verbose'], {
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    env: { ...process.env, CI: ci, ELECTRON_RUN_AS_NODE: '1' },
     windowsHide: true,
     encoding: 'utf8',
   });
@@ -32,6 +32,24 @@ describe('test runner bootstrapping', () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('PACKAGE_ENTRY_RESOLVED');
     expect(result.stdout).toContain('FIXTURE_TESTS_STARTED run --reporter=verbose');
+  });
+
+  it('limits CI concurrency and gives integration operations a finite startup budget', () => {
+    const result = fixture('module.exports = process.execPath;',
+      'console.log(JSON.stringify(process.argv.slice(2)));', 'true');
+    expect(result.status).toBe(0);
+    const args = JSON.parse(result.stdout.trim().split('\n').at(-1)!);
+    expect(args).toContain('--maxWorkers=2');
+    expect(args).toContain('--testTimeout=20000');
+    expect(args).toContain('--hookTimeout=30000');
+  });
+
+  it('keeps local test timeouts unchanged', () => {
+    const result = fixture('module.exports = process.execPath;',
+      'console.log(JSON.stringify(process.argv.slice(2)));');
+    expect(result.status).toBe(0);
+    const args = JSON.parse(result.stdout.trim().split('\n').at(-1)!);
+    expect(args.some((arg: string) => arg.startsWith('--testTimeout') || arg.startsWith('--maxWorkers'))).toBe(false);
   });
 
   it('reports binary preparation failures instead of returning only exit code 1', () => {

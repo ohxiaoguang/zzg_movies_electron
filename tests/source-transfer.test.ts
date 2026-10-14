@@ -184,7 +184,8 @@ function createFixture() {
 }
 
 async function waitForScan(scan: ScanCoordinator): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
     const status = scan.status();
     if (status && status.status !== 'running') {
       expect(status.status).toBe('completed');
