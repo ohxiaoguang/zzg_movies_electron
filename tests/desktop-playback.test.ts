@@ -17,6 +17,9 @@ interface PlayerBindings {
   selectedPartId: string;
   playbackSourceMode: string;
   activeSegment: FilmSegmentDto | null;
+  currentSegment: FilmSegmentDto | null;
+  seekTimeline(event: unknown): void;
+  seekRelative(seconds: number): void;
   onLoadedMetadata(): void;
   onTimeUpdate(): void;
   onPlaying(): void;
@@ -48,7 +51,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-function player(state: DesktopPlaybackStateDto | null = saved) {
+function player(state: DesktopPlaybackStateDto | null = saved, segments: FilmSegmentDto[] = []) {
   const filename = path.resolve('src/renderer/components/film/FilmDetailPlayer.vue');
   const { descriptor } = parse(fs.readFileSync(filename, 'utf8'), { filename });
   const script = compileScript(descriptor, { id: 'desktop-playback-test' });
@@ -72,7 +75,7 @@ function player(state: DesktopPlaybackStateDto | null = saved) {
     parentNode: () => null, nextSibling: () => null, patchProp: () => {},
   });
   const film = { id: filmId, parts, playbackState: state } as FilmDetailDto;
-  const app = renderer.createApp(component, { film, segments: [] });
+  const app = renderer.createApp(component, { film, segments });
   app.mount({}); applications.push(app);
   const setup = (app._instance! as unknown as { setupState: PlayerBindings }).setupState;
   const video = {
@@ -88,6 +91,49 @@ function player(state: DesktopPlaybackStateDto | null = saved) {
 async function settle() { await Vue.nextTick(); await Promise.resolve(); await Promise.resolve(); }
 
 describe('desktop resume and progress', () => {
+  it('shows the same segment for timeline clicks, arrow seeks and native playback, clearing it outside the range', () => {
+    const segment = { id: 'marked', filmFileId: partTwo, startSeconds: 10, endSeconds: 20, title: '精彩片段', includeInPreview: false } as FilmSegmentDto;
+    const otherPart = { ...segment, id: 'other-part', filmFileId: partId, startSeconds: 30, endSeconds: 40 };
+    const { setup, video } = player(null, [segment, otherPart]);
+    setup.selectPart(partTwo);
+    setup.onLoadedMetadata();
+    setup.seekTimeline({ currentTarget: { getBoundingClientRect: () => ({ left: 0, width: 100 }) }, clientX: 12 });
+    expect(setup.currentSegment?.id).toBe(segment.id);
+    setup.seekRelative(8);
+    expect(video.currentTime).toBe(20);
+    expect(setup.currentSegment).toBeNull();
+    setup.seekRelative(-10);
+    expect(setup.currentSegment?.id).toBe(segment.id);
+    setup.seekRelative(-1);
+    expect(setup.currentSegment).toBeNull();
+    video.currentTime = 15;
+    setup.onTimeUpdate();
+    expect(setup.currentSegment?.id).toBe(segment.id);
+    video.currentTime = 35;
+    setup.onTimeUpdate();
+    expect(setup.currentSegment).toBeNull();
+  });
+
+  it('keeps an explicitly selected overlapping segment and follows the next range after leaving it', async () => {
+    const first = { id: 'first', filmFileId: partTwo, startSeconds: 10, endSeconds: 20, vrView: null } as FilmSegmentDto;
+    const second = { ...first, id: 'second', startSeconds: 15, endSeconds: 25 };
+    const { setup, video } = player(null, [first, second]);
+    setup.selectPart(partTwo);
+    setup.onLoadedMetadata();
+    await setup.playSegment(second);
+    expect(setup.currentSegment?.id).toBe('second');
+    await setup.playSegment(first);
+    video.currentTime = 16;
+    setup.onTimeUpdate();
+    expect(setup.currentSegment?.id).toBe('first');
+    video.currentTime = 20;
+    setup.onTimeUpdate();
+    expect(setup.currentSegment?.id).toBe('second');
+    video.currentTime = 25;
+    setup.onTimeUpdate();
+    expect(setup.currentSegment).toBeNull();
+  });
+
   it('selects the saved part and position without marking a details visit as watched', async () => {
     const { setup, video } = player();
     expect(setup.selectedPartId).toBe(partTwo);

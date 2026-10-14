@@ -252,8 +252,8 @@ describe('renderer regressions', () => {
     const settings = fs.readFileSync(settingsPath, 'utf8');
     expect(drawer).toContain('size="100vw"');
     expect(drawer).toContain('tab-position="right"');
-    expect(drawer).toContain('grid-template-rows: minmax(0, 1fr) 128px');
-    expect(drawer).toContain('.el-drawer__header) { height: 34px');
+    expect(drawer).toContain('grid-template-rows: minmax(0, 1fr) 156px');
+    expect(drawer).toContain(':with-header="false"');
     expect(drawer).not.toContain('label="预览视频"');
     expect(detailPlayer).toContain(':content="`${segment.title');
     expect(detailPlayer).toContain('aspect-ratio: 16 / 9');
@@ -272,7 +272,7 @@ describe('renderer regressions', () => {
     expect(segmentEditor).not.toContain('连续播放精彩片段');
     expect(segmentEditor).not.toContain('空格播放/暂停');
     expect(segmentEditor).not.toContain('@click="edit(segment)"');
-    expect(segmentEditor).toContain('grid-template-columns: repeat(2, minmax(0, 1fr))');
+    expect(segmentEditor).toContain('grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr))');
     expect(segmentEditor).toContain('formatTime(segment.endSeconds - segment.startSeconds)');
     expect(drawer).toContain('<aside class="detail-sidebar">');
     expect(drawer).toContain("const activeSidebarSections = ref<string[]>([])");
@@ -302,7 +302,7 @@ describe('renderer regressions', () => {
     expect(detailPlayer).toContain('正在准备兼容版本…');
     expect(detailPlayer).toContain('window.filmLibrary.films.updatePartVr(partId, value)');
     expect(detailPlayer).toContain('是否 VR');
-    expect(detailPlayer).toContain('是（360°）');
+    expect(detailPlayer).toContain('360° VR');
     expect(detailPlayer).toContain('SphericalVideoRenderer');
     expect(detailPlayer).toContain('class="vr-video-canvas"');
     expect(detailPlayer).toContain('拖动转动视角 · 滚轮缩放');

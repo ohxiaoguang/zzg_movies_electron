@@ -17,6 +17,7 @@ const emit = defineEmits<{
   addToResonance: [];
   captureGif: [];
   fullscreenChange: [value: boolean];
+  close: [];
 }>();
 
 interface FilmPlaybackSnapshot {
@@ -54,8 +55,10 @@ const nativeVideoFullscreen = ref(false);
 const appFullscreen = ref(false);
 const resonance = useResonanceStore();
 const fullscreenButton = ref<HTMLButtonElement | null>(null);
+const playbackOptionsVisible = ref(false);
 
 function setAppFullscreen(value: boolean): void {
+  playbackOptionsVisible.value = false;
   appFullscreen.value = value;
   resonance.playerFullscreen = value;
   if (value) resonance.expanded = false;
@@ -157,6 +160,11 @@ const playbackModeLabel = computed(() => {
   return compatibilityReady.value ? '兼容版本' : '正在准备兼容版本…';
 });
 const selectedPartSegments = computed(() => props.segments.filter((segment) => segment.filmFileId === selectedPartId.value));
+const currentSegment = computed(() => {
+  const matches = selectedPartSegments.value.filter((segment) => currentSeconds.value >= segment.startSeconds && currentSeconds.value < segment.endSeconds);
+  // Preserve an explicitly selected segment while inside it when annotations overlap.
+  return matches.find((segment) => segment.id === activeSegment.value?.id) ?? matches[0] ?? null;
+});
 const supportedSubtitleTracks = computed(() => subtitleTracks.value.filter((track) => track.supported));
 
 watch(() => props.film.id, () => {
@@ -243,6 +251,7 @@ function onLoadedMetadata(): void {
     resumeAfterFallbackPlayback = false;
     if (shouldResume) void element.play().catch(() => undefined);
   }
+  if (element) currentSeconds.value = element.currentTime;
   syncPlaybackState();
   emitPosition();
 }
@@ -377,6 +386,8 @@ function seekRelative(deltaSeconds: number): void {
   if (!element) return;
   activeSegment.value = null;
   element.currentTime = Math.max(0, Math.min(durationSeconds.value || Number.POSITIVE_INFINITY, element.currentTime + deltaSeconds));
+  currentSeconds.value = element.currentTime;
+  emitPosition();
 }
 
 function togglePlayback(): void {
@@ -621,26 +632,15 @@ onBeforeUnmount(() => {
     <div class="player-toolbar">
       <div class="player-context">
         <strong>原片播放器</strong>
-        <span v-if="selectedPart">{{ selectedPart.filename }}</span>
+        <span v-if="selectedPart" :title="selectedPart.filename">{{ selectedPart.filename }}</span>
         <small v-if="source" class="playback-mode-badge" :class="{ fallback: playbackSourceMode === 'compatibility' }">{{ playbackModeLabel }}</small>
       </div>
       <div class="player-actions">
-        <el-button v-if="!appFullscreen" size="small" :disabled="!selectedPart || !durationSeconds" @click="emit('captureGif')">截取 GIF</el-button>
-        <button v-if="appFullscreen" type="button" class="app-playback-button" @click="togglePlayback">{{ isPlaying ? '暂停' : '播放' }}</button>
-        <button ref="fullscreenButton" type="button" class="app-fullscreen-button" :aria-pressed="appFullscreen" :disabled="!source" @click="toggleFullscreen">{{ appFullscreen ? '退出全屏' : '应用内全屏' }}</button>
-        <el-dropdown v-if="appFullscreen && vrEnabled" class="fullscreen-vr-menu" trigger="click" @command="($event: string) => $event === 'mute' ? toggleMute() : resetVrView()">
-          <button type="button" class="app-playback-button" aria-label="VR 播放选项">⋯</button>
-          <template #dropdown><el-dropdown-menu><el-dropdown-item command="mute">{{ isMuted ? '取消静音' : '静音' }}</el-dropdown-item><el-dropdown-item command="reset">视角复位</el-dropdown-item></el-dropdown-menu></template>
-        </el-dropdown>
-        <span class="vr-mode-label">是否 VR</span>
-        <el-select v-model="vrEnabled" class="vr-mode-select" aria-label="是否 VR 视频" :loading="vrSaving" :disabled="vrSaving || !selectedPart" @change="saveVrMode">
-          <el-option label="否" :value="false" />
-          <el-option label="是（360°）" :value="true" />
-        </el-select>
         <el-select
           v-if="source"
           :model-value="selectedSubtitleIndex"
           class="subtitle-select"
+          size="small"
           aria-label="选择字幕"
           :disabled="subtitleBusy || !supportedSubtitleTracks.length"
           :loading="subtitleBusy"
@@ -659,12 +659,39 @@ onBeforeUnmount(() => {
             :disabled="!track.supported"
           />
         </el-select>
-        <el-select v-if="availableParts.length > 1" :model-value="selectedPartId" class="part-select" aria-label="选择影片文件" @change="selectPart">
+        <button v-if="appFullscreen" type="button" class="app-playback-button" @click="togglePlayback">{{ isPlaying ? '暂停' : '播放' }}</button>
+        <button ref="fullscreenButton" type="button" class="app-fullscreen-button player-toolbar-button" :aria-pressed="appFullscreen" :disabled="!source" @click="toggleFullscreen">{{ appFullscreen ? '退出全屏' : '应用内全屏' }}</button>
+        <el-dropdown v-if="appFullscreen && vrEnabled" class="fullscreen-vr-menu" trigger="click" @command="($event: string) => $event === 'mute' ? toggleMute() : resetVrView()">
+          <button type="button" class="app-playback-button" aria-label="VR 播放选项">⋯</button>
+          <template #dropdown><el-dropdown-menu><el-dropdown-item command="mute">{{ isMuted ? '取消静音' : '静音' }}</el-dropdown-item><el-dropdown-item command="reset">视角复位</el-dropdown-item></el-dropdown-menu></template>
+        </el-dropdown>
+        <el-select v-if="appFullscreen && availableParts.length > 1" :model-value="selectedPartId" class="part-select" aria-label="选择影片文件" @change="selectPart">
           <el-option v-for="part in availableParts" :key="part.id" :label="`${part.partType.toUpperCase()} ${part.partNumber} · ${part.filename}`" :value="part.id" />
         </el-select>
-        <el-button class="resonance-add-button" size="small" :disabled="!source" @click="emit('addToResonance')">添加进共鸣球</el-button>
-        <el-button v-if="currentSeconds > 0" size="small" :disabled="!durationSeconds" @click="restartPlayback">从头播放</el-button>
-        <el-button size="small" @click="playOriginal">继续播放原片</el-button>
+        <button v-if="!appFullscreen" type="button" class="player-toolbar-button" :disabled="!source" @click="emit('addToResonance')">加入共鸣球</button>
+        <el-popover v-if="!appFullscreen" v-model:visible="playbackOptionsVisible" placement="bottom-end" trigger="click" :width="280" popper-class="playback-options-popover">
+          <template #reference><button type="button" class="player-toolbar-button" aria-label="更多播放选项" :aria-expanded="playbackOptionsVisible">更多 ▾</button></template>
+          <div class="playback-options">
+            <strong class="playback-options-heading">播放设置</strong>
+            <div class="playback-setting">
+              <span>视频模式</span>
+              <el-select v-model="vrEnabled" class="settings-select" aria-label="是否 VR 视频" :loading="vrSaving" :disabled="vrSaving || !selectedPart" @change="saveVrMode">
+                <el-option label="普通视频" :value="false" />
+                <el-option label="360° VR" :value="true" />
+              </el-select>
+            </div>
+            <div v-if="availableParts.length > 1" class="playback-setting">
+              <span>影片文件</span>
+              <el-select :model-value="selectedPartId" class="settings-select" aria-label="选择影片文件" @change="selectPart">
+                <el-option v-for="part in availableParts" :key="part.id" :label="`${part.partType.toUpperCase()} ${part.partNumber} · ${part.filename}`" :value="part.id" />
+              </el-select>
+            </div>
+
+          </div>
+        </el-popover>
+        <el-tooltip v-if="!appFullscreen" content="关闭详情" placement="bottom" :show-after="200">
+          <button type="button" class="player-toolbar-button player-icon-button" aria-label="关闭详情" @click="emit('close')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button>
+        </el-tooltip>
       </div>
     </div>
 
@@ -686,6 +713,8 @@ onBeforeUnmount(() => {
           @loadedmetadata="onLoadedMetadata"
           @error="onPlaybackError"
           @timeupdate="onTimeUpdate"
+          @seeking="onTimeUpdate"
+          @seeked="onTimeUpdate"
           @play="syncPlaybackState"
           @pause="onPaused"
           @playing="onPlaying"
@@ -713,9 +742,9 @@ onBeforeUnmount(() => {
         <p v-if="activeSubtitleText && !nativeVideoFullscreen" class="player-subtitle-overlay"><span>{{ activeSubtitleText }}</span></p>
         <div v-if="vrEnabled && vrRenderError" class="vr-render-error">{{ vrRenderError }}</div>
         <div v-if="playbackError" class="playback-error">{{ playbackError }}</div>
-        <div v-if="activeSegment" class="active-segment-label">
-          <strong>{{ activeSegment.title || '未命名片段' }}</strong>
-          <span>{{ formatTime(activeSegment.startSeconds) }} → {{ formatTime(activeSegment.endSeconds) }}</span>
+        <div v-if="currentSegment" class="active-segment-label">
+          <strong>{{ currentSegment.title || '未命名片段' }}</strong>
+          <span>{{ formatTime(currentSegment.startSeconds) }} → {{ formatTime(currentSegment.endSeconds) }}</span>
         </div>
       </div>
     </div>
@@ -733,32 +762,52 @@ onBeforeUnmount(() => {
         >
           <span
             class="timeline-segment"
-            :class="{ disabled: !segment.includeInPreview, active: activeSegment?.id === segment.id }"
+            :class="{ disabled: !segment.includeInPreview, active: currentSegment?.id === segment.id }"
             :style="timelineStyle(segment)"
             :aria-label="segment.title || '未命名片段'"
           />
         </el-tooltip>
         <i :style="{ left: `${durationSeconds ? (currentSeconds / durationSeconds) * 100 : 0}%` }" />
       </div>
-      <span class="timeline-time">{{ formatTime(durationSeconds) }}</span>
+      <span class="timeline-time total-time">{{ formatTime(durationSeconds) }}</span>
+      <div class="timeline-actions">
+        <el-tooltip content="继续播放原片" placement="top" :show-after="200">
+          <span class="timeline-action"><button type="button" class="timeline-icon-button" aria-label="继续播放原片" :disabled="!source" @click="playOriginal"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7Z" /></svg></button></span>
+        </el-tooltip>
+        <el-tooltip content="从头播放" placement="top" :show-after="200">
+          <span class="timeline-action"><button type="button" class="timeline-icon-button" aria-label="从头播放" :disabled="!durationSeconds || currentSeconds <= 0" @click="restartPlayback"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10a9 9 0 1 1 2 8M3 4v6h6" /></svg></button></span>
+        </el-tooltip>
+        <el-tooltip content="截取 GIF" placement="top" :show-after="200">
+          <span class="timeline-action"><button type="button" class="timeline-icon-button" aria-label="截取 GIF" :disabled="!selectedPart || !durationSeconds" @click="emit('captureGif')"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="3" /><circle cx="6" cy="18" r="3" /><path d="m8.2 8.2 12 12M8.2 15.8 20 4" /></svg></button></span>
+        </el-tooltip>
+      </div>
     </div>
   </section>
 </template>
 
 <style scoped>
 .detail-player { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; height: 100%; min-height: 0; gap: 5px; padding: 3px 0 7px; overflow: hidden; }
-.player-toolbar { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 14px; }
-.player-context { display: flex; min-width: 0; align-items: center; gap: 8px; }
+.player-toolbar { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: nowrap; }
+.player-context { display: flex; flex: 1 1 0; min-width: 0; align-items: center; gap: 8px; }
 .player-context strong { flex: 0 0 auto; font-size: 12px; }
-.player-context span { overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.player-context span { max-width: clamp(100px, 22vw, 280px); overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .playback-mode-badge { flex: 0 0 auto; padding: 2px 6px; border: 1px solid rgba(122,211,167,.35); border-radius: 999px; color: #9be0bf; font-size: 9px; font-weight: 600; white-space: nowrap; }
 .playback-mode-badge.fallback { border-color: rgba(238,188,105,.35); color: #efc47d; }
-.player-actions { display: flex; min-width: 0; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; }
+.player-actions { display: flex; flex: 0 0 auto; min-width: 0; align-items: center; justify-content: flex-end; flex-wrap: nowrap; gap: 6px; }
+.player-actions :deep(.el-button) { margin-left: 0; }
+.playback-options { display: grid; gap: 12px; }
+.playback-options-heading { color: var(--ink); font-size: 12px; }
+.playback-setting { display: grid; gap: 6px; }
+.playback-setting > span { color: var(--muted); font-size: 11px; }
+.settings-select { width: 100%; }
+:global(.playback-options-popover.el-popover) { background: var(--panel-raised); border-color: var(--line); color: var(--ink); }
 .part-select { width: min(320px, 32vw); }
-.subtitle-select { width: min(210px, 22vw); }
-.vr-mode-label { flex: 0 0 auto; color: var(--muted); font-size: 10px; }
-.vr-mode-select { width: 108px; }
-.resonance-add-button { --el-button-text-color: #b7f2da; --el-button-border-color: rgba(152,227,194,.42); --el-button-bg-color: rgba(54,115,94,.16); }
+.subtitle-select { flex: 0 0 auto; width: clamp(120px, 15vw, 180px); }
+.player-actions .player-toolbar-button { display: inline-flex; height: 28px; min-height: 28px; padding: 0 10px; align-items: center; justify-content: center; border: 1px solid rgba(255,255,255,.16); border-radius: 6px; background: var(--panel-raised); color: var(--ink); font: inherit; font-size: 12px; line-height: 1; white-space: nowrap; cursor: pointer; }
+.player-actions .player-toolbar-button:hover:not(:disabled), .player-actions .player-toolbar-button[aria-expanded="true"] { border-color: var(--accent); background: rgba(152,227,194,.1); color: var(--accent); }
+.player-actions .player-toolbar-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.player-actions .player-toolbar-button:disabled { opacity: .45; cursor: not-allowed; }
+.player-actions .subtitle-select :deep(.el-select__wrapper) { height: 28px; min-height: 28px; border-radius: 6px; }
 .player-stage-slot { display: grid; width: 100%; height: 100%; min-height: 0; place-items: center; overflow: hidden; }
 .player-stage { position: relative; display: grid; max-width: 100%; max-height: 100%; aspect-ratio: 16 / 9; place-items: center; overflow: hidden; border-radius: 9px; background: #050609; box-shadow: 0 16px 42px rgba(0, 0, 0, .28); }
 .detail-player-video { display: block; min-width: 0; min-height: 0; max-width: 100%; max-height: 100%; flex: 0 0 auto; object-fit: contain !important; object-position: 50% 50%; background: #050609; }
@@ -778,45 +827,54 @@ onBeforeUnmount(() => {
 .active-segment-label strong, .active-segment-label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .active-segment-label span { color: rgba(255,255,255,.72); font-variant-numeric: tabular-nums; }
 .player-unavailable { display: grid; min-height: 320px; place-items: center; border-radius: 11px; color: var(--muted); background: #050609; }
-.player-timeline-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 7px; }
+.player-timeline-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 7px; }
 .timeline-time { min-width: 62px; color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
-.timeline-time:last-child { text-align: right; }
+.timeline-time.total-time { text-align: right; }
+.timeline-actions { display: flex; align-items: center; gap: 4px; }
+.timeline-action { display: inline-flex; }
+.timeline-icon-button { display: inline-flex; width: 28px; height: 28px; padding: 5px; align-items: center; justify-content: center; border: 1px solid rgba(255,255,255,.16); border-radius: 6px; color: var(--ink); background: var(--panel-raised); cursor: pointer; }
+.timeline-icon-button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: rgba(152,227,194,.1); }
+.timeline-icon-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.timeline-icon-button:disabled { opacity: .45; cursor: not-allowed; }
+.timeline-icon-button svg, .player-icon-button svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.player-actions .player-icon-button { width: 28px; padding: 5px; }
 .segment-timeline { position: relative; height: 18px; overflow: hidden; border-radius: 999px; background: #202630; cursor: pointer; }
 .timeline-segment { position: absolute; z-index: 1; top: 3px; min-width: 4px; height: 12px; padding: 0; border: 0; border-radius: 4px; background: var(--accent); opacity: .9; cursor: pointer; }
 .timeline-segment:hover, .timeline-segment:focus-visible, .timeline-segment.active { z-index: 3; outline: 2px solid #fff; outline-offset: -2px; opacity: 1; }
 .timeline-segment.disabled { opacity: .32; }
 .segment-timeline i { position: absolute; z-index: 2; top: 0; bottom: 0; width: 2px; background: #fff; box-shadow: 0 0 5px #000; pointer-events: none; }
 @media (max-width: 760px) {
-  .player-toolbar { align-items: stretch; flex-direction: column; }
-  .player-actions { justify-content: flex-start; flex-wrap: wrap; }
+  .player-toolbar { gap: 6px; }
+  .player-context strong { display: none; }
   .part-select { width: 100%; }
-  .subtitle-select { width: 100%; }
+  .subtitle-select { width: 120px; }
   .detail-player { height: auto; overflow: visible; }
   .player-stage { height: auto; aspect-ratio: 16 / 9; }
-  .player-timeline-row { grid-template-columns: minmax(0, 1fr); gap: 5px; }
+  .player-timeline-row { grid-template-columns: minmax(0, 1fr) auto; gap: 5px; }
   .timeline-time { display: none; }
 }
 .app-fullscreen-button, .app-playback-button { min-height: 32px; padding: 5px 12px; border: 1px solid var(--accent); border-radius: 6px; background: rgba(152,227,194,.1); color: var(--accent); font: inherit; font-size: 12px; cursor: pointer; touch-action: manipulation; }
 .app-fullscreen-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.detail-player.is-app-fullscreen { position: fixed; z-index: 20; inset: 0; box-sizing: border-box; width: 100%; height: 100vh; height: 100dvh; padding: env(safe-area-inset-top) max(6px, env(safe-area-inset-right)) max(4px, env(safe-area-inset-bottom)) max(6px, env(safe-area-inset-left)); grid-template-rows: minmax(0, 1fr) 32px; grid-template-columns: auto minmax(48px, 1fr) auto minmax(70px, 130px) auto auto auto auto; align-items: center; gap: 4px 6px; overflow: hidden; background: #050609; }
+.detail-player.is-app-fullscreen { position: fixed; z-index: 20; inset: 0; box-sizing: border-box; width: 100%; height: 100vh; height: 100dvh; padding: env(safe-area-inset-top) max(6px, env(safe-area-inset-right)) max(4px, env(safe-area-inset-bottom)) max(6px, env(safe-area-inset-left)); grid-template-rows: minmax(0, 1fr) 32px; grid-template-columns: auto minmax(48px, 1fr) auto auto minmax(70px, 130px) auto auto auto auto; align-items: center; gap: 4px 6px; overflow: hidden; background: #050609; }
 .is-app-fullscreen .player-stage-slot { grid-column: 1 / -1; grid-row: 1; }
 .is-app-fullscreen .player-toolbar, .is-app-fullscreen .player-actions, .is-app-fullscreen .player-timeline-row { display: contents; }
 .is-app-fullscreen .player-context, .is-app-fullscreen .player-actions > :not(.app-fullscreen-button):not(.app-playback-button):not(.subtitle-select):not(.part-select):not(.fullscreen-vr-menu) { display: none; }
 .is-app-fullscreen .player-stage { border-radius: 0; }
 .is-app-fullscreen .timeline-time { display: inline; grid-row: 2; grid-column: 1; min-width: 0; font-size: 10px; }
-.is-app-fullscreen .timeline-time:last-child { grid-column: 3; }
+.is-app-fullscreen .timeline-time.total-time { grid-column: 3; }
 .is-app-fullscreen .segment-timeline { grid-row: 2; grid-column: 2; height: 20px; }
 .is-app-fullscreen .timeline-segment { top: 4px; }
-.is-app-fullscreen .subtitle-select { grid-row: 2; grid-column: 4; width: 100%; }
-.is-app-fullscreen .app-playback-button { grid-row: 2; grid-column: 5; }
-.is-app-fullscreen .part-select { grid-row: 2; grid-column: 6; width: 100px; }
-.is-app-fullscreen .fullscreen-vr-menu { grid-row: 2; grid-column: 7; }
-.is-app-fullscreen .app-fullscreen-button { grid-row: 2; grid-column: 8; }
+.is-app-fullscreen .timeline-actions { grid-row: 2; grid-column: 4; }
+.is-app-fullscreen .subtitle-select { grid-row: 2; grid-column: 5; width: 100%; }
+.is-app-fullscreen .app-playback-button { grid-row: 2; grid-column: 6; }
+.is-app-fullscreen .part-select { grid-row: 2; grid-column: 7; width: 100px; }
+.is-app-fullscreen .fullscreen-vr-menu { grid-row: 2; grid-column: 8; }
+.is-app-fullscreen .app-fullscreen-button { grid-row: 2; grid-column: 9; }
 .is-app-fullscreen .app-fullscreen-button, .is-app-fullscreen .app-playback-button { min-height: 28px; height: 28px; padding: 3px 8px; font-size: 11px; white-space: nowrap; }
 .is-app-fullscreen .subtitle-select :deep(.el-select__wrapper), .is-app-fullscreen .part-select :deep(.el-select__wrapper) { min-height: 28px; padding-block: 0; }
 .is-app-fullscreen .vr-player-controls { display: none; }
 @media (max-width: 600px) {
-  .detail-player.is-app-fullscreen { grid-template-columns: 0 minmax(48px, 1fr) 0 74px auto auto auto auto; column-gap: 3px; }
+  .detail-player.is-app-fullscreen { grid-template-columns: 0 minmax(48px, 1fr) 0 auto 74px auto auto auto auto; column-gap: 3px; }
   .is-app-fullscreen .timeline-time { visibility: hidden; overflow: hidden; }
   .is-app-fullscreen .part-select { width: 64px; }
 }

@@ -75,6 +75,42 @@ function setup(options: { runtimeSeconds?: number | null; multipart?: boolean; m
 }
 
 describe('web detail playback interactions', () => {
+  it('identifies annotations after timeline clicks, keyboard seeks and native seeks using original-file time', async () => {
+    const { player, video } = setup();
+    const label = player.section.querySelectorAll('.segment-current-label')[0];
+    const track = player.section.querySelectorAll('.web-segment-timeline')[0];
+    await track.fire('click', { clientX: 30 });
+    expect(label.children.map((node: Node) => node.textContent)).toEqual(['片段', '0:20 → 0:40']);
+    player.seek(5);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(label.children).toHaveLength(2);
+    player.seek(5);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(label.children).toHaveLength(0);
+    await track.fire('click', { clientX: 20 });
+    expect(label.children).toHaveLength(2);
+    video.currentTime = 15;
+    await video.fire('seeked');
+    expect(label.children).toHaveLength(2);
+    video.currentTime = 20;
+    await video.fire('timeupdate');
+    expect(label.children).toHaveLength(0);
+    video.currentTime = 5;
+    await video.fire('seeking');
+    expect(label.children).toHaveLength(2);
+  });
+
+  it('does not show annotations from another file in a multipart film', async () => {
+    const { player } = setup({ multipart: true, metadata: async () => ({ durationSeconds: 100 }) });
+    await new Promise(resolve => setImmediate(resolve));
+    const label = player.section.querySelectorAll('.segment-current-label')[0];
+    const tracks = player.section.querySelectorAll('.web-segment-timeline');
+    await tracks[0].fire('click', { clientX: 30 });
+    expect(label.children).toHaveLength(2);
+    await tracks[1].fire('click', { clientX: 30 });
+    expect(label.children).toHaveLength(0);
+  });
+
   it('provides both seek directions in each upper corner only in app fullscreen', async () => {
     const { player, video, inputs } = setup();
     const frame = player.section.querySelectorAll('.segment-video-frame')[0];

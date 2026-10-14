@@ -94,6 +94,16 @@ async function togglePreview(segment: FilmSegmentDto, value: boolean): Promise<v
   emit('change', [...segments.value]);
 }
 
+async function handleSegmentCommand(segment: FilmSegmentDto, command: string): Promise<void> {
+  try {
+    if (command === 'preview') await togglePreview(segment, !segment.includeInPreview);
+    else if (command === 'confirm-source') await confirmSource(segment);
+    else if (command === 'delete') await remove(segment);
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '片段操作失败，请重试');
+  }
+}
+
 async function confirmSource(segment: FilmSegmentDto): Promise<void> {
   if (confirmingSourceId.value) return;
   const filmId = props.film.id;
@@ -178,18 +188,16 @@ defineExpose({ markStart, markEnd });
     <div class="segment-workspace">
       <div class="segment-compose">
         <div class="mark-controls">
-          <el-button size="small" @click="markStart">设置起点 I</el-button>
-          <span>{{ formatTime(draft.startSeconds) }}</span>
-          <el-button size="small" @click="markEnd">设置终点 O</el-button>
-          <span>{{ formatTime(draft.endSeconds) }}</span>
-          <small>时长 {{ formatTime(Math.max(0, draft.endSeconds - draft.startSeconds)) }}</small>
+          <button type="button" class="mark-button" :disabled="!selectedPart" title="将当前播放位置设为片段起点，快捷键 I" @click="markStart"><span>起点</span><kbd>I</kbd><strong>{{ formatTime(draft.startSeconds) }}</strong></button>
+          <span class="range-separator" aria-hidden="true">→</span>
+          <button type="button" class="mark-button" :disabled="!selectedPart" title="将当前播放位置设为片段终点，快捷键 O" @click="markEnd"><span>终点</span><kbd>O</kbd><strong>{{ formatTime(draft.endSeconds) }}</strong></button>
+          <small class="draft-duration">时长 <strong>{{ formatTime(Math.max(0, draft.endSeconds - draft.startSeconds)) }}</strong></small>
         </div>
 
         <div class="segment-form">
-          <el-input v-model="draft.title" size="small" maxlength="500" placeholder="片段标题，例如：精彩追逐戏" />
+          <el-input v-model="draft.title" size="small" maxlength="500" aria-label="片段标题" placeholder="片段标题（可选）" />
           <div class="segment-form-actions">
-            <el-checkbox v-model="draft.includeInPreview">纳入精彩预览</el-checkbox>
-            <span />
+            <el-checkbox v-model="draft.includeInPreview" title="将此片段纳入精彩预览">精彩预览</el-checkbox>
             <el-button type="primary" size="small" :loading="saving" :disabled="!selectedPart" @click="save">
               添加片段
             </el-button>
@@ -199,47 +207,80 @@ defineExpose({ markStart, markEnd });
 
       <div class="segment-list">
         <div v-for="segment in segments" :key="segment.id" class="segment-row">
-          <button class="segment-main" type="button" @click="emit('play', segment)">
+          <button class="segment-main" type="button" :title="`${segment.title || '未命名片段'} · ${formatTime(segment.startSeconds)} → ${formatTime(segment.endSeconds)} · ${segment.includeInPreview ? '已纳入精彩预览' : '未纳入精彩预览'}`" @click="emit('play', segment)">
+            <i class="preview-status" :class="{ included: segment.includeInPreview }" aria-hidden="true" />
             <strong>{{ segment.title || '未命名片段' }}</strong>
             <span>{{ formatTime(segment.endSeconds - segment.startSeconds) }}</span>
-            <em v-if="segment.sourceChanged">源文件已变化，请检查时间点</em>
+            <em v-if="segment.sourceChanged" title="源文件已变化，请检查时间点" aria-label="源文件已变化，请检查时间点">!</em>
           </button>
-          <div class="segment-actions">
-            <el-button v-if="segment.sourceChanged" text size="small" type="warning" :loading="confirmingSourceId === segment.id" :disabled="Boolean(confirmingSourceId) || !availableParts.some((part) => part.id === segment.filmFileId)" title="播放检查片段后，确认起止时间正确并清除提示" @click="confirmSource(segment)">时间点无误</el-button>
-            <el-checkbox :model-value="segment.includeInPreview" @change="togglePreview(segment, Boolean($event))">预览</el-checkbox>
-            <el-button text size="small" type="danger" @click="remove(segment)">删除</el-button>
-          </div>
+          <el-dropdown class="segment-actions" trigger="click" placement="bottom-end" popper-class="segment-actions-menu" @command="(command: string) => handleSegmentCommand(segment, command)">
+            <button type="button" class="segment-more-button" :aria-label="`${segment.title || '未命名片段'}的更多操作`" title="更多片段操作">⋯</button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="preview">{{ segment.includeInPreview ? '移出精彩预览' : '纳入精彩预览' }}</el-dropdown-item>
+                <el-dropdown-item v-if="segment.sourceChanged" command="confirm-source" :disabled="Boolean(confirmingSourceId) || !availableParts.some((part) => part.id === segment.filmFileId)">时间点无误，清除提示</el-dropdown-item>
+                <el-dropdown-item command="delete" divided class="segment-delete-command">删除</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
         </div>
-        <p v-if="!segments.length" class="muted segment-empty">还没有片段。播放影片后，用 I/O 快速标记开始和结束。</p>
+        <p v-if="!segments.length" class="muted segment-empty">播放时按 I 标记起点、O 标记终点，再点击“添加片段”。</p>
       </div>
     </div>
   </section>
 </template>
 
 <style scoped>
-.segment-editor { display: grid; padding: 4px 0; }
-.muted { overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
-.segment-workspace { display: grid; grid-template-columns: minmax(300px, .8fr) minmax(380px, 1.2fr); align-items: start; gap: 10px; }
-.segment-compose { display: grid; gap: 6px; }
-.mark-controls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.mark-controls > span { min-width: 68px; color: var(--accent); font-variant-numeric: tabular-nums; }
-.mark-controls small { color: var(--muted); }
-.segment-form { display: grid; gap: 6px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: rgba(21,24,33,.5); }
-.segment-form-actions { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; }
-.segment-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: 116px; gap: 5px; overflow: auto; }
-.segment-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 5px; min-width: 0; padding: 4px 6px; border: 1px solid var(--line); border-radius: 7px; }
-.segment-main { display: flex; min-width: 0; padding: 0; align-items: baseline; justify-content: space-between; gap: 6px; border: 0; color: inherit; background: none; text-align: left; cursor: pointer; }
-.segment-main strong { overflow: hidden; font-size: 10px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-.segment-main span { flex: 0 0 auto; color: var(--muted); font-size: 9px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.segment-main em { color: #f2b56b; font-size: 11px; font-style: normal; }
-.segment-actions { display: flex; align-items: center; font-size: 9px; }
-.segment-actions :deep(.el-checkbox) { height: 22px; margin-right: 2px; }
-.segment-actions :deep(.el-checkbox__label) { padding-left: 3px; font-size: 9px; }
-.segment-actions :deep(.el-button) { padding-inline: 3px; font-size: 9px; }
-.segment-empty { grid-column: 1 / -1; padding: 12px 0; text-align: center; }
-@media (max-width: 1100px) {
-  .segment-workspace { align-items: stretch; grid-template-columns: 1fr; }
-  .segment-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .segment-actions { justify-content: flex-end; }
+.segment-editor { height: 100%; min-height: 0; padding: 6px 0; min-width: 0; container-type: inline-size; }
+.muted { color: var(--muted); }
+.segment-workspace { display: grid; height: 100%; min-height: 0; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 6px; min-width: 0; }
+.segment-compose { display: flex; min-width: 0; align-items: center; gap: 12px; }
+.mark-controls { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; }
+.mark-button { display: inline-flex; height: 32px; padding: 0 8px; align-items: center; gap: 6px; border: 1px solid rgba(255,255,255,.15); border-radius: 6px; color: var(--ink); background: var(--panel-raised); font: inherit; font-size: 11px; cursor: pointer; white-space: nowrap; }
+.mark-button strong { color: var(--accent); font-weight: 550; font-variant-numeric: tabular-nums; }
+.mark-button kbd { padding: 1px 4px; border: 1px solid var(--line); border-radius: 3px; color: var(--muted); font: inherit; font-size: 10px; }
+.mark-button:hover:not(:disabled) { border-color: var(--accent); }
+.mark-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mark-button:disabled { opacity: .45; cursor: not-allowed; }
+.range-separator { color: var(--subtle); font-size: 12px; }
+.draft-duration { display: flex; align-items: center; gap: 5px; padding-left: 2px; color: var(--muted); font-size: 10px; white-space: nowrap; }
+.draft-duration strong { font-weight: 500; font-variant-numeric: tabular-nums; }
+.segment-form { display: flex; flex: 1 1 0; min-width: 0; align-items: center; gap: 10px; }
+.segment-form :deep(.el-input) { min-width: 110px; flex: 1 1 0; }
+.segment-form :deep(.el-input__wrapper) { height: 32px; border-radius: 6px; }
+.segment-form-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 10px; }
+.segment-form-actions :deep(.el-checkbox) { height: 32px; margin: 0; }
+.segment-form-actions :deep(.el-checkbox__label) { font-size: 11px; }
+.segment-form-actions :deep(.el-button) { height: 32px; margin: 0; padding: 0 12px; border-radius: 6px; }
+.segment-list { display: grid; min-width: 0; min-height: 0; grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr)); grid-auto-rows: 28px; align-content: start; gap: 4px 6px; overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; }
+.segment-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 5px; min-width: 0; padding: 2px 6px; border: 1px solid var(--line); border-radius: 7px; background: rgba(255,255,255,.025); }
+.segment-row:hover { border-color: rgba(152,227,194,.35); }
+.segment-main { display: flex; min-width: 0; padding: 0; align-items: center; gap: 5px; border: 0; color: inherit; background: none; text-align: left; cursor: pointer; }
+.segment-main strong { min-width: 0; flex: 1 1 0; overflow: hidden; font-size: 11px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.segment-main span { flex: 0 0 auto; overflow: hidden; color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.segment-main em { display: inline-flex; flex: 0 0 auto; width: 12px; height: 12px; align-items: center; justify-content: center; border: 1px solid #f2b56b; border-radius: 50%; color: #f2b56b; font-size: 9px; font-style: normal; font-weight: 700; }
+.preview-status { width: 5px; height: 5px; flex: 0 0 auto; border-radius: 50%; background: var(--subtle); }
+.preview-status.included { background: var(--accent); }
+.segment-actions { display: inline-flex; align-items: center; }
+.segment-more-button { display: inline-flex; width: 24px; height: 22px; padding: 0; align-items: center; justify-content: center; border: 0; border-radius: 4px; color: var(--muted); background: transparent; font: inherit; font-size: 18px; line-height: 1; cursor: pointer; }
+.segment-more-button:hover, .segment-more-button[aria-expanded="true"] { color: var(--accent); background: rgba(152,227,194,.1); }
+.segment-more-button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+:global(.segment-actions-menu.el-popper), :global(.segment-actions-menu .el-dropdown-menu), :global(.segment-actions-menu .el-popper__arrow::before) { background: var(--panel-raised); border-color: var(--line); }
+:global(.segment-actions-menu .el-dropdown-menu__item) { color: var(--ink); font-size: 12px; }
+:global(.segment-actions-menu .el-dropdown-menu__item:not(.is-disabled):hover), :global(.segment-actions-menu .el-dropdown-menu__item:not(.is-disabled):focus) { color: var(--accent); background: rgba(152,227,194,.1); }
+:global(.segment-actions-menu .el-dropdown-menu__item.is-disabled) { color: var(--subtle); }
+:global(.segment-actions-menu .segment-delete-command) { color: #ff9b9b; }
+:global(.segment-actions-menu .el-dropdown-menu__item--divided) { border-top-color: var(--line); }
+.segment-empty { grid-column: 1 / -1; width: 100%; margin: 0; padding: 6px 8px; border: 1px dashed var(--line); border-radius: 7px; font-size: 11px; text-align: center; }
+@container (max-width: 860px) {
+  .segment-compose { flex-direction: column; align-items: stretch; gap: 6px; }
+  .segment-form { flex: none; }
+}
+@container (max-width: 400px) {
+  .mark-controls { flex-wrap: wrap; }
+  .draft-duration { margin-left: auto; }
+  .segment-form { flex-wrap: wrap; }
+  .segment-form :deep(.el-input) { flex-basis: 100%; }
+  .segment-form-actions { width: 100%; justify-content: space-between; }
 }
 </style>

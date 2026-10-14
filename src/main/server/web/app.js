@@ -1522,6 +1522,7 @@ function createUnifiedPlayback(film) {
   const allSegments = film.segments || [];
   const segmentsPanel = createElement('div', 'web-segments-panel');
   let activeSegment = null;
+  let displayedSegment = null;
   let playbackGeneration = 0;
 
   const applyVrMode = (part, view = null) => {
@@ -1569,8 +1570,25 @@ function createUnifiedPlayback(film) {
       : '点击播放原片';
   }
 
+  const syncSegmentLabel = () => {
+    const active = state.playback;
+    const position = playbackPosition(video);
+    const matches = active?.video === video
+      ? allSegments.filter((segment) => segment.filmFileId === active.partId
+        && position >= segment.startSeconds && position < segment.endSeconds)
+      : [];
+    const segment = matches.find((item) => item.id === activeSegment?.id) ?? matches[0] ?? null;
+    if (displayedSegment === segment) return;
+    displayedSegment = segment;
+    segmentLabel.replaceChildren();
+    if (segment) segmentLabel.append(
+      createElement('strong', '', segment.title || '未命名片段'),
+      createElement('span', '', `${formatPlaybackTime(segment.startSeconds)} → ${formatPlaybackTime(segment.endSeconds)}`),
+    );
+  };
   const clearSegmentMode = () => {
     activeSegment = null;
+    displayedSegment = null;
     segmentLabel.replaceChildren();
   };
   const playOriginal = async (partId = null, startSeconds = undefined) => {
@@ -1587,6 +1605,7 @@ function createUnifiedPlayback(film) {
       const part = parts.find((part) => part.id === partId) ?? parts[0];
       state.playback.partId = part?.id || null;
       partSelect.value = part?.id || '';
+      syncSegmentLabel();
       video.dispatchEvent(new Event('playback:session'));
       applyVrMode(part, null);
     }
@@ -1596,10 +1615,7 @@ function createUnifiedPlayback(film) {
     const session = await playOriginal(segment.filmFileId, segment.startSeconds);
     if (!session || state.playback?.sessionId !== session.id) return;
     activeSegment = segment;
-    segmentLabel.replaceChildren(
-      createElement('strong', '', segment.title || '未命名片段'),
-      createElement('span', '', `${formatPlaybackTime(segment.startSeconds)} → ${formatPlaybackTime(segment.endSeconds)}`),
-    );
+    syncSegmentLabel();
     if (state.playback?.video === video) applyVrMode(parts.find((part) => part.id === segment.filmFileId), segment.vrView);
   };
   const seekTo = async (partId, seconds) => {
@@ -1610,6 +1626,7 @@ function createUnifiedPlayback(film) {
     }
     if (active?.video === video && active.partId === partId && canSeekPlaybackTo(active, seconds)) {
       video.currentTime = seconds - active.sourceOffsetSeconds;
+      syncSegmentLabel();
       await video.play().catch(() => undefined);
     } else {
       await playOriginal(partId, seconds);
@@ -1620,8 +1637,9 @@ function createUnifiedPlayback(film) {
     if (partId) void seekTo(partId, seconds);
   };
 
+  for (const eventName of ['seeking', 'seeked', 'loadedmetadata', 'playback:session']) video.addEventListener(eventName, syncSegmentLabel);
   video.addEventListener('timeupdate', () => {
-    if (activeSegment && playbackPosition(video) >= activeSegment.endSeconds) clearSegmentMode();
+    syncSegmentLabel();
     const active = state.playback;
     if (!active?.sessionId || active.video !== video || Date.now() - active.lastProgressAt < 10_000) return;
     active.lastProgressAt = Date.now();

@@ -470,13 +470,13 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', handleKeydown, tru
 </script>
 
 <template>
-  <el-drawer :model-value="modelValue" :close-on-press-escape="!playerFullscreen" :class="{ 'player-fullscreen-open': playerFullscreen }" class="film-detail-drawer" size="100vw" title="影片详情" @close="close">
+  <el-drawer :model-value="modelValue" :close-on-press-escape="!playerFullscreen" :class="{ 'player-fullscreen-open': playerFullscreen }" class="film-detail-drawer" size="100vw" title="影片详情" :with-header="false" :show-close="false" @close="close">
+    <button v-if="loading || !detail" type="button" class="detail-fallback-close" aria-label="关闭详情" title="关闭详情" @click="close">×</button>
     <div v-if="loading" class="detail-loading"><el-skeleton :rows="10" animated /></div>
     <template v-else-if="detail">
       <div class="detail-workbench">
         <aside class="detail-sidebar">
-          <FilmDetailHeader :detail="detail" :poster="poster" :favorite="form.favorite" :categories="selectedCategories" :category-options="categoryOptions" :save-state="saveState" :save-state-label="saveStateLabel" :rescan-busy="rescanBusy" @favorite-change="queueFavorite" @category-add="addCategory" @category-remove="removeCategory" @retry="retrySave" @play="detailPlayer?.playOriginal()" @local-player="playWithLocalPlayer" @show-folder="showPrimaryFolder" @rescan="rescanDirectory" />
-          <el-button class="custom-cover-button" size="small" @click="coverVisible = true">设置封面 / GIF</el-button>
+          <FilmDetailHeader :detail="detail" :poster="poster" :favorite="form.favorite" :categories="selectedCategories" :category-options="categoryOptions" :save-state="saveState" :save-state-label="saveStateLabel" :rescan-busy="rescanBusy" @favorite-change="queueFavorite" @category-add="addCategory" @category-remove="removeCategory" @retry="retrySave" @play="detailPlayer?.playOriginal()" @local-player="playWithLocalPlayer" @show-folder="showPrimaryFolder" @rescan="rescanDirectory" @edit-cover="coverVisible = true" />
 
           <el-collapse v-model="activeSidebarSections" class="sidebar-info-collapse">
             <el-collapse-item title="基本信息" name="basic">
@@ -502,6 +502,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', handleKeydown, tru
             @position-change="updatePlaybackPosition"
             @add-to-resonance="addToResonance"
             @capture-gif="captureGif"
+            @close="close"
             @fullscreen-change="playerFullscreen = $event"
           />
 
@@ -550,16 +551,14 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', handleKeydown, tru
 </template>
 
 <style scoped>
-.custom-cover-button { width: 100%; margin: 5px 0 10px; }
-:global(.film-detail-drawer .el-drawer__body) { min-height: 0; padding: 0 18px 18px; overflow: hidden; }
-:global(.film-detail-drawer .el-drawer__header) { height: 34px; min-height: 34px; margin-bottom: 0; padding: 4px 14px; }
-:global(.film-detail-drawer .el-drawer__title) { font-size: 13px; line-height: 1; }
-:global(.film-detail-drawer .el-drawer__close-btn) { width: 28px; height: 28px; }
+:global(.film-detail-drawer .el-drawer__body) { min-height: 0; padding: 8px 18px 18px; overflow: hidden; }
+.detail-fallback-close { position: absolute; z-index: 1; top: 8px; right: 18px; width: 28px; height: 28px; border: 1px solid var(--line); border-radius: 6px; color: var(--ink); background: var(--panel-raised); font-size: 20px; cursor: pointer; }
 .detail-loading { height: 100%; overflow: auto; }
 .detail-workbench { display: grid; grid-template-columns: minmax(240px, 1fr) minmax(0, 3fr); height: 100%; min-height: 0; gap: 18px; overflow: hidden; }
 .detail-sidebar { min-width: 0; min-height: 0; padding-right: 14px; overflow: auto; border-right: 1px solid var(--line); scrollbar-width: thin; }
-.sidebar-info-collapse { margin-top: 8px; border-color: var(--line); }
-.sidebar-info-collapse :deep(.el-collapse-item__header) { height: 30px; color: var(--ink); background: transparent; font-size: 11px; font-weight: 750; }
+.sidebar-info-collapse { margin-top: 2px; border-color: var(--line); }
+.sidebar-info-collapse :deep(.el-collapse-item__header) { border-bottom-color: var(--line); }
+.sidebar-info-collapse :deep(.el-collapse-item__header) { height: 38px; color: var(--ink); background: transparent; font-size: 12px; font-weight: 650; }
 .sidebar-info-collapse :deep(.el-collapse-item__wrap) { border-color: var(--line); background: transparent; }
 .sidebar-info-collapse :deep(.el-collapse-item__content) { padding-bottom: 8px; color: inherit; }
 .sidebar-section { padding: 8px 0; border-top: 1px solid var(--line); }
@@ -573,13 +572,13 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', handleKeydown, tru
 .detail-sidebar .section-heading { margin-bottom: 6px; font-size: 11px; }
 .detail-sidebar .actor-links { gap: 4px; }
 .detail-sidebar .actor-links button { padding: 2px 6px; font-size: 9px; }
-.detail-main-column { display: grid; grid-template-rows: minmax(0, 1fr) 128px; min-width: 0; min-height: 0; overflow: hidden; }
+.detail-main-column { display: grid; grid-template-rows: minmax(0, 1fr) 156px; min-width: 0; min-height: 0; overflow: hidden; }
 .detail-content-tabs { display: flex; min-height: 0; padding-top: 4px; flex-direction: row; overflow: hidden; border-top: 1px solid var(--line); }
 .detail-content-tabs :deep(.el-tabs__header.is-right) { z-index: 5; order: 2; width: 88px; margin: 0 0 0 8px; padding: 0; flex: 0 0 auto; background: #171b24; }
 .detail-content-tabs :deep(.el-tabs__nav-wrap::after) { background-color: var(--line); }
 .detail-content-tabs :deep(.el-tabs__item.is-right) { height: 29px; justify-content: flex-start; padding: 0 10px; font-size: 11px; }
 .detail-content-tabs :deep(.el-tabs__content) { min-width: 0; min-height: 0; order: 1; flex: 1; overflow: auto; scrollbar-gutter: stable; }
-.detail-content-tabs :deep(.el-tab-pane) { min-height: 100%; }
+.detail-content-tabs :deep(.el-tab-pane) { height: 100%; min-height: 0; }
 .tab-section { padding: 10px 0; border-top: 1px solid var(--line); }
 .tab-section:first-child { border-top: 0; }
 .media-section { padding-top: 8px; }
@@ -640,5 +639,5 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', handleKeydown, tru
   .detail-form :deep(.el-form-item:last-child) { grid-column: auto; }
   .part-row { align-items: stretch; flex-direction: column; }
 }
-:global(.player-fullscreen-open .el-drawer__header), .player-fullscreen-open .detail-sidebar, .player-fullscreen-open .detail-content-tabs { visibility: hidden; }
+.player-fullscreen-open .detail-sidebar, .player-fullscreen-open .detail-content-tabs { visibility: hidden; }
 </style>

@@ -24,6 +24,7 @@ export function createMainWindow(logger: AppLogger, options: CreateMainWindowOpt
     minHeight: 720,
     backgroundColor: '#0f1117',
     show: false,
+    autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -31,6 +32,8 @@ export function createMainWindow(logger: AppLogger, options: CreateMainWindowOpt
       preload: preloadPath,
     },
   });
+
+  window.setMenu(null);
 
   const entry = getDevServerUrl() ?? pathToFileURL(path.join(__dirname, `../renderer/${getRendererName()}/index.html`)).href;
   const failurePage = resolveFailurePage();
