@@ -1,9 +1,8 @@
 import { createApp } from 'vue';
 import { createPinia } from 'pinia';
-import ElementPlus from 'element-plus';
-import 'element-plus/dist/index.css';
-import { router } from './router';
 import App from './App.vue';
+// Keep vendor CSS before application overrides, including after lazy routes load.
+import 'element-plus/dist/index.css';
 import './styles/theme.css';
 
 const app = createApp(App);
@@ -34,7 +33,12 @@ async function bootstrap(): Promise<void> {
     if (!result.ok) throw new Error(result.error.code);
     if (!result.data.ok || !result.data.databaseReady || !result.data.ipcReady) throw new Error('APP_HEALTH_FAILED');
 
-    app.use(createPinia()).use(router).use(ElementPlus).mount('#app');
+    app.provide('initialize-workspace', async () => {
+      const [{ router }, { ui }] = await Promise.all([import('./router'), import('./ui')]);
+      app.use(ui).use(router);
+      await router.isReady();
+    });
+    app.use(createPinia()).mount('#app');
     rendererMounted = true;
     console.info('[renderer] bootstrap complete');
   } catch (error) {

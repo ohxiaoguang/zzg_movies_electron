@@ -48,41 +48,56 @@ export const useLibraryStore = defineStore('library', () => {
     } catch { globalFilterStorageError.value = '筛选保存失败，重启后可能无法保留'; }
   }, { deep: true, flush: 'sync' });
   let latestRequest = 0;
+  let settingsRequest: Promise<void> | null = null;
+  let pageRequest: { key: string; promise: Promise<void> } | null = null;
 
   const items = computed(() => pageData.value.items);
 
-  async function loadSettings(): Promise<void> {
-    const result = await window.filmLibrary.settings.get();
-    if (result.ok) {
-      settings.value = result.data;
-      filters.pageSize = result.data.pageSize;
-    }
+  function loadSettings(): Promise<void> {
+    if (settingsRequest) return settingsRequest;
+    settingsRequest = (async () => {
+      const result = await window.filmLibrary.settings.get();
+      if (result.ok) {
+        settings.value = result.data;
+        filters.pageSize = result.data.pageSize;
+      }
+    })().finally(() => { settingsRequest = null; });
+    return settingsRequest;
   }
 
-  async function fetchPage(): Promise<void> {
+  function fetchPage(options: { force?: boolean } = {}): Promise<void> {
+    const query = {
+      ...filters,
+      sourceIds: [...(filters.sourceIds ?? [])],
+      categoryIds: [...(filters.categoryIds ?? [])],
+      nfoTagIds: [...(filters.nfoTagIds ?? [])],
+      genreIds: [...(filters.genreIds ?? [])],
+    };
+    const key = JSON.stringify(query);
+    if (!options.force && pageRequest?.key === key) return pageRequest.promise;
     const request = ++latestRequest;
     loading.value = true;
     error.value = null;
-    try {
-      const query = {
-        ...filters,
-        sourceIds: filters.sourceIds ? [...filters.sourceIds] : [],
-        categoryIds: filters.categoryIds ? [...filters.categoryIds] : [],
-        nfoTagIds: filters.nfoTagIds ? [...filters.nfoTagIds] : [],
-        genreIds: filters.genreIds ? [...filters.genreIds] : [],
-      };
-      const result = query.allData
-        ? await window.filmLibrary.films.recordsPageAll(query)
-        : await filmLibraryClient.page(query);
-      if (request !== latestRequest) return;
-      if (result.ok) pageData.value = result.data;
-      else error.value = result.error.message;
-    } catch (reason) {
-      console.error('[library] page failed', reason);
-      if (request === latestRequest) error.value = '无法加载影片，请查看日志';
-    } finally {
-      if (request === latestRequest) loading.value = false;
-    }
+    const promise = (async () => {
+      try {
+        const result = query.allData
+          ? await window.filmLibrary.films.recordsPageAll(query)
+          : await filmLibraryClient.page(query);
+        if (request !== latestRequest) return;
+        if (result.ok) pageData.value = result.data;
+        else error.value = result.error.message;
+      } catch (reason) {
+        console.error('[library] page failed', reason);
+        if (request === latestRequest) error.value = '无法加载影片，请查看日志';
+      }
+    })().finally(() => {
+      if (request === latestRequest) {
+        loading.value = false;
+        pageRequest = null;
+      }
+    });
+    pageRequest = { key, promise };
+    return promise;
   }
 
   function setFilter<K extends keyof FilmPageQuery>(key: K, value: FilmPageQuery[K]): void {

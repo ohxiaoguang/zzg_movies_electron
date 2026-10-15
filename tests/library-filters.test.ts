@@ -89,3 +89,59 @@ describe('global library filters', () => {
     }
   });
 });
+
+
+describe('library request coalescing', () => {
+  it('shares an in-flight query but reloads after it finishes', async () => {
+    const library = store();
+    let finish!: (value: ReturnType<typeof response>) => void;
+    page.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const first = library.fetchPage();
+    const second = library.fetchPage();
+    expect(page).toHaveBeenCalledTimes(1);
+    finish(response(7));
+    await Promise.all([first, second]);
+    expect(library.pageData.total).toBe(7);
+    await library.fetchPage();
+    expect(page).toHaveBeenCalledTimes(2);
+  });
+
+  it('forces a new query after a mutation and ignores the older response', async () => {
+    const library = store();
+    let finish!: (value: ReturnType<typeof response>) => void;
+    page.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const older = library.fetchPage();
+    page.mockResolvedValueOnce(response(8));
+    await library.fetchPage({ force: true });
+    finish(response(1));
+    await older;
+    expect(library.pageData.total).toBe(8);
+    expect(library.loading).toBe(false);
+  });
+
+  it('does not reuse the original A response when changing A to B to A', async () => {
+    const library = store();
+    let finish!: (value: ReturnType<typeof response>) => void;
+    page.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const oldA = library.fetchPage();
+    library.filters.search = 'B';
+    const b = library.fetchPage();
+    library.filters.search = '';
+    page.mockResolvedValueOnce(response(4));
+    await library.fetchPage();
+    finish(response(99));
+    await Promise.all([oldA, b]);
+    expect(page).toHaveBeenCalledTimes(3);
+    expect(library.pageData.total).toBe(4);
+  });
+
+  it('releases a failed request so the same query can retry', async () => {
+    const library = store();
+    page.mockResolvedValueOnce({ ok: false, error: { message: 'failed' } });
+    await library.fetchPage();
+    expect(library.error).toBe('failed');
+    await library.fetchPage();
+    expect(page).toHaveBeenCalledTimes(2);
+    expect(library.error).toBeNull();
+  });
+});

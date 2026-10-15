@@ -1,24 +1,18 @@
 import { createRouter, createWebHashHistory } from 'vue-router';
-import AppLayout from '../layouts/AppLayout.vue';
-import LibraryView from '../views/LibraryView.vue';
-import SourcesView from '../views/SourcesView.vue';
-import CategoriesView from '../views/CategoriesView.vue';
-import ActorsView from '../views/ActorsView.vue';
-import SettingsView from '../views/SettingsView.vue';
 
 export const router = createRouter({
   history: createWebHashHistory(),
   routes: [
     {
       path: '/',
-      component: AppLayout,
+      component: () => import('../layouts/AppLayout.vue'),
       children: [
         { path: '', redirect: '/library' },
-        { path: 'library', name: 'library', component: LibraryView },
-        { path: 'sources', name: 'sources', component: SourcesView },
-        { path: 'categories', name: 'categories', component: CategoriesView },
-        { path: 'actors', name: 'actors', component: ActorsView },
-        { path: 'settings', name: 'settings', component: SettingsView },
+        { path: 'library', name: 'library', component: () => import('../views/LibraryView.vue') },
+        { path: 'sources', name: 'sources', component: () => import('../views/SourcesView.vue') },
+        { path: 'categories', name: 'categories', component: () => import('../views/CategoriesView.vue') },
+        { path: 'actors', name: 'actors', component: () => import('../views/ActorsView.vue') },
+        { path: 'settings', name: 'settings', component: () => import('../views/SettingsView.vue') },
       ],
     },
   ],

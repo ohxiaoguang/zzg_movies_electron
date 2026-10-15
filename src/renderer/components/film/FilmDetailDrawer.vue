@@ -55,6 +55,7 @@ const form = reactive({ title: '', originalTitle: '', favorite: false, rating: 0
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let inFlightSave: Promise<void> | null = null;
 let activeFilmId: string | null = null;
+let loadVersion = 0;
 let changeVersion = 0;
 let pendingSave: PendingSave = {};
 let lastSavedPatch: FilmUpdatePatch = {};
@@ -98,6 +99,7 @@ function captureVrView() {
 watch(() => [props.modelValue, props.filmId], () => {
   if (props.modelValue) void load();
   else {
+    loadVersion += 1;
     gifVisible.value = false;
     coverVisible.value = false;
     pathEditorVisible.value = false;
@@ -124,6 +126,8 @@ async function load(): Promise<void> {
   const filmId = props.filmId;
   if (!filmId) return;
   activeFilmId = filmId;
+  const version = ++loadVersion;
+  const isCurrent = () => version === loadVersion && props.modelValue && props.filmId === filmId;
   pathEditorVisible.value = false;
   gifVisible.value = false;
   coverVisible.value = false;
@@ -133,28 +137,38 @@ async function load(): Promise<void> {
   resetSaveQueue();
   loading.value = true;
   try {
-    const [filmResult, categoryResult, actorResult] = await Promise.all([
-      window.filmLibrary.films.detail(filmId),
-      window.filmLibrary.categories.list(),
-      window.filmLibrary.actors.list(),
-    ]);
-    if (activeFilmId !== filmId) return;
+    const filmResult = await window.filmLibrary.films.detail(filmId);
+    if (!isCurrent()) return;
     if (!filmResult.ok) { ElMessage.error(filmResult.error.message); return; }
     detail.value = filmResult.data;
-    if (categoryResult.ok) categoryOptions.value = categoryResult.data;
-    if (actorResult.ok) actorCounts.value = actorCountIndex(actorResult.data);
+    categoryOptions.value = [...filmResult.data.customCategories];
     mergeCategories(filmResult.data);
     syncForm(filmResult.data);
     imageIndex.value = 0;
     activeDetailTab.value = 'segments';
+    loading.value = false;
     await nextTick();
+    if (!isCurrent()) return;
     hydrated.value = true;
     preloadAdjacentImages();
+    // Allow the detail/player to paint before starting full-library option queries.
+    requestAnimationFrame(() => setTimeout(() => {
+      if (!isCurrent()) return;
+      void window.filmLibrary.categories.list().then((result) => {
+        if (!isCurrent() || !result.ok) return;
+        categoryOptions.value = result.data;
+        if (detail.value) mergeCategories(detail.value);
+      }).catch((error) => console.error('[film-detail] categories failed', error));
+      void window.filmLibrary.actors.list().then((result) => {
+        if (isCurrent() && result.ok) actorCounts.value = actorCountIndex(result.data);
+      }).catch((error) => console.error('[film-detail] actors failed', error));
+    }, 0));
   } catch (error) {
+    if (!isCurrent()) return;
     console.error('[film-detail] load failed', error);
     ElMessage.error('影片详情加载失败，请查看日志');
   } finally {
-    loading.value = false;
+    if (isCurrent()) loading.value = false;
   }
 }
 
@@ -467,7 +481,7 @@ async function close(): Promise<boolean> {
 async function filterByActor(name: string): Promise<void> { if (await close()) await router.push({ path: '/library', query: { actor: name } }); }
 
 window.addEventListener('keydown', handleKeydown, true);
-onBeforeUnmount(() => { window.removeEventListener('keydown', handleKeydown, true); detailPlayer.value?.releasePlayback(); if (saveTimer) clearTimeout(saveTimer); });
+onBeforeUnmount(() => { loadVersion += 1; window.removeEventListener('keydown', handleKeydown, true); detailPlayer.value?.releasePlayback(); if (saveTimer) clearTimeout(saveTimer); });
 </script>
 
 <template>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { Download, Refresh, Search, Grid, List, Operation } from '@element-plus/icons-vue';
@@ -9,7 +9,7 @@ import { useSourceStore } from '../stores/sources';
 import { useScanStore } from '../stores/scan';
 import FilmGrid from '../components/film/FilmGrid.vue';
 import FilmTable from '../components/film/FilmTable.vue';
-import FilmDetailDrawer from '../components/film/FilmDetailDrawer.vue';
+const FilmDetailDrawer = defineAsyncComponent(() => import('../components/film/FilmDetailDrawer.vue'));
 import { closeAllHoverPopups } from '../composables/hoverPopupManager';
 
 const route = useRoute();
@@ -31,12 +31,18 @@ const organizedPage = computed(() => route.query.organization === 'organized');
 const favoritePage = computed(() => route.query.favorite === '1');
 const exportPage = computed(() => organizedPage.value || favoritePage.value);
 
-watch(() => route.query, () => { closeAllHoverPopups(); syncRouteFilter(); void library.fetchPage(); }, { deep: true, immediate: true });
+let initialized = false;
+let disposed = false;
+watch(() => route.query, () => { closeAllHoverPopups(); syncRouteFilter(); if (initialized) void library.fetchPage(); }, { deep: true, immediate: true });
 onMounted(async () => {
-  await Promise.all([sources.fetch(), library.loadSettings(), loadTaxonomies()]);
+  void sources.fetch();
+  void loadTaxonomies();
+  await library.loadSettings();
+  if (disposed) return;
+  initialized = true;
   await library.fetchPage();
 });
-onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
+onBeforeUnmount(() => { disposed = true; if (searchTimer) clearTimeout(searchTimer); });
 
 async function loadTaxonomies(): Promise<void> {
   const [tagResult, categoryResult, actorResult] = await Promise.all([
@@ -73,7 +79,7 @@ function queueSearch(): void {
 function filterChanged(): void { selectedRecordIds.value = []; library.filters.page = 1; void library.fetchPage(); }
 function selectFilm(film: FilmSummaryDto): void { selectedFilmId.value = film.id; detailVisible.value = true; }
 async function refresh(): Promise<void> {
-  await library.fetchPage();
+  await library.fetchPage({ force: true });
   await sources.fetch();
   await loadTaxonomies();
   window.dispatchEvent(new Event('film-library:changed'));
@@ -177,7 +183,7 @@ function changePage(page: number): void { library.filters.page = page; void libr
     <FilmGrid v-if="!allData && library.viewMode === 'grid'" :films="library.items" :hover-delay="library.settings.hoverDelayMs" :hover-close-delay="library.settings.hoverCloseDelayMs" :slideshow-interval="library.settings.slideshowIntervalMs" :card-width="library.settings.cardSize" @select="selectFilm" @updated="refresh" />
     <FilmTable v-else :films="library.items" :all-data="allData" @select="selectFilm" @selection-change="selectionChanged" @show-in-folder="showInFolder" @delete-row="deleteRecords([$event.id])" />
     <el-pagination v-if="library.pageData.total" background layout="prev, pager, next, ->, total" :current-page="library.pageData.page" :page-size="library.pageData.pageSize" :total="library.pageData.total" @current-change="changePage" />
-    <FilmDetailDrawer v-model="detailVisible" :film-id="selectedFilmId" @updated="refresh" />
+    <FilmDetailDrawer v-if="selectedFilmId" v-model="detailVisible" :film-id="selectedFilmId" @updated="refresh" />
   </div>
 </template>
 

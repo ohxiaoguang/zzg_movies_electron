@@ -23,6 +23,9 @@ export class SphericalVideoRenderer {
     pitch: WebGLUniformLocation;
   };
   private frameId = 0;
+  private videoFrameId: number | null = null;
+  private textureDirty = true;
+  private lastVideoTime = -1;
   private disposed = false;
   private pointerId: number | null = null;
   private pointerStart = { x: 0, y: 0, yaw: 0, pitch: 0 };
@@ -96,16 +99,23 @@ export class SphericalVideoRenderer {
     canvas.addEventListener('pointerup', this.handlePointerUp);
     canvas.addEventListener('pointercancel', this.handlePointerUp);
     canvas.addEventListener('wheel', this.handleWheel, { passive: false });
-    this.resizeObserver = new ResizeObserver(() => this.resize());
+    this.resizeObserver = new ResizeObserver(() => { this.resize(); this.invalidate(); });
+    video.addEventListener('loadeddata', this.handleVideoChange);
+    video.addEventListener('seeked', this.handleVideoChange);
+    video.addEventListener('playing', this.handleVideoChange);
+    video.addEventListener('pause', this.handleVideoChange);
+    document.addEventListener('visibilitychange', this.handleVisibilityChange);
     this.resizeObserver.observe(canvas);
     this.resize();
-    this.frameId = requestAnimationFrame(this.renderFrame);
+    this.invalidate();
+    this.scheduleVideoFrame();
   }
 
   public resetView(): void {
     this.yaw = 0;
     this.pitch = 0;
     this.fovDegrees = 75;
+    this.invalidate();
   }
 
   public getView(): VrViewDto {
@@ -120,12 +130,19 @@ export class SphericalVideoRenderer {
     this.yaw = (normalizeDegrees(view.yawDegrees) * Math.PI) / 180;
     this.pitch = clampSphericalPitch((view.pitchDegrees * Math.PI) / 180);
     this.fovDegrees = clampSphericalFov(view.fovDegrees);
+    this.invalidate();
   }
 
   public dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
     cancelAnimationFrame(this.frameId);
+    if (this.videoFrameId !== null) this.video.cancelVideoFrameCallback(this.videoFrameId);
+    this.video.removeEventListener('loadeddata', this.handleVideoChange);
+    this.video.removeEventListener('seeked', this.handleVideoChange);
+    this.video.removeEventListener('playing', this.handleVideoChange);
+    this.video.removeEventListener('pause', this.handleVideoChange);
+    document.removeEventListener('visibilitychange', this.handleVisibilityChange);
     this.resizeObserver.disconnect();
     this.canvas.removeEventListener('pointerdown', this.handlePointerDown);
     this.canvas.removeEventListener('pointermove', this.handlePointerMove);
@@ -156,6 +173,7 @@ export class SphericalVideoRenderer {
     this.pitch = clampSphericalPitch(
       this.pointerStart.pitch + (event.clientY - this.pointerStart.y) * 0.005,
     );
+    this.invalidate();
   };
 
   private readonly handlePointerUp = (event: PointerEvent): void => {
@@ -168,17 +186,55 @@ export class SphericalVideoRenderer {
   private readonly handleWheel = (event: WheelEvent): void => {
     event.preventDefault();
     this.fovDegrees = clampSphericalFov(this.fovDegrees + event.deltaY * 0.04);
+    this.invalidate();
+  };
+
+  private invalidate(): void {
+    if (!this.disposed && !document.hidden && !this.frameId) this.frameId = requestAnimationFrame(this.renderFrame);
+  }
+
+  private scheduleVideoFrame(): void {
+    if (this.disposed || document.hidden || this.videoFrameId !== null) return;
+    if (typeof this.video.requestVideoFrameCallback !== 'function') return;
+    this.videoFrameId = this.video.requestVideoFrameCallback(() => {
+      this.videoFrameId = null;
+      this.textureDirty = true;
+      this.invalidate();
+      this.scheduleVideoFrame();
+    });
+  }
+
+  private readonly handleVideoChange = (): void => {
+    this.textureDirty = true;
+    this.invalidate();
+    this.scheduleVideoFrame();
+  };
+
+  private readonly handleVisibilityChange = (): void => {
+    if (document.hidden) {
+      cancelAnimationFrame(this.frameId);
+      this.frameId = 0;
+      if (this.videoFrameId !== null) this.video.cancelVideoFrameCallback(this.videoFrameId);
+      this.videoFrameId = null;
+    } else {
+      this.resize();
+      this.handleVideoChange();
+    }
   };
 
   private readonly renderFrame = (): void => {
-    if (this.disposed) return;
-    this.resize();
+    this.frameId = 0;
+    if (this.disposed || document.hidden) return;
     const gl = this.gl;
-    if (this.video.readyState >= 2 && !this.textureErrorReported) {
+    const fallback = typeof this.video.requestVideoFrameCallback !== 'function';
+    if (fallback && this.video.currentTime !== this.lastVideoTime) this.textureDirty = true;
+    if (this.textureDirty && this.video.readyState >= 2 && !this.textureErrorReported) {
       try {
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, this.texture);
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, this.video);
+        this.textureDirty = false;
+        this.lastVideoTime = this.video.currentTime;
       } catch (error) {
         this.textureErrorReported = true;
         this.onError?.(error instanceof Error ? error.message : 'VR_VIDEO_TEXTURE_FAILED');
@@ -191,7 +247,7 @@ export class SphericalVideoRenderer {
     gl.uniform1f(this.uniforms.yaw, this.yaw);
     gl.uniform1f(this.uniforms.pitch, this.pitch);
     gl.drawArrays(gl.TRIANGLES, 0, 6);
-    this.frameId = requestAnimationFrame(this.renderFrame);
+    if (fallback && !this.video.paused && !this.video.ended) this.invalidate();
   };
 
   private resize(): void {

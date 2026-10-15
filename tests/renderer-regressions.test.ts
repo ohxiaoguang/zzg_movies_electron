@@ -498,3 +498,16 @@ describe('renderer regressions', () => {
     expect(settings).not.toContain('lan-qr');
   });
 });
+
+
+describe('lazy workspace stylesheet ordering', () => {
+  it('loads Element Plus base styles before theme overrides instead of with the deferred plugin', () => {
+    const entry = fs.readFileSync(path.resolve('src/renderer/main.ts'), 'utf8');
+    const plugin = fs.readFileSync(path.resolve('src/renderer/ui.ts'), 'utf8');
+    const vendor = entry.indexOf("import 'element-plus/dist/index.css'");
+    const theme = entry.indexOf("import './styles/theme.css'");
+    expect(vendor).toBeGreaterThanOrEqual(0);
+    expect(theme).toBeGreaterThan(vendor);
+    expect(plugin).not.toContain('element-plus/dist/index.css');
+  });
+});

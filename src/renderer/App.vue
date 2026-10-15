@@ -1,6 +1,19 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
+import { computed, defineAsyncComponent, inject, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
+import WorkspaceLoading from './components/WorkspaceLoading.vue';
+import WorkspaceLoadError from './components/WorkspaceLoadError.vue';
 import type { AccountAuthStatusDto } from '../shared/contracts';
+
+const initializeWorkspace = inject<() => Promise<void>>('initialize-workspace')!;
+const AuthenticatedWorkspace = defineAsyncComponent({
+  loader: async () => {
+    await initializeWorkspace();
+    return import('./AuthenticatedWorkspace.vue');
+  },
+  loadingComponent: WorkspaceLoading,
+  errorComponent: WorkspaceLoadError,
+  delay: 0,
+});
 
 const REMEMBERED_USERNAME_KEY = 'film-library-remembered-username';
 const status = ref<AccountAuthStatusDto | null>(null);
@@ -73,7 +86,7 @@ async function submit(): Promise<void> {
 </script>
 
 <template>
-  <RouterView v-if="status?.authenticated" />
+  <AuthenticatedWorkspace v-if="status?.authenticated" />
   <main v-else class="account-screen">
     <section class="account-card">
       <div class="brand-mark">FL</div>

@@ -34,6 +34,8 @@ export function createMainWindow(logger: AppLogger, options: CreateMainWindowOpt
   });
 
   window.setMenu(null);
+  // Preserve the release version when the renderer supplies its static HTML title.
+  window.on('page-title-updated', (event) => event.preventDefault());
 
   const entry = getDevServerUrl() ?? pathToFileURL(path.join(__dirname, `../renderer/${getRendererName()}/index.html`)).href;
   const failurePage = resolveFailurePage();
